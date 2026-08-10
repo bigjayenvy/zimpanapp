@@ -40,9 +40,19 @@ app.use((req, res, next) => {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
   if (!req.path.startsWith('/api/')) return next();
   if (req.get('X-Zimpan-Client') !== '1') return res.status(403).json({ error: 'Missing client header.' });
+
+  /* Compare hosts, not whole origins. Behind Apache, req.protocol only reports
+     https when trust proxy is enabled, so comparing full origins rejects every
+     write on a correctly configured HTTPS site the moment that setting is off.
+     The host is what identifies the site; the scheme adds nothing here. */
   const origin = req.get('Origin');
-  if (origin && origin !== `${req.protocol}://${req.get('Host')}`) {
-    return res.status(403).json({ error: 'Cross-origin request refused.' });
+  if (origin) {
+    let originHost = null;
+    try { originHost = new URL(origin).host; } catch { /* malformed header */ }
+    if (originHost !== req.get('Host')) {
+      console.error(`[zimpan] refused cross-origin write: Origin ${origin} vs Host ${req.get('Host')}`);
+      return res.status(403).json({ error: 'Cross-origin request refused.' });
+    }
   }
   next();
 });
