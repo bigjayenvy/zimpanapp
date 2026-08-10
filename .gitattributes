@@ -1,0 +1,5 @@
+# Deployed to Linux — keep LF in the repo and on checkout, regardless of
+# what Windows does in the working copy.
+* text=auto eol=lf
+*.png binary
+*.jpg binary

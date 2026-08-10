@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZIMPAN — Time &amp; Money Tracker</title>
+<link rel="stylesheet" href="ds/styles.css">
+<style>
+  body { margin: 0; }
+  input, select, button { font-family: inherit; }
+  .btn { border-radius: 999px; padding-inline: 18px; }
+  .btn-icon { border-radius: 999px; padding-inline: 0; }
+  .seg { border-radius: 999px; }
+  .seg-opt { padding-inline: 15px; }
+  input[type="time"]::-webkit-calendar-picker-indicator { opacity: .35; }
+
+  /* — money tracker theme —
+     Accent tokens are inherited custom properties, so re-declaring them on the
+     page wrapper repoints every accent in the money view — buttons, kickers,
+     chips, the report sheet — without touching the design system. */
+  [data-app="money"] {
+    --color-accent: #4f8a63;
+    --color-accent-2: #6a9d7c;
+    --color-accent-100: #eef7f1;
+    --color-accent-200: #d7ecdd;
+    --color-accent-300: #b2d9bf;
+    --color-accent-400: #8dc3a0;
+    --color-accent-500: #6ba982;
+    --color-accent-600: #4f8a63;
+    --color-accent-700: #3a6b4b;
+    --color-accent-800: #274c35;
+    --color-accent-900: #163123;
+    --color-accent-2-100: #eef7f1;
+    --color-accent-2-200: #dceee2;
+    --color-accent-2-300: #bcdcc7;
+    --color-accent-2-400: #9cc7ab;
+    --color-accent-2-500: #7dae8e;
+    --color-accent-2-600: #628f72;
+    --color-accent-2-700: #4a7057;
+    --color-accent-2-800: #33503d;
+    --color-accent-2-900: #1f3326;
+  }
+
+  /* — loading affordances — */
+  @keyframes zimpan-spin { to { transform: rotate(360deg); } }
+  .spinner {
+    display: inline-block; width: 14px; height: 14px; flex: none;
+    border: 2px solid currentColor; border-right-color: transparent;
+    border-radius: 50%; animation: zimpan-spin .7s linear infinite;
+  }
+  .spinner.lg { width: 24px; height: 24px; border-width: 3px; }
+
+  /* Sits above everything while any request is in flight. */
+  .topbar { position: fixed; top: 0; left: 0; right: 0; height: 2px; z-index: 60; pointer-events: none; overflow: hidden; }
+  @keyframes zimpan-slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(420%); } }
+  .topbar > i { display: block; height: 100%; width: 28%; background: var(--color-accent); animation: zimpan-slide 1.15s ease-in-out infinite; }
+
+  .toast {
+    position: fixed; left: 20px; bottom: 20px; z-index: 60;
+    background: var(--color-neutral-900); color: var(--color-bg);
+    font-family: var(--font-body); font-size: 13px;
+    padding: 9px 15px; border-radius: 999px; box-shadow: var(--shadow-md);
+    max-width: calc(100vw - 40px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  .cell-note {
+    border: 0; background: transparent; cursor: pointer;
+    font-size: 11px; line-height: 1; padding: 2px 3px; margin-left: 3px;
+    border-radius: 3px; vertical-align: middle;
+  }
+  .cell-note:hover { opacity: 1 !important; background: var(--color-neutral-200); }
+  .cell-note:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation-duration: 2.4s; }
+    .topbar > i { animation-duration: 3s; }
+  }
+
+  /* — app bar — */
+  .appbar {
+    display: flex; align-items: center; gap: 20px;
+    padding: 14px 28px; border-bottom: 1px solid var(--color-divider);
+    flex-wrap: wrap;
+  }
+  .appbar-meta {
+    display: flex; align-items: center; gap: 8px; margin-right: auto;
+    font-size: 12px; color: var(--color-neutral-700);
+  }
+
+  /* — table cells — */
+  .cell-input { width: 100%; border: 0; background: transparent; font: inherit; font-size: 14px; color: inherit; padding: 2px 0; }
+  .cell-time { border: 0; background: transparent; font: inherit; font-size: 14px; color: inherit; }
+  .cell-num { width: 100%; text-align: right; border: 0; background: transparent; font: inherit; font-size: 14px; color: inherit; }
+  .cell-num.is-in { color: var(--color-accent-700); }
+  .cell-spent { font-variant-numeric: tabular-nums; color: var(--color-neutral-700); }
+  .cell-del { border: 0; background: transparent; cursor: pointer; color: var(--color-neutral-500); font-size: 15px; padding: 2px 4px; }
+  .rows-scroll { overflow-x: auto; }
+
+  /* — timer — */
+  .timer-card { display: grid; grid-template-columns: auto 1fr auto; gap: 22px; align-items: center; }
+  .timer-btn {
+    padding: 16px 30px; border-radius: 999px; cursor: pointer;
+    font-family: var(--font-heading); font-weight: 600; font-size: 16px;
+    color: var(--color-bg);
+  }
+
+  /* — report — */
+  .report-wrap { padding: 36px 20px; }
+  .report-sheet { padding: 46px 52px 52px; }
+  .report-donut { width: 230px; height: 230px; }
+
+  /* ── responsive ──────────────────────────────────────────────
+     One layout all the way down. The page grid drops to a single
+     column first; below that the cards stack internally and the
+     entry tables become stacked rows, so every field stays
+     editable without a sideways scroll. */
+
+  @media (max-width: 1240px) {
+    [data-page-grid] { grid-template-columns: minmax(0, 1fr) !important; }
+  }
+
+  @media (max-width: 900px) {
+    [data-page-grid] { padding: 22px 18px !important; gap: 18px !important; }
+    .timer-card { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+    .timer-btn { width: 100%; }
+  }
+
+  @media (max-width: 720px) {
+    .appbar { padding: 12px 16px; gap: 10px 12px; }
+    .appbar-meta { order: 9; flex: 1 0 100%; margin-right: 0; }
+    .appbar .btn { margin-left: auto; }
+
+    [data-page-grid] { padding: 18px 14px !important; }
+
+    /* Entry rows stop being a table and become stacked records. */
+    .rows-scroll { overflow-x: visible; }
+    .rows, .rows tbody, .rows tr, .rows td { display: block; }
+    .rows thead { display: none; }
+    .rows tr {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 7px 12px;
+      padding: 13px 0; border-bottom: 1px solid var(--color-divider);
+    }
+    .rows td { border: 0; padding: 0; }
+    .rows td[data-col="activity"] { flex: 1 1 100%; }
+    .rows td[data-col="remove"] { order: 9; margin-left: auto; text-align: right; }
+    .rows .cell-num { width: auto; text-align: left; min-width: 74px; }
+    .rows td[data-label]::before {
+      content: attr(data-label); margin-right: 5px;
+      font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+      color: var(--color-neutral-600);
+    }
+
+    .report-wrap { padding: 14px 10px; }
+    .report-sheet { padding: 26px 20px 30px; }
+    .report-donut { width: 190px; height: 190px; margin: 0 auto; }
+    .report-hint { display: none; }
+  }
+
+  /* Only the report sheet prints, and it has to flow in normal document order:
+     the preview backdrop is position:fixed, which pins printed output to a
+     single page and would truncate any range longer than a day. */
+  @media print {
+    .no-print { display: none !important; }
+    [data-app] > .appbar,
+    [data-app] > [data-page-grid] { display: none !important; }
+    [data-app] { min-height: 0 !important; padding-bottom: 0 !important; }
+    [data-report-backdrop] {
+      position: static !important; inset: auto !important; z-index: auto !important;
+      display: block !important; overflow: visible !important;
+      background: none !important; padding: 0 !important;
+    }
+    [data-report-backdrop] > div { width: 100% !important; max-width: none !important; }
+    #report-sheet {
+      box-shadow: none !important; border: 0 !important;
+      padding: 0 !important; background: none !important;
+    }
+    @page { margin: 14mm; }
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="app.js"></script>
+</body>
+</html>

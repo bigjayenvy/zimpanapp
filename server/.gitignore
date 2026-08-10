@@ -1,0 +1,5 @@
+node_modules/
+data/
+.env
+# Dumps carry password hashes and live session tokens — never commit them.
+backups/

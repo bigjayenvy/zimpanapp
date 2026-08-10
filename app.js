@@ -1,0 +1,2450 @@
+﻿/* ZIMPAN — time and money tracker.
+   Ported from the Zimpan.dc.html design component: same state shape, same
+   numbers, same copy — plain DOM instead of the design-canvas runtime.
+
+   Rendering is a full re-render of #app driven off `state`. Text fields sync
+   into state silently on `input` (no re-render, so typing never loses the
+   caret); everything else commits on `change`/`click` and re-renders. The
+   focus capture/restore around the swap is the safety net for the latter. */
+
+/* ─────────────────────────── config ─────────────────────────── */
+
+// Mirrors the component's authored props.
+const CONFIG = { defaultRange: 'day', roundToMinutes: 1 };
+
+const PALETTE = ['#416180', '#749dc4', '#1d2d3d', '#94bce3', '#597ea3', '#b5d9fd', '#2c455d', '#8aa7bf'];
+// Money runs on green. Same light/dark rhythm as PALETTE so slices stay apart.
+const MONEY_PALETTE = ['#3a6b4b', '#6ba982', '#163123', '#a8d4b6', '#4f8a63', '#cde8d5', '#274c35', '#8dc3a0'];
+const PURPOSES = ['Shopping', 'Projects', 'Movies', 'Petrol', 'Groceries', 'Eat Out', 'House Improvements', 'Birthdays', 'Commute', 'Gadgets', 'Utilities', 'Appliances'];
+const STORE_KEY = 'zimpan.v1';
+
+/* ─────────────────────────── formatting ─────────────────────────── */
+
+const pad = (n) => String(n).padStart(2, '0');
+const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const hm = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+const parseHm = (s) => { const [h, m] = (s || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+const clock12 = (m) => { const h = Math.floor(m / 60), mm = m % 60; const ap = h >= 12 ? 'PM' : 'AM'; const h12 = h % 12 === 0 ? 12 : h % 12; return `${h12}:${pad(mm)} ${ap}`; };
+const dayLabel = (d) => new Date(d + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+
+function dur(mins) {
+  if (mins <= 0) return '—';
+  const h = Math.floor(mins / 60), m = mins % 60;
+  if (h && m) return `${h} hr ${m} min`;
+  if (h) return h === 1 ? '1 Hour' : `${h} Hours`;
+  return `${m} Minutes`;
+}
+function durShort(mins) {
+  if (mins <= 0) return '—';
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return h ? (m ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
+}
+/* Currency is a display choice, not a conversion — picking a different one
+   relabels the amounts you logged, it does not convert them. */
+const CURRENCIES = [
+  { code: 'PHP', symbol: '₱', label: 'Philippine Peso' },
+  { code: 'AED', symbol: 'AED ', label: 'UAE Dirham' },
+  { code: 'USD', symbol: '$', label: 'US Dollar' },
+  { code: 'EUR', symbol: '€', label: 'Euro' }
+];
+const currency = () => CURRENCIES.find((c) => c.code === state.currency) || CURRENCIES[0];
+const amount = (n) => `${currency().symbol}${Math.round(Math.abs(n)).toLocaleString('en-US')}`;
+const signed = (n) => (n < 0 ? `−${amount(n)}` : amount(n));
+
+const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ESCAPES[c]);
+
+/* ─────────────────────────── emoji ───────────────────────────
+
+   Categories and purposes are free text — you can invent them — so the icon
+   is matched on keywords rather than looked up by exact name. First pattern
+   to hit wins, which is why the specific ones sit above the generic ones. */
+
+const ICONS = [
+  [/workout|exercise|gym|treadmill|jog|running|sport|swim|bike|cycl|yoga|stretch|hike/, '🏃'],
+  [/potato|couch|netflix|binge|scroll|telly|\btv\b/, '🛋️'],
+  [/family|kids|parent|lola|lolo|anak|reunion/, '👨‍👩‍👧'],
+  [/focus|deep work|study|studying|homework|research|thesis/, '🎯'],
+  [/chore|laundry|tidy|sweep|dishes|housework/, '🧹'],
+  [/grocer|palengke|supermarket|market/, '🛒'],
+  [/eat out|restaurant|dining|dinner|lunch|breakfast|merienda|food/, '🍽️'],
+  [/petrol|fuel|gas station|diesel/, '⛽'],
+  [/commute|traffic|jeep|tricycle|train|\bbus\b|grab|fare/, '🚌'],
+  [/house improve|renovat|repair|paint|carpent|hardware/, '🔨'],
+  [/birthday|anniversar|celebrat|fiesta/, '🎂'],
+  [/gadget|phone|laptop|computer|tech/, '📱'],
+  [/utilit|electric|meralco|water bill|internet|wifi|bill/, '💡'],
+  [/appliance|aircon|fridge|washing machine|rice cooker/, '🔌'],
+  [/shopping|mall|clothes|shoes/, '🛍️'],
+  [/project|freelance|client|side hustle|business/, '🛠️'],
+  [/movie|cinema|film|concert|show/, '🎬'],
+  [/pray|worship|church|mass|bible|devotion|medit|reflect|journal|gratitude|quiet time|retreat/, '🙏'],
+  [/sleep|nap|rest|siesta|recover/, '😴'],
+  [/read|book|library/, '📚'],
+  [/cook|baking|kitchen/, '🍳'],
+  [/wash car|\bcar\b|drive|vehicle|motor/, '🚗'],
+  [/email|inbox|admin|paperwork/, '✉️'],
+  [/meeting|standup|call|zoom|client sync/, '🗓️'],
+  [/code|coding|program|dev\b|build/, '💻'],
+  [/school|class|tuition|college|university/, '🎓'],
+  [/health|doctor|clinic|medicine|hospital|dentist/, '🏥'],
+  [/coffee|kape|cafe|tea/, '☕'],
+  [/game|gaming|console|mobile legends/, '🎮'],
+  [/travel|trip|flight|vacation|beach/, '✈️'],
+  [/music|guitar|sing|band/, '🎵'],
+  [/pet|\bdog\b|\bcat\b|aso|pusa/, '🐕'],
+  [/friend|barkada|hangout|social/, '🧑‍🤝‍🧑'],
+  [/save|savings|bank|invest|ipon/, '🏦'],
+  [/gift|regalo|donation|tithe/, '🎁'],
+  [/rent|mortgage|amortization/, '🏠'],
+  [/walk|stroll|lakad/, '🚶'],
+  [/garden|plant|halaman/, '🪴'],
+  [/clean|wash|linis/, '🧼']
+];
+
+const iconCache = {};
+function iconFor(name, fallback) {
+  const key = String(name || '');
+  if (iconCache[key] != null) return iconCache[key];
+  const low = key.toLowerCase();
+  const hit = ICONS.find(([re]) => re.test(low));
+  return (iconCache[key] = hit ? hit[1] : fallback);
+}
+/* ── follow-up questions ──
+
+   Matched on keywords rather than on an exact category name, so a category you
+   invent later ("Gym", "Merienda") still asks, and renaming one does not
+   silently switch the prompt off. */
+
+/* Order matters. The food patterns are deliberately tested before the workout
+   one, because "run" is a perfectly good word for an errand — a grocery run, a
+   coffee run — and the workout pattern would otherwise claim all of them. */
+const FOLLOW_UPS = [
+  {
+    key: 'shopping-food',
+    // Buying food rather than eating it, so the question is worded differently.
+    re: /grocer|palengke|supermarket|\bmarket\b|pantry|errand/,
+    title: 'What food did you buy?',
+    hint: 'Optional — handy when you look back at where the food budget went.',
+    placeholder: 'e.g. rice, chicken, vegetables, milk'
+  },
+  {
+    key: 'food',
+    re: /\bfood\b|\beat\b|eating|\bate\b|\bmeal\b|breakfast|lunch|dinner|snack|merienda|restaurant|dining|cook|cooking|baking|kape|coffee|cafe|takeout|kain/,
+    title: 'What did you eat?',
+    hint: 'Optional — a line about the meal is enough.',
+    placeholder: 'e.g. grilled chicken, rice, salad'
+  },
+  {
+    key: 'workout',
+    re: /workout|exercise|gym|treadmill|jog|jogging|running|\brun\b|sport|swim|bike|cycl|yoga|stretch|hike|lift|weights|cardio|crossfit|pilates|zumba|badminton|basketball/,
+    title: 'What kind of workout was that?',
+    hint: 'Sets, distance, how it felt — whatever you would want to read back later.',
+    placeholder: 'e.g. 5 km treadmill, 30 min, steady pace'
+  }
+];
+
+// Reads both the free text and the category/purpose, since either can be the
+// thing that identifies an entry as a workout or a meal.
+function followUpFor(kind, row) {
+  const hay = `${row.activity || ''} ${row.category || row.purpose || ''}`.toLowerCase();
+  return FOLLOW_UPS.find((f) => f.re.test(hay)) || null;
+}
+
+const catIcon = (name) => iconFor(name, '⏱️');
+const purposeIcon = (name) => iconFor(name, '💸');
+// The tracker decides the fallback; everything else is shared.
+const nameIcon = (name) => (state.app === 'money' ? purposeIcon(name) : catIcon(name));
+const withIcon = (name) => `${nameIcon(name)} ${name}`;
+
+/* ─────────────────────────── seed data ─────────────────────────── */
+
+function seedState() {
+  const today = new Date();
+  const t = iso(today);
+
+  const seed = [
+    ['Watch Eala vs Nally WTA match', 'Potato Couching', 390, 420],
+    ['Treadmill', 'Workout', 435, 470],
+    ['Wash car', 'Chores', 490, 525],
+    ['Grocery run', 'Chores', 540, 570],
+    ['Breakfast with the family', 'Family Time', 570, 630],
+    ['Watch Eat Bulaga', 'Potato Couching', 630, 670],
+    ['Cooking for the birthday celeb', 'Chores', 670, 740]
+  ].map(([a, c, f, to], i) => ({ id: 'e' + i, date: t, activity: a, category: c, from: f, to: to }));
+
+  // Deterministic history so week and month views have something honest to show.
+  const kinds = [['Deep work', 'Focus Work', 540, 240], ['Emails', 'Focus Work', 900, 45], ['Treadmill', 'Workout', 420, 40],
+    ['Dinner with the family', 'Family Time', 1110, 75], ['Laundry', 'Chores', 990, 50], ['Netflix', 'Potato Couching', 1230, 90],
+    ['Grocery run', 'Chores', 630, 45], ['Reading', 'Focus Work', 1290, 35]];
+  const hist = [];
+  for (let d = 1; d <= 34; d++) {
+    const day = new Date(today); day.setDate(today.getDate() - d);
+    const ds = iso(day);
+    const n = 3 + ((d * 7) % 3);
+    for (let k = 0; k < n; k++) {
+      const [a, c, f, len] = kinds[(d * 3 + k) % kinds.length];
+      const jitter = ((d * 13 + k * 29) % 40) - 20;
+      hist.push({ id: `h${d}-${k}`, date: ds, activity: a, category: c, from: f + jitter, to: f + jitter + len });
+    }
+  }
+
+  const mSeed = [
+    ['Freelance invoice — Q3 retainer', 'Projects', 15000, 0],
+    ['Grocery run', 'Groceries', 0, 2450],
+    ['Fuel top-up', 'Petrol', 0, 1800],
+    ['Lunch with the family', 'Eat Out', 0, 1240],
+    ['Gift for Lola’s birthday', 'Birthdays', 0, 3200],
+    ['Electricity bill', 'Utilities', 0, 4380]
+  ].map(([a, p, i, o], k) => ({ id: 'ms' + k, date: t, activity: a, purpose: p, in: i, out: o }));
+
+  const mKinds = [['Grocery run', 'Groceries', 0, 1900], ['Jeep + train fare', 'Commute', 0, 180], ['Coffee run', 'Eat Out', 0, 420],
+    ['Movie night', 'Movies', 0, 900], ['Fuel top-up', 'Petrol', 0, 1700], ['Paint for the hallway', 'House Improvements', 0, 2600],
+    ['Phone case', 'Gadgets', 0, 750], ['Client payout', 'Projects', 12000, 0], ['New rice cooker', 'Appliances', 0, 3400],
+    ['Weekend shopping', 'Shopping', 0, 2100], ['Water bill', 'Utilities', 0, 690]];
+  const mHist = [];
+  for (let d = 1; d <= 34; d++) {
+    const day = new Date(today); day.setDate(today.getDate() - d);
+    const ds = iso(day);
+    const n = 2 + ((d * 5) % 3);
+    for (let k = 0; k < n; k++) {
+      const [a, p, i, o] = mKinds[(d * 4 + k) % mKinds.length];
+      const j = 1 + (((d * 11 + k * 7) % 40) - 20) / 100;
+      mHist.push({ id: `mh${d}-${k}`, date: ds, activity: a, purpose: p, in: Math.round(i * j), out: Math.round(o * j) });
+    }
+  }
+
+  return {
+    entries: seed.concat(hist),
+    money: mSeed.concat(mHist),
+    categories: [
+      { name: 'Chores', color: PALETTE[0] },
+      { name: 'Workout', color: PALETTE[1] },
+      { name: 'Potato Couching', color: PALETTE[2] },
+      { name: 'Family Time', color: PALETTE[3] },
+      { name: 'Focus Work', color: PALETTE[4] }
+    ],
+    purposes: PURPOSES.map((n, i) => ({ name: n, color: PALETTE[i % PALETTE.length] }))
+  };
+}
+
+/* Categories and purposes without the demo history — what a brand new account
+   starts from, so it is not empty on first sign-in. */
+function seedTaxonomy() {
+  const full = seedState();
+  return { categories: full.categories, purposes: full.purposes };
+}
+
+/* ─────────────────────────── persistence ─────────────────────────── */
+
+/* localStorage stays the app's own store: every edit lands here first and the
+   UI never waits on the network. On top of the data it carries the bookkeeping
+   the sync needs —
+
+     tombstones  ids of rows deleted locally, with the time of death. Without
+                 these the next pull would cheerfully restore them.
+     dirty       what has changed since the last successful push.
+     lastSyncAt  server clock from the last sync; the pull watermark.
+     account     which account this data belongs to, so signing in as someone
+                 else cannot silently inherit it.
+
+   View, range and timer stay per-session, as before. */
+
+const EMPTY_KEYED = () => ({ entries: {}, money: {}, categories: {}, purposes: {} });
+
+function load() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (!d || !Array.isArray(d.entries) || !Array.isArray(d.money)) return null;
+    return d;
+  } catch (e) { return null; }
+}
+
+function save() {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify({
+      entries: state.entries, money: state.money,
+      categories: state.categories, purposes: state.purposes,
+      currency: state.currency, currencyUpdatedAt: state.currencyUpdatedAt,
+      tombstones: state.tombstones, dirty: state.dirty,
+      lastSyncAt: state.lastSyncAt, account: state.account
+    }));
+  } catch (e) { /* private mode or full quota — the session still works */ }
+}
+
+/* ─────────────────────────── api ─────────────────────────── */
+
+/* Every request passes through here, so counting them is enough to know
+   whether anything is in flight — no call site has to remember to say so. */
+let inFlight = 0;
+function paintBusy() {
+  const bar = document.getElementById('zimpan-progress');
+  if (bar) bar.style.display = inFlight > 0 ? 'block' : 'none';
+}
+
+async function api(path, { method = 'GET', body } = {}) {
+  inFlight += 1;
+  paintBusy();
+  try {
+    return await request(path, method, body);
+  } finally {
+    inFlight = Math.max(0, inFlight - 1);
+    paintBusy();
+  }
+}
+
+async function request(path, method, body) {
+  const res = await fetch(path, {
+    method,
+    credentials: 'same-origin',
+    headers: Object.assign(
+      { 'X-Zimpan-Client': '1' },
+      body ? { 'Content-Type': 'application/json' } : {}
+    ),
+    body: body ? JSON.stringify(body) : undefined
+  });
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* empty or non-JSON body */ }
+  if (!res.ok) {
+    const err = new Error((data && data.error) || `Request failed (${res.status})`);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+const API = {
+  config: () => api('/api/config'),
+  google: (credential) => api('/api/auth/google', { method: 'POST', body: { credential } }),
+  me: () => api('/api/me'),
+  login: (email, password) => api('/api/login', { method: 'POST', body: { email, password } }),
+  register: (email, password) => api('/api/register', { method: 'POST', body: { email, password } }),
+  logout: () => api('/api/logout', { method: 'POST' }),
+  forgot: (email) => api('/api/forgot', { method: 'POST', body: { email } }),
+  reset: (token, password) => api('/api/reset', { method: 'POST', body: { token, password } }),
+  push: (since, changes) => api('/api/sync', { method: 'POST', body: { since: since || 0, changes } })
+};
+
+/* ─────────────────────────── state ─────────────────────────── */
+
+const today = new Date();
+const todayIso = iso(today);
+const storedRaw = load();
+/* A device with no store starts with the category and purpose lists but no
+   entries. The demo history in seedState() belongs to the local-only era — now
+   that accounts exist, seeding it would offer to upload invented data into a
+   brand new account on first sign-in. */
+const stored = storedRaw || Object.assign({ entries: [], money: [] }, seedTaxonomy());
+
+const state = {
+  app: 'time',
+  range: CONFIG.defaultRange,
+  selectedDate: todayIso,
+
+  entries: stored.entries,
+  money: stored.money,
+  categories: stored.categories,
+  purposes: stored.purposes,
+  currency: CURRENCIES.some((c) => c.code === stored.currency) ? stored.currency : 'PHP',
+
+  form: { date: todayIso, activity: '', category: (stored.categories[0] || {}).name || 'Chores', from: hm(today.getHours() * 60 + today.getMinutes()), to: '' },
+  mForm: { date: todayIso, activity: '', purpose: 'Groceries', in: '', out: '' },
+
+  newCatOpen: false, newCatName: '',
+  newPurposeOpen: false, newPurposeName: '',
+
+  timerStart: null, timerActivity: '', timerCategory: (stored.categories[0] || {}).name || 'Chores',
+  reportOpen: false,
+
+  // Slice drill-down: the category/purpose the donut is focused on, and
+  // whether its entry list is expanded underneath.
+  focus: null, focusOpen: false,
+
+  /* ── sync bookkeeping (persisted) ── */
+  currencyUpdatedAt: Number(stored.currencyUpdatedAt) || 0,
+  tombstones: Object.assign(EMPTY_KEYED(), stored.tombstones),
+  dirty: Object.assign(EMPTY_KEYED(), stored.dirty, { currency: !!(stored.dirty && stored.dirty.currency) }),
+  lastSyncAt: Number(stored.lastSyncAt) || 0,
+  account: stored.account || null,
+
+  /* ── session (per-load) ── */
+  booted: false,
+  auth: null,
+  googleClientId: null,
+  // 'login' | 'register' | 'forgot' | 'reset'
+  authMode: 'login',
+  authEmail: '', authPassword: '', authError: '', authBusy: false,
+  authNotice: '',
+  resetToken: '',
+  migrateOffer: null,
+  // noteSkipped is per-session on purpose: skipping is an answer, so the same
+  // question stops asking until the next page load.
+  notePrompt: null, noteDraft: '', noteSkipped: {},
+  toast: '',
+  netState: 'idle', netMessage: '',
+  syncing: false,
+
+  geo: null
+};
+
+// First run: persist the starting taxonomy so it is stable across reloads.
+if (!storedRaw) save();
+
+/* ─────────────────────────── sync ───────────────────────────
+
+   Local-first. Every edit lands in localStorage and renders immediately; the
+   server is reconciled afterwards and is never in the way of a keystroke.
+
+   Conflicts resolve last-write-wins on `updatedAt`, the same rule the server
+   applies, so both ends reach the same answer independently. One caveat worth
+   knowing: `updatedAt` comes from whichever device made the edit, so a device
+   with a badly wrong clock can win or lose exchanges it shouldn't. */
+
+const KINDS = ['entries', 'money', 'categories', 'purposes'];
+const KEY_OF = { entries: 'id', money: 'id', categories: 'name', purposes: 'name' };
+
+const markDirty = (kind, key) => { state.dirty[kind][String(key)] = true; };
+
+// Every mutation goes through touch() or bury(), so nothing can change without
+// getting a timestamp and a place in the outbox.
+function touch(kind, row) {
+  row.updatedAt = Date.now();
+  markDirty(kind, row[KEY_OF[kind]]);
+  return row;
+}
+function bury(kind, key) {
+  state.tombstones[kind][String(key)] = Date.now();
+  markDirty(kind, key);
+}
+
+function serialise(kind, r) {
+  if (kind === 'entries') return { id: r.id, date: r.date, activity: r.activity, category: r.category, from: r.from, to: r.to, note: r.note || '', updatedAt: r.updatedAt || 0 };
+  if (kind === 'money') return { id: r.id, date: r.date, activity: r.activity, purpose: r.purpose, in: Number(r.in) || 0, out: Number(r.out) || 0, note: r.note || '', updatedAt: r.updatedAt || 0 };
+  return { name: r.name, color: r.color, position: r.position || 0, updatedAt: r.updatedAt || 0 };
+}
+function deserialise(kind, r) {
+  if (kind === 'entries') return { id: r.id, date: r.date, activity: r.activity, category: r.category, from: r.from, to: r.to, note: r.note || '', updatedAt: r.updatedAt };
+  if (kind === 'money') return { id: r.id, date: r.date, activity: r.activity, purpose: r.purpose, in: r.in, out: r.out, note: r.note || '', updatedAt: r.updatedAt };
+  return { name: r.name, color: r.color, position: r.position, updatedAt: r.updatedAt };
+}
+
+const findRow = (kind, key) => state[kind].find((x) => String(x[KEY_OF[kind]]) === String(key));
+
+function collectChanges() {
+  const out = {};
+  KINDS.forEach((kind) => {
+    const rows = [];
+    Object.keys(state.dirty[kind]).forEach((key) => {
+      const live = findRow(kind, key);
+      if (live) rows.push(serialise(kind, live));
+      else if (state.tombstones[kind][key]) {
+        rows.push({ [KEY_OF[kind]]: key, updatedAt: state.tombstones[kind][key], deleted: true });
+      }
+    });
+    if (rows.length) out[kind] = rows;
+  });
+  if (state.dirty.currency) out.currency = { value: state.currency, updatedAt: state.currencyUpdatedAt };
+  return out;
+}
+
+function mergeChanges(changes) {
+  if (!changes) return;
+  KINDS.forEach((kind) => {
+    const keyName = KEY_OF[kind];
+    (changes[kind] || []).forEach((row) => {
+      const key = String(row[keyName]);
+      const idx = state[kind].findIndex((x) => String(x[keyName]) === key);
+      const localAt = idx >= 0 ? (state[kind][idx].updatedAt || 0) : (state.tombstones[kind][key] || 0);
+      // A local edit newer than the server's copy stays put and stays dirty,
+      // so the next push carries it up instead of losing it here.
+      if (localAt > row.updatedAt) return;
+      if (row.deleted) {
+        if (idx >= 0) state[kind].splice(idx, 1);
+        state.tombstones[kind][key] = row.updatedAt;
+      } else {
+        const built = deserialise(kind, row);
+        if (idx >= 0) state[kind][idx] = built; else state[kind].push(built);
+        delete state.tombstones[kind][key];
+      }
+      delete state.dirty[kind][key];
+    });
+  });
+  if (changes.currency && changes.currency.updatedAt >= state.currencyUpdatedAt) {
+    state.currency = changes.currency.value;
+    state.currencyUpdatedAt = changes.currency.updatedAt;
+    state.dirty.currency = false;
+  }
+}
+
+/* Clears the outbox only for rows untouched since they were collected — an
+   edit made while the request was in flight has to stay queued. */
+function clearPushed(sent) {
+  KINDS.forEach((kind) => {
+    (sent[kind] || []).forEach((row) => {
+      const key = String(row[KEY_OF[kind]]);
+      const live = findRow(kind, key);
+      const currentAt = live ? live.updatedAt : state.tombstones[kind][key];
+      if (currentAt === row.updatedAt) delete state.dirty[kind][key];
+    });
+  });
+  if (sent.currency && state.currencyUpdatedAt === sent.currency.updatedAt) state.dirty.currency = false;
+}
+
+const pendingCount = () =>
+  KINDS.reduce((n, k) => n + Object.keys(state.dirty[k]).length, 0) + (state.dirty.currency ? 1 : 0);
+
+function setNet(netState, message) {
+  state.netState = netState;
+  state.netMessage = message;
+  paintNet();
+}
+
+// Status changes repaint one element rather than the page — a full render here
+// would tear out the field you are typing in.
+function paintNet() {
+  const el = root.querySelector('[data-net]');
+  if (!el) return;
+  el.textContent = netLabel();
+  el.style.color = state.netState === 'offline' || state.netState === 'error'
+    ? 'var(--color-text)' : 'var(--color-neutral-600)';
+}
+
+function netLabel() {
+  const pending = pendingCount();
+  if (state.netState === 'syncing') return 'Syncing…';
+  if (state.netState === 'offline') return pending ? `Offline · ${pending} waiting` : 'Offline';
+  if (state.netState === 'synced') return pending ? `${pending} waiting` : 'All changes saved';
+  return pending ? `${pending} waiting` : '';
+}
+
+let syncTimer = null;
+function queueSync(delay) {
+  if (!state.auth) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => { syncNow(); }, delay == null ? 800 : delay);
+}
+
+async function syncNow() {
+  if (!state.auth || state.syncing) return;
+  state.syncing = true;
+  setNet('syncing', '');
+  const sent = collectChanges();
+  try {
+    const res = await API.push(state.lastSyncAt, sent);
+    mergeChanges(res.changes);
+    clearPushed(sent);
+    state.lastSyncAt = res.serverTime;
+    state.syncing = false;
+    save();
+    setNet('synced', '');
+    render();
+  } catch (err) {
+    state.syncing = false;
+    if (err.status === 401) {
+      // Session expired or revoked elsewhere. The local copy is untouched.
+      state.auth = null;
+      setNet('idle', '');
+      render();
+      return;
+    }
+    setNet('offline', '');
+  }
+}
+
+/* ── account lifecycle ── */
+
+const hasLocalData = () => state.entries.length > 0 || state.money.length > 0;
+
+function resetLocal() {
+  const tax = seedTaxonomy();
+  const t = Date.now();
+  state.entries = [];
+  state.money = [];
+  state.categories = tax.categories.map((c) => ({ name: c.name, color: c.color, position: 0, updatedAt: t }));
+  state.purposes = tax.purposes.map((p, i) => ({ name: p.name, color: p.color, position: i, updatedAt: t }));
+  state.tombstones = EMPTY_KEYED();
+  state.dirty = Object.assign(EMPTY_KEYED(), { currency: false });
+  state.lastSyncAt = 0;
+  state.focus = null;
+  state.focusOpen = false;
+  // A fresh account has no taxonomy server-side, so push these up.
+  ['categories', 'purposes'].forEach((k) => state[k].forEach((r) => markDirty(k, r.name)));
+}
+
+/* Stamps and queues everything already on this device. Rows predating the
+   back-end have no updatedAt at all, hence the fill-in. */
+function adoptLocalData() {
+  const t = Date.now();
+  KINDS.forEach((kind) => {
+    state[kind].forEach((row) => {
+      if (!row.updatedAt) row.updatedAt = t;
+      if (KEY_OF[kind] === 'name' && row.position == null) row.position = 0;
+      markDirty(kind, row[KEY_OF[kind]]);
+    });
+  });
+  if (!state.currencyUpdatedAt) state.currencyUpdatedAt = t;
+  state.dirty.currency = true;
+}
+
+async function afterSignIn(user) {
+  // Different account on this browser: its data is not ours to inherit.
+  if (state.account && state.account !== user.email) {
+    resetLocal();
+    state.account = user.email;
+    save();
+  } else if (!state.account) {
+    if (hasLocalData()) {
+      // Data from before there were accounts. Ask before uploading it.
+      state.migrateOffer = { entries: state.entries.length, money: state.money.length };
+      render();
+      return;
+    }
+    state.account = user.email;
+    save();
+  }
+  if (!state.dirty.currency && user.currency) state.currency = user.currency;
+  render();
+  await syncNow();
+}
+
+/* ── google sign-in ──
+   Google's script is fetched only when the server says a client id exists, so
+   an unconfigured install makes no third-party request at all. */
+
+let gisState = 'idle'; // idle | loading | ready | failed
+
+function loadGoogle() {
+  if (gisState !== 'idle' || !state.googleClientId) return;
+  gisState = 'loading';
+  const s = document.createElement('script');
+  s.src = 'https://accounts.google.com/gsi/client';
+  s.async = true;
+  s.defer = true;
+  s.onload = () => {
+    try {
+      window.google.accounts.id.initialize({
+        client_id: state.googleClientId,
+        callback: onGoogleCredential
+      });
+      gisState = 'ready';
+      mountGoogleButton();
+    } catch (e) {
+      gisState = 'failed';
+    }
+  };
+  s.onerror = () => { gisState = 'failed'; render(); };
+  document.head.appendChild(s);
+}
+
+// render() rebuilds the DOM, so the button has to be re-drawn into the fresh
+// container every time the auth screen is painted.
+function mountGoogleButton() {
+  if (gisState !== 'ready' || !window.google) return;
+  const host = root.querySelector('[data-google-btn]');
+  if (!host) return;
+  host.innerHTML = '';
+  try {
+    window.google.accounts.id.renderButton(host, {
+      theme: 'outline', size: 'large', shape: 'pill',
+      text: 'continue_with', width: 320, logo_alignment: 'center'
+    });
+  } catch (e) { /* the email form still works */ }
+}
+
+async function onGoogleCredential(response) {
+  state.authBusy = true;
+  state.authError = '';
+  render();
+  try {
+    const res = await API.google(response && response.credential);
+    state.authBusy = false;
+    state.authPassword = '';
+    state.auth = res.user;
+    await afterSignIn(res.user);
+  } catch (err) {
+    state.authBusy = false;
+    state.authError = err.message || 'Google sign-in did not complete.';
+    render();
+  }
+}
+
+async function boot() {
+  // A reset link lands here with ?reset=<token>; that screen wins over
+  // everything, including an existing session on this device.
+  const token = new URLSearchParams(location.search).get('reset');
+  if (token) {
+    state.resetToken = token;
+    state.authMode = 'reset';
+    state.booted = true;
+    state.auth = null;
+    render();
+  }
+
+  try {
+    const cfg = await API.config();
+    state.googleClientId = cfg.googleClientId || null;
+    if (state.googleClientId) loadGoogle();
+  } catch (e) { /* offline, or not configured — email sign-in is unaffected */ }
+
+  if (state.authMode === 'reset') { if (state.googleClientId) loadGoogle(); return; }
+
+  try {
+    const me = await API.me();
+    state.booted = true;
+    state.auth = me.user;
+    await afterSignIn(me.user);
+  } catch (err) {
+    state.booted = true;
+    if (err.status === 401) {
+      state.auth = null;
+    } else if (state.account) {
+      // Network down but this browser already belongs to an account: carry on
+      // from the local copy rather than locking the user out of their own data.
+      state.auth = { email: state.account, currency: state.currency };
+      setNet('offline', '');
+    }
+    render();
+  }
+}
+
+/* ─────────────────────────── derivations ─────────────────────────── */
+
+const colorOf = (name) => { const c = state.categories.find((x) => x.name === name); return c ? c.color : PALETTE[7]; };
+/* Purposes are drawn from MONEY_PALETTE by position rather than from the colour
+   saved on the record, so the green theme applies to data logged before it
+   existed without rewriting anything in storage. */
+const purposeColor = (name) => {
+  const i = state.purposes.findIndex((x) => x.name === name);
+  return MONEY_PALETTE[(i < 0 ? 7 : i) % MONEY_PALETTE.length];
+};
+
+function withinRange(list) {
+  const { selectedDate, range } = state;
+  if (range === 'day') return list.filter((e) => e.date === selectedDate);
+  const end = new Date(selectedDate + 'T00:00:00');
+  const start = new Date(end); start.setDate(end.getDate() - (range === 'week' ? 6 : 29));
+  return list.filter((e) => { const d = new Date(e.date + 'T00:00:00'); return d >= start && d <= end; });
+}
+const rangeEntries = () => withinRange(state.entries);
+const moneyRangeEntries = () => withinRange(state.money);
+
+function totalsByCategory(list) {
+  const map = {};
+  list.forEach((e) => {
+    const m = Math.max(0, e.to - e.from);
+    if (!map[e.category]) map[e.category] = { name: e.category, mins: 0, count: 0, color: colorOf(e.category) };
+    map[e.category].mins += m; map[e.category].count += 1;
+  });
+  return Object.values(map).sort((a, b) => b.mins - a.mins);
+}
+function totalsByPurpose(list) {
+  const map = {};
+  list.filter((e) => e.out > 0).forEach((e) => {
+    if (!map[e.purpose]) map[e.purpose] = { name: e.purpose, mins: 0, count: 0, color: purposeColor(e.purpose) };
+    map[e.purpose].mins += e.out; map[e.purpose].count += 1;
+  });
+  return Object.values(map).sort((a, b) => b.mins - a.mins);
+}
+
+function reportRangeLabel() {
+  const { range, selectedDate } = state;
+  const end = new Date(selectedDate + 'T00:00:00');
+  const f = (d) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  if (range === 'day') return f(end);
+  const start = new Date(end); start.setDate(end.getDate() - (range === 'week' ? 6 : 29));
+  return `${f(start)} — ${f(end)}`;
+}
+
+/* ─────────────────────────── wellbeing ───────────────────────────
+
+   These notes are observations drawn from what you logged — not a health
+   assessment, and deliberately not phrased as one. Each activity is matched on
+   its text and its minutes are shared out across the four dimensions by the
+   weights below; `still` marks sedentary time, which reads against the physical
+   picture rather than for it. */
+
+const DIMENSIONS = [
+  { key: 'physical', label: 'Physically' },
+  { key: 'emotional', label: 'Emotionally' },
+  { key: 'mental', label: 'Mentally' },
+  { key: 'spiritual', label: 'Spiritually' }
+];
+
+// Minutes a day that read as "the dimension is being fed". Gentle on purpose.
+const TARGETS = { physical: 30, emotional: 60, mental: 120, spiritual: 15 };
+
+const WELLBEING = [
+  { re: /workout|exercise|gym|treadmill|jog|running|sport|swim|bike|cycl|yoga|stretch|hike|walk|lakad/, w: { physical: 1, mental: .3, emotional: .3 } },
+  { re: /pray|worship|church|mass|bible|devotion|medit|reflect|journal|gratitude|quiet time|retreat|nature|tithe/, w: { spiritual: 1, emotional: .4, mental: .3 } },
+  // Spiritual credit comes only from the reflective rule above. Time with people
+  // and time reading are their own goods; counting them here would let the card
+  // report quiet you never actually had.
+  { re: /family|kids|anak|parent|lola|lolo|friend|barkada|date night|reunion|dinner with|lunch with|breakfast with|visit|catch up/, w: { emotional: 1 } },
+  { re: /sleep|nap|rest|siesta|recover/, w: { physical: .8, mental: .5 } },
+  { re: /read|book|study|learn|class|school|course|tuition/, w: { mental: 1 } },
+  { re: /focus|deep work|code|coding|program|writing|email|admin|meeting|research|project|client|work/, w: { mental: 1 } },
+  { re: /chore|clean|linis|laundry|wash|cook|grocer|errand|repair|garden|tidy|dishes/, w: { physical: .5, mental: .2 } },
+  { re: /potato|couch|netflix|binge|scroll|social media|youtube|\btv\b|gaming|\bgame|movie|eat bulaga/, w: {}, still: true },
+  { re: /commute|traffic|jeep|train|\bbus\b|driving|fare/, w: {}, drain: true }
+];
+
+function wellbeing(list) {
+  const mins = { physical: 0, emotional: 0, mental: 0, spiritual: 0 };
+  let tracked = 0, still = 0, drain = 0, vague = 0;
+  list.forEach((e) => {
+    const m = Math.max(0, e.to - e.from);
+    if (!m) return;
+    tracked += m;
+    const hit = WELLBEING.find((r) => r.re.test(`${e.activity} ${e.category}`.toLowerCase()));
+    if (!hit) { vague += m; return; }
+    if (hit.still) still += m;
+    if (hit.drain) drain += m;
+    Object.keys(hit.w).forEach((k) => { mins[k] += m * hit.w[k]; });
+  });
+  return { mins, tracked, still, drain, vague };
+}
+
+/* Wording that reads the same whether the window is one day or thirty — the
+   per-day aside is what carries the difference. */
+const NOTES = {
+  physical: {
+    strong: (t, p) => `${t} of movement${p} — your body is getting what it asks for.`,
+    steady: (t, p) => `${t} of movement${p}. A decent base, with room on top.`,
+    thin: (t, p) => `Only ${t} of movement${p}. Mostly still otherwise.`,
+    none: () => 'No movement logged — the body reads a still day as a signal to slow everything down.'
+  },
+  emotional: {
+    strong: (t, p) => `${t} with the people who matter${p}. That is what keeps the rest bearable.`,
+    steady: (t, p) => `${t} of time with others${p} — present, if not abundant.`,
+    thin: (t, p) => `Just ${t} with other people${p}. Thin company.`,
+    none: () => 'Nothing logged with other people. A day spent entirely alone tends to be felt later.'
+  },
+  mental: {
+    strong: (t, p) => `${t} of real concentration${p}. Sharp, and worth protecting.`,
+    steady: (t, p) => `${t} of focused work${p} — a workable load.`,
+    thin: (t, p) => `${t} of focused work${p}. Light, whether by choice or drift.`,
+    none: () => 'No focused work logged — restful, or scattered, depending on how it felt.'
+  },
+  spiritual: {
+    strong: (t, p) => `${t} of quiet or reflection${p}. Rare, and it shows in everything else.`,
+    steady: (t, p) => `${t} of stillness or reflection${p}.`,
+    thin: (t, p) => `Only ${t} of anything quiet or reflective${p}.`,
+    none: () => 'Nothing still or reflective logged — no room where the day could settle.'
+  }
+};
+
+function dimensionReadings(wb, days) {
+  const d = Math.max(1, days);
+  return DIMENSIONS.map((dim) => {
+    const total = wb.mins[dim.key];
+    const perDay = total / d;
+    const ratio = perDay / TARGETS[dim.key];
+    const status = ratio >= 1 ? 'strong' : ratio >= .5 ? 'steady' : total > 0 ? 'thin' : 'none';
+    const aside = d > 1 && total > 0 ? ` (about ${durShort(Math.round(perDay))} a day)` : '';
+    return {
+      key: dim.key, label: dim.label, status, ratio,
+      // The meter is capped; `ratio` stays raw so overload is still detectable.
+      pct: Math.max(0, Math.min(100, Math.round(ratio * 100))),
+      note: NOTES[dim.key][status](durShort(Math.round(total)), aside)
+    };
+  });
+}
+
+// Only what is worth saying — an empty list renders as a clean bill.
+function adviceFor(wb, readings, days) {
+  const out = [];
+  const r = (k) => readings.find((x) => x.key === k);
+  const d = Math.max(1, days);
+  const low = (k) => r(k).status === 'thin' || r(k).status === 'none';
+
+  if (low('physical')) out.push('Put 20–30 minutes of movement somewhere in the day. A walk counts, and it is the cheapest thing here that changes how the rest feels.');
+  if (wb.tracked && wb.still > wb.tracked * .35 && wb.still / d > 90) out.push(`${durShort(Math.round(wb.still))} went to screens and sitting. Trading one block of that for something that moves or connects is the highest-value swap available.`);
+  if (low('emotional')) out.push('Little time with other people. A short call or one shared meal does more for how you feel than another hour alone with a screen.');
+  if (r('mental').ratio > 3) out.push('That is a heavy load of concentrated work. Deliberate breaks are not lost time — they are what keeps the work any good.');
+  if (r('spiritual').status === 'none') out.push('Nothing quiet logged at all. Ten unhurried minutes — prayer, journalling, sitting still — gives the rest of the day somewhere to land.');
+  if (wb.tracked && wb.vague > wb.tracked * .5) out.push('A lot of what you logged does not say much about itself. More specific activity names will sharpen these notes considerably.');
+  return out;
+}
+
+/* Everything the templates read, computed once per render. */
+function compute() {
+  const s = state;
+  const now = new Date();
+  const isMoney = s.app === 'money';
+  const fmtLong = isMoney ? amount : dur;
+  const fmtShort = isMoney ? amount : durShort;
+
+  const dayList = s.entries.filter((e) => e.date === s.selectedDate).sort((a, b) => a.from - b.from);
+  const mDayList = s.money.filter((e) => e.date === s.selectedDate);
+  const mRangeList = moneyRangeEntries();
+
+  const inSum = mRangeList.reduce((a, e) => a + (Number(e.in) || 0), 0);
+  const outSum = mRangeList.reduce((a, e) => a + (Number(e.out) || 0), 0);
+
+  const totals = isMoney ? totalsByPurpose(mRangeList) : totalsByCategory(rangeEntries());
+  const total = totals.reduce((a, b) => a + b.mins, 0);
+
+  const C = 2 * Math.PI * 72;
+  let acc = 0;
+  const slices = totals.map((t) => {
+    const frac = total ? t.mins / total : 0;
+    const seg = { name: t.name, color: t.color, dash: `${(frac * C).toFixed(2)} ${C.toFixed(2)}`, offset: (-acc * C).toFixed(2), pct: `${Math.round(frac * 100)}%` };
+    acc += frac; return seg;
+  });
+
+  /* Drill-down. `state.focus` is only a name, so it is re-validated against the
+     totals every render — a focus that falls outside the current range, or that
+     belongs to the other tracker, simply stops applying. */
+  const focusItem = totals.find((t) => t.name === s.focus) || null;
+  const focusSource = focusItem
+    ? (isMoney
+      ? mRangeList.filter((e) => e.purpose === focusItem.name && e.out > 0)
+      : rangeEntries().filter((e) => e.category === focusItem.name))
+    : [];
+  const focusList = focusSource
+    .slice()
+    .sort((a, b) => (a.date === b.date ? (isMoney ? 0 : a.from - b.from) : (a.date < b.date ? 1 : -1)))
+    .map((e) => ({
+      date: dayLabel(e.date),
+      activity: e.activity,
+      meta: isMoney ? '' : `${clock12(e.from)} – ${clock12(e.to)}`,
+      value: isMoney ? amount(e.out) : durShort(Math.max(0, e.to - e.from))
+    }));
+
+  const top = totals[0] ? totals[0].mins : 1;
+  const dayTracked = dayList.reduce((a, e) => a + Math.max(0, e.to - e.from), 0);
+  const untrackedMins = Math.max(0, 960 - dayTracked);
+
+  let streak = 0;
+  for (let i = 0; i < 60; i++) {
+    const d = new Date(s.selectedDate + 'T00:00:00'); d.setDate(d.getDate() - i);
+    if (s.entries.some((e) => e.date === iso(d))) streak++; else break;
+  }
+
+  const formFrom = parseHm(s.form.from), formTo = parseHm(s.form.to);
+
+  /* ── the report's activity list ──
+     Every entry in the selected range, grouped by day and totalled per day.
+     Money pulls the whole range rather than spend-only, so income shows up too;
+     the summary table above it stays spend-only, as it always was. */
+  const reportSource = isMoney ? mRangeList : rangeEntries();
+  const byDate = {};
+  reportSource.forEach((e) => { (byDate[e.date] = byDate[e.date] || []).push(e); });
+  const reportDays = Object.keys(byDate).sort().map((d) => {
+    const list = byDate[d].slice().sort((a, b) => (isMoney ? 0 : a.from - b.from));
+    const outSumDay = list.reduce((a, e) => a + (isMoney ? (Number(e.out) || 0) : Math.max(0, e.to - e.from)), 0);
+    const inSumDay = isMoney ? list.reduce((a, e) => a + (Number(e.in) || 0), 0) : 0;
+    return {
+      label: new Date(d + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
+      totalLabel: isMoney ? amount(outSumDay) : dur(outSumDay),
+      inLabel: inSumDay ? amount(inSumDay) : '',
+      rows: list.map((e) => ({
+        activity: e.activity,
+        note: e.note || '',
+        name: isMoney ? e.purpose : e.category,
+        color: isMoney ? purposeColor(e.purpose) : colorOf(e.category),
+        when: isMoney ? '' : `${clock12(e.from)} – ${clock12(e.to)}`,
+        out: isMoney ? (Number(e.out) ? amount(e.out) : '—') : durShort(Math.max(0, e.to - e.from)),
+        in: isMoney ? (Number(e.in) ? amount(e.in) : '—') : ''
+      }))
+    };
+  });
+
+  /* ── today, live ──
+     Clipped at the current minute so the card describes hours that have
+     actually happened. An entry logged ahead of the clock contributes only the
+     part of it already behind us. */
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  const sinceSix = Math.max(0, nowMins - 360);
+  const todayList = s.entries
+    .filter((e) => e.date === todayIso)
+    .map((e) => Object.assign({}, e, { to: Math.min(e.to, nowMins) }))
+    .filter((e) => e.to > e.from);
+  const todayWb = wellbeing(todayList);
+  const todayTop = totalsByCategory(todayList)[0];
+  const partOfDay = nowMins < 720 ? 'Morning' : nowMins < 1020 ? 'Afternoon' : nowMins < 1260 ? 'Evening' : 'Late';
+  const todayHeadline = sinceSix < 30
+    ? 'The day is barely under way — nothing to read into yet.'
+    : !todayWb.tracked
+      ? `Nothing logged yet across the ${durShort(sinceSix)} since 6 AM.`
+      : `${durShort(todayWb.tracked)} logged of the ${durShort(sinceSix)} since 6 AM${todayTop ? `, most of it on ${todayTop.name.toLowerCase()}` : ''}.`;
+
+  /* ── the days behind it ──
+     The range window with today taken out, so the look-back is only ever about
+     days that actually finished. When the range is a single day and that day is
+     today there is nothing to look back on, so it falls back to yesterday. */
+  let pastList = withinRange(s.entries).filter((e) => e.date !== todayIso);
+  let pastFallback = false;
+  if (!pastList.length && s.range === 'day' && s.selectedDate === todayIso) {
+    const y = new Date(todayIso + 'T00:00:00'); y.setDate(y.getDate() - 1);
+    pastList = s.entries.filter((e) => e.date === iso(y));
+    pastFallback = true;
+  }
+  const pastDates = Array.from(new Set(pastList.map((e) => e.date))).sort();
+  const pastWb = wellbeing(pastList);
+  const pastTotals = totalsByCategory(pastList);
+  const byDay = {};
+  pastList.forEach((e) => { byDay[e.date] = (byDay[e.date] || 0) + Math.max(0, e.to - e.from); });
+  const busiest = Object.keys(byDay).sort((a, b) => byDay[b] - byDay[a])[0];
+
+  const pastLabel = !pastDates.length ? 'No finished days in this range yet'
+    : pastDates.length === 1
+      ? (pastFallback ? 'Yesterday · ' : '') + new Date(pastDates[0] + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })
+      : `${dayLabel(pastDates[0])} – ${dayLabel(pastDates[pastDates.length - 1])} · ${pastDates.length} days tracked`;
+
+  return {
+    isMoney, fmtLong, fmtShort, dayList, mDayList, mRangeList, inSum, outSum,
+    totals, total, slices, top, dayTracked, untrackedMins, streak,
+
+    geoLabel: s.geo ? `${s.geo} · auto` : 'Local time · auto',
+    nowLabel: now.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }),
+    dayHeading: new Date(s.selectedDate + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }),
+
+    clock: elapsedClock(),
+    timerBtnLabel: s.timerStart ? 'Stop & save' : 'Start',
+    formDuration: formTo > formFrom ? dur(formTo - formFrom) : 'set a time',
+
+    dayTotalLabel: dur(dayTracked),
+    rangeTotal: fmtShort(total),
+    rangeLabel: s.range === 'day' ? 'this day' : s.range === 'week' ? 'last 7 days' : 'last 30 days',
+    leaderboard: totals.map((t) => ({ name: t.name, color: t.color, label: fmtShort(t.mins), width: `${Math.round((t.mins / top) * 100)}%` })),
+
+    focusName: focusItem ? focusItem.name : null,
+    focusColor: focusItem ? focusItem.color : null,
+    focusPct: focusItem ? `${Math.round((focusItem.mins / (total || 1)) * 100)}%` : '',
+    focusValue: focusItem ? fmtShort(focusItem.mins) : '',
+    focusOpen: !!(focusItem && s.focusOpen),
+    focusList,
+
+    todayKicker: `${partOfDay} · ${now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`,
+    todayHeadline,
+    todayLive: liveLine(),
+    todayReadings: dimensionReadings(todayWb, 1),
+    todayAdvice: adviceFor(todayWb, dimensionReadings(todayWb, 1), 1),
+    todayEmpty: todayList.length === 0,
+
+    pastLabel,
+    pastHeadline: pastDates.length
+      ? `${durShort(pastWb.tracked)} tracked across ${pastDates.length} ${pastDates.length === 1 ? 'day' : 'days'}${pastTotals[0] ? `, led by ${pastTotals[0].name.toLowerCase()}` : ''}.`
+      : 'Nothing to look back on yet — the notes fill in as days finish.',
+    // Only worth saying when there is more than one day to compare.
+    pastBusiest: busiest && pastDates.length > 1 ? `Busiest day was ${dayLabel(busiest)} at ${durShort(byDay[busiest])}.` : '',
+    pastTop: pastTotals.slice(0, 3).map((t) => ({
+      name: t.name, color: t.color, label: durShort(t.mins),
+      width: `${Math.round((t.mins / (pastWb.tracked || 1)) * 100)}%`,
+      pct: `${Math.round((t.mins / (pastWb.tracked || 1)) * 100)}%`
+    })),
+    pastReadings: dimensionReadings(pastWb, pastDates.length),
+    pastAdvice: adviceFor(pastWb, dimensionReadings(pastWb, pastDates.length), pastDates.length),
+    pastEmpty: pastDates.length === 0,
+
+    untracked: durShort(untrackedMins),
+    untrackedNote: untrackedMins > 240 ? 'A big slice of the day is unaccounted for.' : 'Nicely accounted for — keep it up.',
+    streakLabel: `${streak} ${streak === 1 ? 'day' : 'days'}`,
+    streakNote: streak >= 7 ? 'A full week of tracking. That is a habit now.' : 'Log something tomorrow to keep it alive.',
+
+    moneyIn: amount(inSum),
+    moneyOut: amount(outSum),
+    moneyOutCount: mRangeList.filter((e) => e.out > 0).length,
+    moneyNet: signed(inSum - outSum),
+    netColor: inSum - outSum < 0 ? 'var(--color-text)' : 'var(--color-accent-700)',
+    netNote: inSum - outSum < 0 ? 'Spending outran what came in.' : 'You kept some of it. Good.',
+
+    reportRange: reportRangeLabel(),
+    reportTitle: isMoney ? 'MONEY REPORT' : 'TIME REPORT',
+    reportColLabel: isMoney ? 'Purpose' : 'Category',
+    reportAmountLabel: isMoney ? 'Amount' : 'Time spent',
+    reportFooterRowLabel: isMoney ? 'Money in' : 'Untracked',
+    reportFooterRowValue: isMoney ? amount(inSum) : durShort(untrackedMins),
+    reportHeadline: totals[0] ? `${totals[0].name} took the biggest share.` : 'Nothing tracked in this range yet.',
+    reportNote: totals[0]
+      ? `${fmtLong(totals[0].mins)} of ${fmtLong(total)} tracked — ${Math.round((totals[0].mins / (total || 1)) * 100)}% of everything you logged. ${totals.length} ${isMoney ? 'purposes' : 'categories'} in play.`
+      : 'Add a few entries and the picture fills in.',
+    reportRows: totals.map((t) => ({ name: t.name, color: t.color, count: t.count, time: fmtLong(t.mins), pct: `${Math.round((t.mins / (total || 1)) * 100)}%` })),
+
+    reportDays,
+    reportEntryCount: reportSource.length,
+
+    timeline: dayList.map((e) => {
+      const a = Math.max(360, Math.min(1320, e.from)), b = Math.max(360, Math.min(1320, e.to));
+      return { title: `${e.activity} · ${clock12(e.from)}`, color: colorOf(e.category), left: `${((a - 360) / 960 * 100).toFixed(2)}%`, width: `${Math.max(0.4, (b - a) / 960 * 100).toFixed(2)}%` };
+    })
+  };
+}
+
+/* The one genuinely real-time string: what is happening this second. Refreshed
+   by the ticker between renders, so it stays current while you sit on the page. */
+function liveLine() {
+  if (state.timerStart) return `Running now · ${state.timerActivity.trim() || 'Untitled activity'} · ${elapsedClock()}`;
+  const now = new Date();
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  // Only what the clock has actually reached — an entry logged ahead of now is
+  // not "what is happening".
+  const started = state.entries.filter((e) => e.date === todayIso && e.from <= nowMins);
+  if (!started.length) return 'Nothing logged yet today.';
+  const spanning = started.find((e) => e.to > nowMins);
+  if (spanning) return `In progress · ${spanning.activity} · since ${clock12(spanning.from)}`;
+  const sorted = started.slice().sort((a, b) => a.to - b.to);
+  const last = sorted[sorted.length - 1];
+  const gap = nowMins - last.to;
+  return `Last logged · ${last.activity} · ended ${clock12(last.to)}${gap > 0 ? `, ${durShort(gap)} ago` : ''}`;
+}
+
+function elapsedClock() {
+  const el = state.timerStart ? Math.floor((Date.now() - state.timerStart) / 1000) : 0;
+  return `${pad(Math.floor(el / 3600))}:${pad(Math.floor(el / 60) % 60)}:${pad(el % 60)}`;
+}
+
+/* ─────────────────────────── style helpers ─────────────────────────── */
+
+const chipStyle = (active, color) => `display:inline-flex;align-items:center;cursor:pointer;font-size:11px;padding:4px 12px;border-radius:999px;border:1px solid ${active ? color : 'var(--color-divider)'};background:${active ? color : 'transparent'};color:${active ? '#f2f2f3' : 'var(--color-neutral-800)'};font-family:var(--font-body);`;
+const tabStyle = (active) => `padding:7px 16px;border-radius:999px;font-size:13px;cursor:pointer;border:0;font-family:var(--font-heading);font-weight:600;background:${active ? 'var(--color-accent)' : 'transparent'};color:${active ? 'var(--color-bg)' : 'var(--color-text)'};`;
+// Sizing lives in the .timer-btn class so the breakpoints can widen it.
+const timerBtnStyle = (running) => `border:1px solid ${running ? 'var(--color-accent-900)' : 'var(--color-accent)'};background:${running ? 'var(--color-accent-900)' : 'var(--color-accent)'};`;
+const rowChipStyle = (color) => `border:0;background:${color}1f;color:var(--color-accent-900);font:inherit;font-size:12px;padding:3px 10px;border-radius:999px;cursor:pointer;`;
+
+// The value stays the bare name — only the label carries the icon — so every
+// existing comparison against state keeps working.
+function options(names, selected, extra) {
+  return names.map((n) => `<option value="${esc(n)}"${n === selected ? ' selected' : ''}>${esc(withIcon(n))}</option>`).join('') + (extra || '');
+}
+
+/* ─────────────────────────── templates ─────────────────────────── */
+
+function header(v) {
+  return `
+  <div class="appbar">
+    <div style="display: flex; flex-direction: column; gap: 1px;">
+      <div style="font-family: var(--font-heading); font-weight: 600; font-size: 20px; letter-spacing: .02em; line-height: 1;">ZIMPAN<span style="color: var(--color-accent-700);">.</span></div>
+      <div style="font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--color-neutral-600);">Track What Matters</div>
+    </div>
+    <div style="display: flex; border: 1px solid var(--color-divider); border-radius: 999px; overflow: hidden;">
+      <button data-act="app-time" style="${tabStyle(!v.isMoney)}">Time Tracker</button>
+      <button data-act="app-money" style="${tabStyle(v.isMoney)}">Money Tracker</button>
+    </div>
+    <div class="appbar-meta">
+      <span data-geo>${esc(v.geoLabel)}</span><span style="opacity:.4">/</span><span data-now>${esc(v.nowLabel)}</span>
+      ${state.auth ? `<span style="opacity:.4">/</span>
+        <button data-act="sync-now" title="Sync now" style="border:0;background:transparent;padding:0;font:inherit;font-size:12px;cursor:pointer;color:var(--color-neutral-600);"><span data-net>${esc(netLabel())}</span></button>` : ''}
+    </div>
+    ${state.auth ? `
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:12px;color:var(--color-neutral-700);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(state.auth.email)}</span>
+        <button class="btn btn-ghost" data-act="sign-out" style="font-size:12px;">Sign out</button>
+      </div>` : ''}
+    <button class="btn btn-primary" data-act="open-report" style="position:relative">Export report</button>
+  </div>`;
+}
+
+/* ── account screens ── */
+
+const authShell = (inner) => `
+  <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:28px 18px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);">
+    <div class="blueprint" style="width:400px;max-width:100%;padding:32px 30px 30px;">
+      <div style="font-family:var(--font-heading);font-weight:600;font-size:24px;letter-spacing:.02em;line-height:1;">ZIMPAN<span style="color:var(--color-accent-700);">.</span></div>
+      <div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-neutral-600);margin-top:3px;">Track What Matters</div>
+      ${inner}
+    </div>
+  </div>`;
+
+const authMessages = () => `
+  ${state.authNotice ? `<div style="font-size:12.5px;line-height:1.5;color:var(--color-accent-900);background:var(--color-accent-100);padding:10px 12px;border-radius:var(--radius-md);margin-bottom:14px;">${esc(state.authNotice)}</div>` : ''}
+  ${state.authError ? `<div style="font-size:12.5px;line-height:1.5;color:var(--color-text);background:var(--color-neutral-200);padding:9px 11px;border-radius:var(--radius-md);margin-bottom:14px;">${esc(state.authError)}</div>` : ''}`;
+
+function forgotScreen() {
+  return authShell(`
+      <div style="font-size:13px;color:var(--color-neutral-700);margin:12px 0 20px;">
+        Enter the email you signed up with and we'll send a link to choose a new password.
+      </div>
+      <div class="field" style="margin-bottom:14px;"><label>Email</label>
+        <input class="input" type="email" autocomplete="email" data-k="auth-email" data-sync="authEmail" data-enter="forgot-submit" value="${esc(state.authEmail)}" placeholder="you@example.com">
+      </div>
+      ${authMessages()}
+      <button class="btn btn-primary" data-act="forgot-submit" style="width:100%;height:38px;display:inline-flex;align-items:center;justify-content:center;gap:9px;"${state.authBusy ? ' disabled' : ''}>
+        ${state.authBusy ? '<span class="spinner"></span>Sending…' : 'Send reset link'}
+      </button>
+      <button class="btn btn-ghost" data-act="auth-mode-login" style="width:100%;margin-top:10px;font-size:12.5px;">Back to sign in</button>`);
+}
+
+function resetScreen() {
+  return authShell(`
+      <div style="font-size:13px;color:var(--color-neutral-700);margin:12px 0 20px;">
+        Choose a new password. This link works once.
+      </div>
+      <div class="field" style="margin-bottom:6px;"><label>New password</label>
+        <input class="input" type="password" autocomplete="new-password" data-k="auth-password" data-sync="authPassword" data-enter="reset-submit" value="${esc(state.authPassword)}" placeholder="At least 10 characters">
+      </div>
+      <div style="font-size:11.5px;color:var(--color-neutral-600);margin-bottom:14px;">Signing in elsewhere will end when you save this — every other session is closed.</div>
+      ${authMessages()}
+      <button class="btn btn-primary" data-act="reset-submit" style="width:100%;height:38px;display:inline-flex;align-items:center;justify-content:center;gap:9px;"${state.authBusy ? ' disabled' : ''}>
+        ${state.authBusy ? '<span class="spinner"></span>Saving…' : 'Save new password'}
+      </button>
+      <button class="btn btn-ghost" data-act="auth-mode-login" style="width:100%;margin-top:10px;font-size:12.5px;">Back to sign in</button>`);
+}
+
+function authScreen() {
+  if (state.authMode === 'forgot') return forgotScreen();
+  if (state.authMode === 'reset') return resetScreen();
+  const register = state.authMode === 'register';
+  return `
+  <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:28px 18px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);">
+    <div class="blueprint" style="width:400px;max-width:100%;padding:32px 30px 30px;">
+      <div style="font-family:var(--font-heading);font-weight:600;font-size:24px;letter-spacing:.02em;line-height:1;">ZIMPAN<span style="color:var(--color-accent-700);">.</span></div>
+      <div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-neutral-600);margin-top:3px;">Track What Matters</div>
+      <div style="font-size:13px;color:var(--color-neutral-700);margin:12px 0 22px;">Where your time and money actually go.</div>
+
+      <div style="display:flex;border:1px solid var(--color-divider);border-radius:999px;overflow:hidden;margin-bottom:20px;">
+        <button data-act="auth-mode-login" style="${tabStyle(!register)};flex:1;">Sign in</button>
+        <button data-act="auth-mode-register" style="${tabStyle(register)};flex:1;">Create account</button>
+      </div>
+
+      ${state.googleClientId ? `
+        <div data-google-btn style="display:flex;justify-content:center;min-height:44px;margin-bottom:6px;"></div>
+        ${gisState === 'failed' ? '<div style="font-size:11.5px;color:var(--color-neutral-600);text-align:center;margin-bottom:6px;">Google sign-in could not load. Use your email and password below.</div>' : ''}
+        <div style="display:flex;align-items:center;gap:10px;margin:14px 0 16px;color:var(--color-neutral-600);font-size:11px;letter-spacing:.08em;text-transform:uppercase;">
+          <span style="flex:1;height:1px;background:var(--color-divider);"></span>or<span style="flex:1;height:1px;background:var(--color-divider);"></span>
+        </div>` : ''}
+
+      <div class="field" style="margin-bottom:12px;"><label>Email</label>
+        <input class="input" type="email" autocomplete="email" data-k="auth-email" data-sync="authEmail" data-enter="auth-submit" value="${esc(state.authEmail)}" placeholder="you@example.com">
+      </div>
+      <div class="field" style="margin-bottom:6px;"><label>Password</label>
+        <input class="input" type="password" autocomplete="${register ? 'new-password' : 'current-password'}" data-k="auth-password" data-sync="authPassword" data-enter="auth-submit" value="${esc(state.authPassword)}" placeholder="${register ? 'At least 10 characters' : ''}">
+      </div>
+      ${register
+        ? '<div style="font-size:11.5px;color:var(--color-neutral-600);margin:6px 0 14px;">Use at least 10 characters.</div>'
+        : '<div style="display:flex;justify-content:flex-end;margin:4px 0 14px;"><button data-act="auth-mode-forgot" style="border:0;background:transparent;padding:0;font:inherit;font-size:12px;color:var(--color-accent-700);cursor:pointer;text-decoration:underline;text-underline-offset:2px;">Forgot your password?</button></div>'}
+
+      ${authMessages()}
+
+      <button class="btn btn-primary" data-act="auth-submit" style="width:100%;height:38px;display:inline-flex;align-items:center;justify-content:center;gap:9px;"${state.authBusy ? ' disabled' : ''}>
+        ${state.authBusy ? '<span class="spinner"></span>' : ''}
+        ${state.authBusy ? (register ? 'Creating your account…' : 'Signing you in…') : (register ? 'Create account' : 'Sign in')}
+      </button>
+    </div>
+  </div>`;
+}
+
+function migrateScreen() {
+  const o = state.migrateOffer;
+  return `
+  <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:28px 18px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);">
+    <div class="blueprint" style="width:460px;max-width:100%;padding:30px;">
+      <h4 style="margin:0 0 10px;">There is data on this device</h4>
+      <div style="font-size:13px;line-height:1.6;color:var(--color-neutral-800);margin-bottom:8px;">
+        This browser holds ${o.entries} time ${o.entries === 1 ? 'entry' : 'entries'} and ${o.money} money ${o.money === 1 ? 'entry' : 'entries'} logged before you had an account.
+      </div>
+      <div style="font-size:13px;line-height:1.6;color:var(--color-neutral-700);margin-bottom:20px;">
+        Move it into <strong>${esc(state.auth ? state.auth.email : '')}</strong>, or start that account clean? Discarding clears it from this browser and cannot be undone.
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button class="btn btn-primary" data-act="migrate-upload">Upload it to my account</button>
+        <button class="btn btn-secondary" data-act="migrate-discard">Start clean</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function notePromptDialog() {
+  const p = state.notePrompt;
+  if (!p) return '';
+  return `
+    <div style="position:fixed;inset:0;background:color-mix(in srgb, var(--color-neutral-900) 55%, transparent);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50;">
+      <div class="blueprint" style="width:440px;max-width:100%;padding:26px 26px 24px;background:var(--color-bg);">
+        <h4 style="margin:0 0 4px;">${esc(p.title)}</h4>
+        <div style="font-size:12px;color:var(--color-neutral-600);margin-bottom:14px;">${esc(p.hint)}</div>
+        <textarea class="input" data-k="note-draft" data-sync="noteDraft" rows="4" maxlength="500"
+          placeholder="${esc(p.placeholder)}"
+          style="width:100%;resize:vertical;min-height:88px;font:inherit;font-size:14px;line-height:1.5;padding:10px 12px;">${esc(state.noteDraft)}</textarea>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;">
+          <span style="font-size:11.5px;color:var(--color-neutral-600);margin-right:auto;">Logged against “${esc(p.activity || 'this entry')}”. Optional.</span>
+          <button class="btn btn-ghost" data-act="note-skip">Skip</button>
+          <button class="btn btn-primary" data-act="note-save">Save note</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function splashScreen() {
+  return `
+  <div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);">
+    <div style="text-align:center;">
+      <div style="font-family:var(--font-heading);font-weight:600;font-size:24px;letter-spacing:.02em;line-height:1;">ZIMPAN<span style="color:var(--color-accent-700);">.</span></div>
+      <div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-neutral-600);margin-top:3px;">Track What Matters</div>
+    </div>
+    <span class="spinner" style="color:var(--color-accent-700);"></span>
+  </div>`;
+}
+
+// Short-lived confirmation. Adding an entry is instant because it is written
+// locally first, so the honest feedback is "done", not a fake wait.
+let toastTimer = null;
+function flash(message) {
+  state.toast = message;
+  paintToast();
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { state.toast = ''; paintToast(); }, 2200);
+}
+
+function paintToast() {
+  let el = document.getElementById('zimpan-toast');
+  if (!state.toast) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'zimpan-toast';
+    el.className = 'toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = state.toast;
+}
+
+function segRange(name, labels) {
+  const opt = (val, label) => `<label class="seg-opt"><input type="radio" name="${name}" data-act="range-${val}"${state.range === val ? ' checked' : ''}><span>${label}</span></label>`;
+  return `<div class="seg">${opt('day', labels[0])}${opt('week', labels[1])}${opt('month', labels[2])}</div>`;
+}
+
+/* The centre overlay covers the whole ring, so it stays click-through and only
+   the readout itself takes pointer events — otherwise it would swallow every
+   slice click. */
+function donut(v, size, stroke, totalSize) {
+  const arcs = v.slices.map((s) => {
+    const dimmed = v.focusName && v.focusName !== s.name;
+    return `<circle cx="100" cy="100" r="72" fill="none" stroke="${esc(s.color)}" stroke-width="${stroke}"
+      stroke-dasharray="${s.dash}" stroke-dashoffset="${s.offset}"
+      data-act="slice-pick" data-name="${esc(s.name)}"
+      style="cursor: pointer; opacity: ${dimmed ? '.24' : '1'}; transition: opacity .15s;">
+      <title>${esc(s.name)} · ${esc(s.pct)}</title></circle>`;
+  }).join('');
+
+  const centre = v.focusName
+    ? `<button data-act="focus-toggle" title="Show the entries behind ${esc(v.focusName)}"
+        style="pointer-events: auto; display: flex; flex-direction: column; align-items: center; gap: 2px; max-width: 100%; border: 0; background: transparent; padding: 0; font: inherit; color: inherit; cursor: pointer;">
+        <span style="font-size: 11px; line-height: 1.2; text-align: center; color: var(--color-neutral-700); text-decoration: underline; text-underline-offset: 2px;">${esc(withIcon(v.focusName))}</span>
+        <span style="font-family: var(--font-heading); font-size: ${totalSize}px; line-height: 1;">${esc(v.focusPct)}</span>
+        <span style="font-size: 11px; color: var(--color-neutral-600); font-variant-numeric: tabular-nums;">${esc(v.focusValue)}</span>
+      </button>`
+    : `<div style="font-family: var(--font-heading); font-size: ${totalSize}px; line-height: 1;">${esc(v.rangeTotal)}</div>
+       <div style="font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--color-neutral-600);">${esc(v.rangeLabel)}</div>`;
+
+  return `
+    <div style="position: relative; width: ${size}px; height: ${size}px; flex: none;">
+      <svg viewBox="0 0 200 200" style="width: 100%; height: 100%; transform: rotate(-90deg);">
+        <circle cx="100" cy="100" r="72" fill="none" stroke="var(--color-neutral-200)" stroke-width="${stroke}"></circle>
+        ${arcs}
+      </svg>
+      <div style="position: absolute; inset: 0; padding: 0 21%; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;">
+        ${centre}
+      </div>
+    </div>`;
+}
+
+function legend(v) {
+  return v.slices.map((s) => {
+    const on = v.focusName === s.name;
+    return `
+    <button data-act="legend-pick" data-name="${esc(s.name)}" title="Show the entries behind ${esc(s.name)}"
+      style="display: flex; align-items: center; gap: 9px; font: inherit; font-size: 13px; text-align: left;
+             border: 0; cursor: pointer; color: inherit; padding: 4px 6px; margin: 0 -6px; border-radius: var(--radius-md);
+             background: ${on ? 'var(--color-accent-100)' : 'transparent'}; opacity: ${v.focusName && !on ? '.5' : '1'};">
+      <span style="width: 10px; height: 10px; flex: none; background: ${esc(s.color)};"></span>
+      <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(withIcon(s.name))}</span>
+      <span style="font-variant-numeric: tabular-nums; color: var(--color-neutral-700);">${esc(s.pct)}</span>
+    </button>`;
+  }).join('');
+}
+
+/* The drilled-down entries. Range-aware, so week and month views list days the
+   day-by-day table on the left cannot show — hence the date column. */
+function focusPanel(v) {
+  if (!v.focusOpen) return '';
+
+  const rows = v.focusList.map((r) => `
+        <div style="display: flex; align-items: baseline; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--color-divider);">
+          <span style="flex: 0 0 54px; font-size: 11px; color: var(--color-neutral-600); font-variant-numeric: tabular-nums;">${esc(r.date)}</span>
+          <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px;" title="${esc(r.activity)}">${esc(r.activity)}</span>
+          ${r.meta ? `<span style="flex: none; font-size: 11px; color: var(--color-neutral-600); font-variant-numeric: tabular-nums;">${esc(r.meta)}</span>` : ''}
+          <span style="flex: none; min-width: 52px; text-align: right; font-size: 13px; font-variant-numeric: tabular-nums;">${esc(r.value)}</span>
+        </div>`).join('');
+
+  return `
+        <div style="margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--color-divider);">
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap;">
+            <span style="width: 10px; height: 10px; flex: none; background: ${esc(v.focusColor)};"></span>
+            <h4 style="margin: 0;">${esc(withIcon(v.focusName))}</h4>
+            <span style="font-size: 12px; color: var(--color-neutral-600); margin-right: auto;">${v.focusList.length} ${v.focusList.length === 1 ? 'entry' : 'entries'} · ${esc(v.rangeLabel)}</span>
+            <button class="btn btn-ghost" data-act="focus-clear" style="font-size: 12px;">Clear</button>
+          </div>
+          <div style="max-height: 268px; overflow-y: auto;">
+            ${rows || '<div style="padding: 18px 0; text-align: center; font-size: 13px; color: var(--color-neutral-600);">Nothing logged here in this range.</div>'}
+          </div>
+        </div>`;
+}
+
+function bars(v) {
+  return v.leaderboard.map((l) => `
+    <div>
+      <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 5px;">
+        <span>${esc(withIcon(l.name))}</span><span style="color: var(--color-neutral-700); font-variant-numeric: tabular-nums;">${esc(l.label)}</span>
+      </div>
+      <div style="height: 8px; background: var(--color-neutral-200);">
+        <div style="height: 100%; width: ${l.width}; background: ${esc(l.color)};"></div>
+      </div>
+    </div>`).join('');
+}
+
+/* ── wellbeing cards ── */
+
+const METER_COLOR = {
+  strong: 'var(--color-accent-600)',
+  steady: 'var(--color-accent-400)',
+  thin: 'var(--color-neutral-400)',
+  none: 'var(--color-neutral-300)'
+};
+
+function wellbeingRows(readings) {
+  return readings.map((r) => `
+          <div style="display: flex; gap: 11px; align-items: baseline;">
+            <span style="flex: 0 0 78px; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--color-neutral-600);">${esc(r.label)}</span>
+            <div style="flex: 1; min-width: 0;">
+              <div style="height: 5px; background: var(--color-neutral-200); margin-bottom: 6px;">
+                <div style="height: 100%; width: ${r.pct}%; background: ${METER_COLOR[r.status]};"></div>
+              </div>
+              <div style="font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800);">${esc(r.note)}</div>
+            </div>
+          </div>`).join('');
+}
+
+function adviceBlock(list) {
+  if (!list.length) {
+    return `
+          <div style="margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--color-divider); font-size: 12.5px; color: var(--color-neutral-700);">
+            Nothing worth flagging — this reads as a balanced stretch.
+          </div>`;
+  }
+  return `
+          <div style="margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--color-divider);">
+            <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 8px;">What might help</div>
+            <ul style="margin: 0; padding-left: 17px; display: flex; flex-direction: column; gap: 7px; font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800);">
+              ${list.map((a) => `<li>${esc(a)}</li>`).join('')}
+            </ul>
+          </div>`;
+}
+
+function todayCard(v) {
+  return `
+      <div class="blueprint" style="padding: 20px 22px 22px;">
+        <div style="display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; flex-wrap: wrap;">
+          <h4 style="margin: 0;">Today, as it happens</h4>
+          <span data-today-kicker style="font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--color-accent-700); margin-left: auto;">${esc(v.todayKicker)}</span>
+        </div>
+        <div data-live-line style="font-size: 12px; color: var(--color-neutral-600); margin-bottom: 12px;">${esc(v.todayLive)}</div>
+        <div style="font-size: 13.5px; line-height: 1.6; margin-bottom: 16px;">${esc(v.todayHeadline)}</div>
+        ${v.todayEmpty ? '' : `<div style="display: flex; flex-direction: column; gap: 13px;">${wellbeingRows(v.todayReadings)}</div>`}
+        ${v.todayEmpty ? '' : adviceBlock(v.todayAdvice)}
+      </div>`;
+}
+
+function pastCard(v) {
+  return `
+      <div class="blueprint" style="padding: 20px 22px 22px;">
+        <div style="display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; flex-wrap: wrap;">
+          <h4 style="margin: 0;">Looking back</h4>
+        </div>
+        <div style="font-size: 12px; color: var(--color-neutral-600); margin-bottom: 12px;">${esc(v.pastLabel)}</div>
+        <div style="font-size: 13.5px; line-height: 1.6;">${esc(v.pastHeadline)}</div>
+        ${v.pastBusiest ? `<div style="font-size: 12.5px; line-height: 1.6; color: var(--color-neutral-700); margin-top: 4px;">${esc(v.pastBusiest)}</div>` : ''}
+        ${v.pastEmpty ? '' : `
+        <div style="display: flex; flex-direction: column; gap: 8px; margin: 16px 0 18px;">
+          ${v.pastTop.map((t) => `
+            <div>
+              <div style="display: flex; justify-content: space-between; font-size: 12.5px; margin-bottom: 4px;">
+                <span>${esc(withIcon(t.name))}</span>
+                <span style="color: var(--color-neutral-700); font-variant-numeric: tabular-nums;">${esc(t.label)} · ${esc(t.pct)}</span>
+              </div>
+              <div style="height: 5px; background: var(--color-neutral-200);">
+                <div style="height: 100%; width: ${t.width}; background: ${esc(t.color)};"></div>
+              </div>
+            </div>`).join('')}
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 13px;">${wellbeingRows(v.pastReadings)}</div>
+        ${adviceBlock(v.pastAdvice)}`}
+      </div>`;
+}
+
+function timerCard(v) {
+  return `
+      <div class="blueprint timer-card" style="padding: 20px 22px;">        <div>
+          <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 4px;">Running</div>
+          <div data-clock style="font-family: var(--font-heading); font-size: 46px; line-height: 1; font-variant-numeric: tabular-nums;">${v.clock}</div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 8px; min-width: 0;">
+          <input class="input" data-k="timer-activity" data-sync="timerActivity" placeholder="What are you doing right now?" value="${esc(state.timerActivity)}">
+          <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+            ${state.categories.map((c) => `<button data-act="pick-timer-cat" data-name="${esc(c.name)}" style="${chipStyle(state.timerCategory === c.name, c.color)}">${esc(catIcon(c.name))} ${esc(c.name)}</button>`).join('')}
+          </div>
+        </div>
+        <button class="timer-btn" data-act="toggle-timer" style="${timerBtnStyle(!!state.timerStart)}">${v.timerBtnLabel}</button>
+      </div>`;
+}
+
+function addEntryCard(v) {
+  return `
+      <div class="blueprint" style="padding: 18px 22px 20px;">        <div style="display: flex; align-items: baseline; gap: 4px 10px; margin-bottom: 14px; flex-wrap: wrap;">
+          <h4 style="margin: 0;">Add an entry by hand</h4>
+          <span style="font-size: 12px; color: var(--color-neutral-600);">Date and time are filled in from where you are — change anything you like.</span>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: end;">
+          <div class="field" style="flex: 1 1 150px; min-width: 140px;"><label>Date</label><input class="input" type="date" data-k="form-date" data-sync="form.date" value="${esc(state.form.date)}"></div>
+          <div class="field" style="flex: 3 1 220px; min-width: 180px;"><label>Activity</label><input class="input" data-k="form-activity" data-sync="form.activity" placeholder="e.g. Wash car" value="${esc(state.form.activity)}"></div>
+          <div class="field" style="flex: 2 1 180px; min-width: 160px;"><label>Category</label>
+            <select class="input" data-act="form-category">${options(state.categories.map((c) => c.name), state.form.category, '<option value="__new">+ New category…</option>')}</select>
+          </div>
+          <div class="field" style="flex: 0 1 118px; min-width: 108px;"><label>From</label><input class="input" type="time" data-k="form-from" data-sync="form.from" data-live-dur value="${esc(state.form.from)}"></div>
+          <div class="field" style="flex: 0 1 118px; min-width: 108px;"><label>To</label><input class="input" type="time" data-k="form-to" data-sync="form.to" data-live-dur value="${esc(state.form.to)}"></div>
+          <div class="field" style="flex: 0 1 100px; min-width: 92px;"><label>Time spent</label><div data-form-duration style="height: 36px; display: flex; align-items: center; font-size: 14px; font-variant-numeric: tabular-nums; color: var(--color-accent-700);">${esc(v.formDuration)}</div></div>
+          <button class="btn btn-primary" data-act="add-entry" style="height: 36px;">Add entry</button>
+        </div>
+        ${state.newCatOpen ? `
+          <div style="display: flex; gap: 8px; align-items: center; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--color-divider);">
+            <span style="font-size: 12px; color: var(--color-neutral-700);">Name your new category</span>
+            <input class="input" data-k="new-cat" data-sync="newCatName" data-enter="create-cat" style="width: 220px;" placeholder="e.g. Side hustle" value="${esc(state.newCatName)}">
+            <button class="btn btn-secondary" data-act="create-cat">Create</button>
+            <button class="btn btn-ghost" data-act="cancel-cat">Cancel</button>
+          </div>` : ''}
+      </div>`;
+}
+
+function dayNav(v, countLabel) {
+  return `
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 6px; flex-wrap: wrap;">
+          <h4 style="margin: 0;">${esc(v.dayHeading)}</h4>
+          <span style="font-size: 12px; color: var(--color-neutral-600); margin-right: auto;">${countLabel}</span>
+          <div style="display: flex; gap: 8px; flex: none;">
+            <button class="btn btn-secondary" data-act="prev-day" title="Previous day">‹</button>
+            <button class="btn btn-secondary" data-act="next-day" title="Next day">›</button>
+          </div>
+        </div>`;
+}
+
+function timeTableCard(v) {
+  const rows = v.dayList.map((e) => {
+    const spent = Math.max(0, e.to - e.from);
+    return `
+              <tr>
+                <td data-col="activity"><input class="cell-input" data-k="r-${esc(e.id)}-a" data-change="entry-activity" data-id="${esc(e.id)}" value="${esc(e.activity)}"${e.note ? ` title="${esc(e.note)}"` : ''}><button class="cell-note" data-act="note-edit" data-kind="entries" data-id="${esc(e.id)}" title="${e.note ? esc(e.note) : 'Add a note'}" style="opacity:${e.note ? '.8' : '.25'}">📝</button></td>
+                <td data-col="category"><select data-change="entry-category" data-id="${esc(e.id)}" style="${rowChipStyle(colorOf(e.category))}">${options(state.categories.map((c) => c.name), e.category)}</select></td>
+                <td data-col="from" data-label="From"><input class="cell-time" type="time" data-change="entry-from" data-id="${esc(e.id)}" value="${hm(e.from)}"></td>
+                <td data-col="to" data-label="To"><input class="cell-time" type="time" data-change="entry-to" data-id="${esc(e.id)}" value="${hm(e.to)}"></td>
+                <td class="cell-spent" data-col="spent">${esc(dur(spent))}</td>
+                <td data-col="remove" style="text-align: right;"><button class="cell-del" data-act="entry-remove" data-id="${esc(e.id)}" title="Delete entry">×</button></td>
+              </tr>`;
+  }).join('');
+
+  return `
+      <div class="blueprint" style="padding: 18px 22px 8px;">        ${dayNav(v, `${esc(v.dayTotalLabel)} logged across ${v.dayList.length} entries`)}
+        <div class="rows-scroll">
+        <table class="table rows">
+          <thead><tr><th style="width: 30%">Activity</th><th style="width: 20%">Category</th><th style="width: 15%">From</th><th style="width: 15%">To</th><th style="width: 14%">Time spent</th><th></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        </div>
+        ${v.dayList.length === 0 ? '<div style="padding: 26px 0 30px; text-align: center; font-size: 13px; color: var(--color-neutral-600);">Nothing logged yet — start the timer, or add a row above.</div>' : ''}
+      </div>`;
+}
+
+function timelineCard(v) {
+  return `
+      <div class="blueprint" style="padding: 18px 22px 22px;">        <div style="display: flex; align-items: baseline; gap: 4px 10px; margin-bottom: 16px; flex-wrap: wrap;">
+          <h4 style="margin: 0;">Your day, end to end</h4>
+          <span style="font-size: 12px; color: var(--color-neutral-600);">6 AM to 10 PM · gaps are time you didn't log</span>
+        </div>
+        <div style="position: relative; height: 34px; background: repeating-linear-gradient(90deg, var(--color-neutral-200) 0 1px, transparent 1px 100%); border: 1px solid var(--color-divider);">
+          ${v.timeline.map((s) => `<div title="${esc(s.title)}" style="position: absolute; top: 0; bottom: 0; left: ${s.left}; width: ${s.width}; background: ${esc(s.color)};"></div>`).join('')}
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--color-neutral-600); margin-top: 6px; font-variant-numeric: tabular-nums;">
+          <span>6 AM</span><span>10 AM</span><span>2 PM</span><span>6 PM</span><span>10 PM</span>
+        </div>
+      </div>`;
+}
+
+function timeDesktop(v) {
+  return `
+  <div data-page-grid style="display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 28px; padding: 28px; max-width: 1560px; margin: 0 auto; align-items: start;">
+
+    <div style="display: flex; flex-direction: column; gap: 22px; min-width: 0;">
+      ${timerCard(v)}
+      ${addEntryCard(v)}
+      ${timeTableCard(v)}
+      ${timelineCard(v)}
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 22px; min-width: 0;">
+
+      <div class="blueprint" style="padding: 20px 22px 24px;">        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;">
+          <h4 style="margin: 0; margin-right: auto;">Where the time went</h4>
+          ${segRange('range', ['Day', 'Week', 'Month'])}
+        </div>
+        <div style="display: flex; gap: 24px; align-items: center; flex-wrap: wrap;">
+          ${donut(v, 190, 34, 27)}
+          <div style="display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0;">${legend(v)}</div>
+        </div>
+        ${focusPanel(v)}
+      </div>
+
+      <div class="blueprint" style="padding: 18px 22px 22px;">        <h4 style="margin: 0 0 14px;">Leaderboard</h4>
+        <div style="display: flex; flex-direction: column; gap: 13px;">${bars(v)}</div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 22px;">
+        <div class="blueprint" style="padding: 18px 20px 20px;">          <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 8px;">Untracked</div>
+          <div style="font-family: var(--font-heading); font-size: 32px; line-height: 1;">${esc(v.untracked)}</div>
+          <div style="font-size: 12px; color: var(--color-neutral-600); margin-top: 8px;">${esc(v.untrackedNote)}</div>
+        </div>
+        <div class="blueprint" style="padding: 18px 20px 20px;">          <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 8px;">Streak</div>
+          <div style="font-family: var(--font-heading); font-size: 32px; line-height: 1;">${esc(v.streakLabel)}</div>
+          <div style="font-size: 12px; color: var(--color-neutral-600); margin-top: 8px;">${esc(v.streakNote)}</div>
+        </div>
+      </div>
+
+      ${todayCard(v)}
+      ${pastCard(v)}
+    </div>
+  </div>`;
+}
+
+function moneyDesktop(v) {
+  const rows = v.mDayList.map((e) => `
+              <tr>
+                <td data-col="activity"><input class="cell-input" data-k="mr-${esc(e.id)}-a" data-change="money-activity" data-id="${esc(e.id)}" value="${esc(e.activity)}"${e.note ? ` title="${esc(e.note)}"` : ''}><button class="cell-note" data-act="note-edit" data-kind="money" data-id="${esc(e.id)}" title="${e.note ? esc(e.note) : 'Add a note'}" style="opacity:${e.note ? '.8' : '.25'}">📝</button></td>
+                <td data-col="purpose"><select data-change="money-purpose" data-id="${esc(e.id)}" style="${rowChipStyle(purposeColor(e.purpose))}">${options(state.purposes.map((p) => p.name), e.purpose)}</select></td>
+                <td data-col="in" data-label="Received" style="text-align: right;"><input class="cell-num is-in" type="number" min="0" placeholder="0" data-change="money-in" data-id="${esc(e.id)}" value="${e.in || ''}"></td>
+                <td data-col="out" data-label="Spent" style="text-align: right;"><input class="cell-num" type="number" min="0" placeholder="0" data-change="money-out" data-id="${esc(e.id)}" value="${e.out || ''}"></td>
+                <td data-col="remove" style="text-align: right;"><button class="cell-del" data-act="money-remove" data-id="${esc(e.id)}" title="Delete entry">×</button></td>
+              </tr>`).join('');
+
+  const stat = (kicker, value, note, color) => `
+        <div class="blueprint" style="padding: 18px 20px 20px;">          <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 8px;">${kicker}</div>
+          <div style="font-family: var(--font-heading); font-size: 32px; line-height: 1;${color ? ` color: ${color};` : ''}">${esc(value)}</div>
+          <div style="font-size: 12px; color: var(--color-neutral-600); margin-top: 8px;">${esc(note)}</div>
+        </div>`;
+
+  return `
+  <div data-page-grid style="display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 28px; padding: 28px; max-width: 1560px; margin: 0 auto; align-items: start;">
+
+    <div style="display: flex; flex-direction: column; gap: 22px; min-width: 0;">
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 22px;">
+        ${stat('Money in', v.moneyIn, v.rangeLabel)}
+        ${stat('Money out', v.moneyOut, `across ${v.moneyOutCount} entries`)}
+        ${stat('Net', v.moneyNet, v.netNote, v.netColor)}
+      </div>
+
+      <div class="blueprint" style="padding: 18px 22px 20px;">        <div style="display: flex; align-items: baseline; gap: 4px 10px; margin-bottom: 14px; flex-wrap: wrap;">
+          <h4 style="margin: 0;">Log money</h4>
+          <span style="font-size: 12px; color: var(--color-neutral-600); margin-right: auto;">Today's date is filled in for you — change it, and fill either column.</span>
+          <label style="display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--color-neutral-700);">
+            Currency
+            <select class="input" data-act="set-currency" style="width: auto; height: 32px; padding-block: 0;">
+              ${CURRENCIES.map((c) => `<option value="${esc(c.code)}"${c.code === state.currency ? ' selected' : ''}>${esc(c.label)} (${esc(c.symbol.trim())})</option>`).join('')}
+            </select>
+          </label>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: end;">
+          <div class="field" style="flex: 1 1 150px; min-width: 140px;"><label>Date</label><input class="input" type="date" data-k="m-date" data-sync="mForm.date" value="${esc(state.mForm.date)}"></div>
+          <div class="field" style="flex: 3 1 220px; min-width: 180px;"><label>Activity</label><input class="input" data-k="m-activity" data-sync="mForm.activity" placeholder="e.g. Grocery run" value="${esc(state.mForm.activity)}"></div>
+          <div class="field" style="flex: 2 1 190px; min-width: 170px;"><label>Purpose</label>
+            <select class="input" data-act="m-purpose">${options(state.purposes.map((p) => p.name), state.mForm.purpose, '<option value="__new">+ New purpose…</option>')}</select>
+          </div>
+          <div class="field" style="flex: 0 1 130px; min-width: 118px;"><label>Received</label><input class="input" type="number" min="0" placeholder="0" data-k="m-in" data-sync="mForm.in" value="${esc(state.mForm.in)}"></div>
+          <div class="field" style="flex: 0 1 130px; min-width: 118px;"><label>Spent</label><input class="input" type="number" min="0" placeholder="0" data-k="m-out" data-sync="mForm.out" value="${esc(state.mForm.out)}"></div>
+          <button class="btn btn-primary" data-act="add-money" style="height: 36px;">Add entry</button>
+        </div>
+        ${state.newPurposeOpen ? `
+          <div style="display: flex; gap: 8px; align-items: center; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--color-divider);">
+            <span style="font-size: 12px; color: var(--color-neutral-700);">Name your new purpose</span>
+            <input class="input" data-k="new-purpose" data-sync="newPurposeName" data-enter="create-purpose" style="width: 220px;" placeholder="e.g. Tuition" value="${esc(state.newPurposeName)}">
+            <button class="btn btn-secondary" data-act="create-purpose">Create</button>
+            <button class="btn btn-ghost" data-act="cancel-purpose">Cancel</button>
+          </div>` : ''}
+      </div>
+
+      <div class="blueprint" style="padding: 18px 22px 8px;">        ${dayNav(v, `${v.mDayList.length} entries`)}
+        <div class="rows-scroll">
+        <table class="table rows">
+          <thead><tr><th style="width: 34%">Activity</th><th style="width: 26%">Purpose</th><th style="width: 18%; text-align: right;">Received</th><th style="width: 18%; text-align: right;">Spent</th><th></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        </div>
+        ${v.mDayList.length === 0 ? '<div style="padding: 26px 0 30px; text-align: center; font-size: 13px; color: var(--color-neutral-600);">Nothing logged for this day yet.</div>' : ''}
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 22px; min-width: 0;">
+      <div class="blueprint" style="padding: 20px 22px 24px;">        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;">
+          <h4 style="margin: 0; margin-right: auto;">Where the money went</h4>
+          ${segRange('mrange2', ['Day', 'Week', 'Month'])}
+        </div>
+        <div style="display: flex; gap: 24px; align-items: center; flex-wrap: wrap;">
+          ${donut(v, 190, 34, 24)}
+          <div style="display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0;">${legend(v)}</div>
+        </div>
+        ${focusPanel(v)}
+      </div>
+
+      <div class="blueprint" style="padding: 18px 22px 22px;">        <h4 style="margin: 0 0 14px;">Biggest purposes</h4>
+        <div style="display: flex; flex-direction: column; gap: 13px;">${bars(v)}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* Every entry in range, day by day. `break-inside: avoid` keeps a day's block
+   from being split across pages when this goes to PDF. */
+function reportActivities(v) {
+  if (!v.reportEntryCount) {
+    return `
+          <div style="margin-top: 34px; padding-top: 14px; border-top: 1px solid var(--color-divider); font-size: 13px; color: var(--color-neutral-600);">
+            No activities logged in this range.
+          </div>`;
+  }
+
+  // Sits under the activity, indented to the same column, so a day still scans
+  // as a list of entries rather than a wall of prose.
+  const noteLine = (r, indent) => (r.note ? `
+              <div style="padding: 0 0 6px ${indent}px; margin-top: -2px; border-bottom: 1px solid var(--color-neutral-200); break-inside: avoid;">
+                <span style="font-size: 11.5px; line-height: 1.5; color: var(--color-neutral-700);">${esc(r.note)}</span>
+              </div>` : '');
+
+  const row = (r) => (v.isMoney ? `
+              <div style="display: flex; gap: 12px; align-items: baseline; padding: 6px 0; ${r.note ? '' : 'border-bottom: 1px solid var(--color-neutral-200);'} break-inside: avoid;">
+                <span style="flex: 1; min-width: 0; font-size: 13px;">${esc(r.activity)}</span>
+                <span style="flex: 0 0 168px; display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--color-neutral-700);"><span style="width: 8px; height: 8px; flex: none; background: ${esc(r.color)};"></span>${esc(withIcon(r.name))}</span>
+                <span style="flex: 0 0 88px; text-align: right; font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--color-accent-700);">${esc(r.in)}</span>
+                <span style="flex: 0 0 88px; text-align: right; font-size: 12.5px; font-variant-numeric: tabular-nums;">${esc(r.out)}</span>
+              </div>${noteLine(r, 0)}` : `
+              <div style="display: flex; gap: 12px; align-items: baseline; padding: 6px 0; ${r.note ? '' : 'border-bottom: 1px solid var(--color-neutral-200);'} break-inside: avoid;">
+                <span style="flex: 0 0 132px; font-size: 11.5px; color: var(--color-neutral-600); font-variant-numeric: tabular-nums;">${esc(r.when)}</span>
+                <span style="flex: 1; min-width: 0; font-size: 13px;">${esc(r.activity)}</span>
+                <span style="flex: 0 0 150px; display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--color-neutral-700);"><span style="width: 8px; height: 8px; flex: none; background: ${esc(r.color)};"></span>${esc(withIcon(r.name))}</span>
+                <span style="flex: 0 0 62px; text-align: right; font-size: 12.5px; font-variant-numeric: tabular-nums;">${esc(r.out)}</span>
+              </div>${noteLine(r, 144)}`);
+
+  return `
+          <div style="margin-top: 34px;">
+            <div style="display: flex; align-items: baseline; gap: 10px; border-bottom: 1px solid var(--color-divider); padding-bottom: 10px;">
+              <div style="font-family: var(--font-heading); font-size: 18px; margin-right: auto;">Every activity</div>
+              <div style="font-size: 12px; color: var(--color-neutral-700);">${v.reportEntryCount} ${v.reportEntryCount === 1 ? 'entry' : 'entries'} · ${esc(v.reportRange)}</div>
+            </div>
+            ${v.reportDays.map((d) => `
+            <div style="margin-top: 20px; break-inside: avoid;">
+              <div style="display: flex; align-items: baseline; gap: 10px; padding-bottom: 5px; border-bottom: 1px solid var(--color-divider);">
+                <span style="font-family: var(--font-heading); font-size: 14px;">${esc(d.label)}</span>
+                <span style="margin-left: auto; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--color-neutral-700);">${d.inLabel ? `${esc(d.inLabel)} in · ` : ''}${esc(d.totalLabel)}${v.isMoney ? ' out' : ''}</span>
+              </div>
+              ${d.rows.map(row).join('')}
+            </div>`).join('')}
+          </div>`;
+}
+
+function reportSheet(v) {
+  const rows = v.reportRows.map((r) => `
+                <tr>
+                  <td><span style="display: inline-flex; align-items: center; gap: 8px;"><span style="width: 10px; height: 10px; background: ${esc(r.color)};"></span>${esc(withIcon(r.name))}</span></td>
+                  <td style="text-align: right; font-variant-numeric: tabular-nums;">${r.count}</td>
+                  <td style="text-align: right; font-variant-numeric: tabular-nums;">${esc(r.time)}</td>
+                  <td style="text-align: right; font-variant-numeric: tabular-nums;">${esc(r.pct)}</td>
+                </tr>`).join('');
+
+  return `
+    <div class="report-wrap" data-report-backdrop style="position: fixed; inset: 0; background: color-mix(in srgb, var(--color-neutral-900) 55%, transparent); display: flex; align-items: flex-start; justify-content: center; overflow: auto; z-index: 40;">
+      <div style="width: 780px; max-width: 100%;">
+        <div class="no-print" style="display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap;">
+          <span class="report-hint" style="color: var(--color-bg); font-size: 13px; margin-right: auto;">Preview — chart, totals and every activity in range.</span>
+          <button class="btn btn-secondary" data-act="export-pdf" style="background: var(--color-bg);">Download PDF</button>
+          <button class="btn btn-secondary" data-act="export-jpg" style="background: var(--color-bg);">Download JPG</button>
+          <button class="btn btn-secondary" data-act="close-report" style="background: var(--color-bg);">Close</button>
+        </div>
+        <div class="report-sheet" id="report-sheet" style="background: var(--color-bg); box-shadow: var(--shadow-lg);">
+          <div style="display: flex; align-items: baseline; border-bottom: 1px solid var(--color-divider); padding-bottom: 14px; margin-bottom: 28px;">
+            <div style="font-family: var(--font-heading); font-size: 26px; margin-right: auto;">${esc(v.reportTitle)}</div>
+            <div style="font-size: 12px; color: var(--color-neutral-700);">${esc(v.reportRange)}</div>
+          </div>
+          <div style="display: flex; gap: 36px; align-items: center; margin-bottom: 32px; flex-wrap: wrap;">
+            <div class="report-donut" style="position: relative; flex: none;">
+              <svg viewBox="0 0 200 200" style="width: 100%; height: 100%; transform: rotate(-90deg);">
+                <circle cx="100" cy="100" r="72" fill="none" stroke="var(--color-neutral-200)" stroke-width="40"></circle>
+                ${v.slices.map((s) => `<circle cx="100" cy="100" r="72" fill="none" stroke="${esc(s.color)}" stroke-width="40" stroke-dasharray="${s.dash}" stroke-dashoffset="${s.offset}"></circle>`).join('')}
+              </svg>
+              <div style="position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                <div style="font-family: var(--font-heading); font-size: 30px; line-height: 1;">${esc(v.rangeTotal)}</div>
+                <div style="font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--color-neutral-600);">tracked</div>
+              </div>
+            </div>
+            <div style="flex: 1 1 240px; min-width: 0;">
+              <div style="font-family: var(--font-heading); font-size: 20px; margin-bottom: 8px;">${esc(v.reportHeadline)}</div>
+              <div style="font-size: 13px; color: var(--color-neutral-700); line-height: 1.6;">${esc(v.reportNote)}</div>
+            </div>
+          </div>
+          <div style="overflow-x: auto;">
+          <table class="table">
+            <thead><tr><th>${esc(v.reportColLabel)}</th><th style="text-align: right;">Entries</th><th style="text-align: right;">${esc(v.reportAmountLabel)}</th><th style="text-align: right;">Share</th></tr></thead>
+            <tbody>
+              ${rows}
+              <tr>
+                <td style="font-family: var(--font-heading);">${esc(v.reportFooterRowLabel)}</td>
+                <td style="text-align: right;">—</td>
+                <td style="text-align: right; font-variant-numeric: tabular-nums;">${esc(v.reportFooterRowValue)}</td>
+                <td style="text-align: right;">—</td>
+              </tr>
+            </tbody>
+          </table>
+          </div>
+          ${reportActivities(v)}
+          <div style="margin-top: 30px; font-size: 11px; color: var(--color-neutral-600); display: flex; justify-content: space-between;">
+            <span>Generated by ZIMPAN · ${esc(v.geoLabel)}</span><span>${esc(v.nowLabel)}</span>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* ─────────────────────────── render ─────────────────────────── */
+
+const root = document.getElementById('app');
+
+function captureFocus() {
+  const el = document.activeElement;
+  if (!el || !el.dataset || !el.dataset.k) return null;
+  let sel = null;
+  try { sel = { s: el.selectionStart, e: el.selectionEnd }; } catch (err) { /* not a text field */ }
+  return { k: el.dataset.k, sel };
+}
+function restoreFocus(f) {
+  if (!f) return;
+  const el = root.querySelector(`[data-k="${f.k}"]`);
+  if (!el) return;
+  el.focus();
+  if (f.sel && f.sel.s != null) { try { el.setSelectionRange(f.sel.s, f.sel.e); } catch (err) { /* ignore */ } }
+}
+
+function render() {
+  const f = captureFocus();
+
+  // Gates, in order: nothing to show before the session is known (unless this
+  // browser already has an account and can work offline), then the migration
+  // question, then the app itself.
+  if (!state.booted && !state.account) { root.innerHTML = splashScreen(); return; }
+  if (state.booted && !state.auth) { root.innerHTML = authScreen(); restoreFocus(f); mountGoogleButton(); return; }
+  if (state.migrateOffer) { root.innerHTML = migrateScreen(); return; }
+
+  const v = compute();
+  const body = v.isMoney ? moneyDesktop(v) : timeDesktop(v);
+
+  // data-app re-points the accent custom properties; see the theme block in index.html.
+  root.innerHTML = `
+<div id="zimpan-progress" class="topbar" style="display:none"><i></i></div>
+<div data-app="${state.app}" style="min-height: 100vh; background: var(--color-bg); color: var(--color-text); font-family: var(--font-body); padding-bottom: 48px;">
+  ${header(v)}
+  ${body}
+  ${state.reportOpen ? reportSheet(v) : ''}
+  ${notePromptDialog()}
+</div>`;
+
+  restoreFocus(f);
+  paintBusy();
+  // The dialog exists to be typed in, so put the caret there straight away.
+  const note = root.querySelector('[data-k="note-draft"]');
+  if (note && document.activeElement !== note) note.focus();
+}
+
+/* ── account actions ── */
+
+function setAuthMode(mode) {
+  state.authMode = mode;
+  state.authError = '';
+  state.authNotice = '';
+  if (mode !== 'reset') state.authPassword = '';
+  render();
+}
+
+async function submitForgot() {
+  if (state.authBusy) return;
+  const email = state.authEmail.trim();
+  if (!email) { state.authError = 'Enter the email you signed up with.'; render(); return; }
+  state.authBusy = true; state.authError = ''; state.authNotice = ''; render();
+  try {
+    const res = await API.forgot(email);
+    state.authBusy = false;
+    state.authNotice = res.message;
+    render();
+  } catch (err) {
+    state.authBusy = false;
+    state.authError = err.message || 'Could not send the email. Try again shortly.';
+    render();
+  }
+}
+
+async function submitReset() {
+  if (state.authBusy) return;
+  if (state.authPassword.length < 10) { state.authError = 'Password must be at least 10 characters.'; render(); return; }
+  state.authBusy = true; state.authError = ''; render();
+  try {
+    const res = await API.reset(state.resetToken, state.authPassword);
+    state.authBusy = false;
+    state.authPassword = '';
+    state.resetToken = '';
+    clearResetFromUrl();
+    state.auth = res.user;
+    flash('Password updated');
+    await afterSignIn(res.user);
+  } catch (err) {
+    state.authBusy = false;
+    state.authError = err.message || 'Could not reset the password.';
+    render();
+  }
+}
+
+// Takes the token out of the address bar so it is not left in history or
+// copied out of the URL later.
+function clearResetFromUrl() {
+  try { history.replaceState(null, '', location.pathname); } catch (e) { /* not supported */ }
+}
+
+async function submitAuth() {
+  if (state.authBusy) return;
+  const email = state.authEmail.trim();
+  const password = state.authPassword;
+  if (!email || !password) { state.authError = 'Enter your email and password.'; render(); return; }
+
+  state.authBusy = true; state.authError = ''; render();
+  try {
+    const res = state.authMode === 'register'
+      ? await API.register(email, password)
+      : await API.login(email, password);
+    state.authBusy = false;
+    state.authPassword = '';
+    state.auth = res.user;
+    await afterSignIn(res.user);
+  } catch (err) {
+    state.authBusy = false;
+    state.authError = err.status === 0 || !err.status
+      ? 'Could not reach the server. Check your connection.'
+      : err.message;
+    render();
+  }
+}
+
+async function signOut() {
+  // Anything still queued would be stranded — flush it before dropping the session.
+  if (pendingCount()) { try { await syncNow(); } catch (e) { /* keep it locally */ } }
+  try { await API.logout(); } catch (e) { /* the local session goes either way */ }
+  // Without this Google silently signs them straight back in on the next visit.
+  try { if (window.google) window.google.accounts.id.disableAutoSelect(); } catch (e) { /* not loaded */ }
+  state.auth = null;
+  state.authEmail = '';
+  state.authPassword = '';
+  state.authError = '';
+  setNet('idle', '');
+  render();
+}
+
+/* ─────────────────────────── actions ─────────────────────────── */
+
+function setDeep(path, value) {
+  const parts = path.split('.');
+  if (parts.length === 1) { state[parts[0]] = value; return; }
+  state[parts[0]] = Object.assign({}, state[parts[0]], { [parts[1]]: value });
+}
+
+/* A row edit commits on `change`, which the browser fires on blur — i.e. in
+   the middle of the click that caused the blur. Re-rendering there would tear
+   out the button before its click lands, so the row re-render waits for the
+   current gesture to finish. */
+let renderQueued = false;
+function scheduleRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  setTimeout(() => { renderQueued = false; render(); }, 0);
+}
+
+function updateEntry(id, patch) {
+  state.entries = state.entries.map((e) => (e.id === id ? touch('entries', Object.assign({}, e, patch)) : e));
+  save(); queueSync(); scheduleRender();
+}
+function updateMoney(id, patch) {
+  state.money = state.money.map((e) => (e.id === id ? touch('money', Object.assign({}, e, patch)) : e));
+  save(); queueSync(); scheduleRender();
+}
+function addCategoryIfNeeded(name) {
+  if (!name || state.categories.some((c) => c.name === name)) return;
+  state.categories = state.categories.concat([touch('categories', {
+    name, color: PALETTE[state.categories.length % PALETTE.length], position: state.categories.length
+  })]);
+}
+
+function toggleTimer() {
+  if (!state.timerStart) { state.timerStart = Date.now(); render(); return; }
+  const round = CONFIG.roundToMinutes || 1;
+  const startD = new Date(state.timerStart), endD = new Date();
+  const rnd = (m) => Math.round(m / round) * round;
+  const from = rnd(startD.getHours() * 60 + startD.getMinutes());
+  const entry = {
+    id: 't' + Date.now(),
+    date: iso(startD),
+    activity: state.timerActivity.trim() || 'Untitled activity',
+    category: state.timerCategory,
+    from,
+    to: Math.max(rnd(endD.getHours() * 60 + endD.getMinutes()), from + 1)
+  };
+  state.entries = state.entries.concat([touch('entries', entry)]);
+  state.timerStart = null;
+  state.timerActivity = '';
+  state.selectedDate = entry.date;
+  save(); queueSync(0); render();
+}
+
+function addEntry() {
+  const f = parseHm(state.form.from), t = parseHm(state.form.to);
+  if (!state.form.activity.trim() || !(t > f)) return;
+  const entry = touch('entries', { id: 'm' + Date.now(), date: state.form.date, activity: state.form.activity.trim(), category: state.form.category, from: f, to: t, note: '' });
+  state.entries = state.entries.concat([entry]);
+  state.selectedDate = state.form.date;
+  state.form = Object.assign({}, state.form, { activity: '', from: state.form.to, to: '' });
+  // The entry is already saved; the follow-up only ever adds to it.
+  askFollowUp('entries', entry);
+  save(); queueSync(0); render();
+  if (!state.notePrompt) flash(`Added · ${entry.activity}`);
+}
+
+function addMoney() {
+  const inV = Number(state.mForm.in) || 0, outV = Number(state.mForm.out) || 0;
+  if (!state.mForm.activity.trim() || (!inV && !outV)) return;
+  const row = touch('money', { id: 'mn' + Date.now(), date: state.mForm.date, activity: state.mForm.activity.trim(), purpose: state.mForm.purpose, in: inV, out: outV, note: '' });
+  state.money = state.money.concat([row]);
+  state.selectedDate = state.mForm.date;
+  state.mForm = Object.assign({}, state.mForm, { activity: '', in: '', out: '' });
+  askFollowUp('money', row);
+  save(); queueSync(0); render();
+  if (!state.notePrompt) flash(`Added · ${row.activity}`);
+}
+
+/* Opens the follow-up dialog when a just-added row looks like a workout or a
+   meal. Never blocks the entry itself — the row is committed either way.
+
+   Assignment is unconditional: an earlier prompt left in state would otherwise
+   survive into the next entry and look like the dialog refusing to close. */
+function askFollowUp(kind, row) {
+  const q = followUpFor(kind, row);
+  state.notePrompt = q && !state.noteSkipped[q.key] ? promptFor(kind, row, q) : null;
+  state.noteDraft = '';
+}
+
+const promptFor = (kind, row, q) => ({
+  kind, id: row.id, key: q.key, title: q.title, hint: q.hint,
+  placeholder: q.placeholder, activity: row.activity
+});
+
+function closeFollowUp(saveIt) {
+  const p = state.notePrompt;
+  state.notePrompt = null;
+  if (!p) { render(); return; }
+  const text = state.noteDraft.trim();
+  state.noteDraft = '';
+  if (saveIt) {
+    // Saving means the question is welcome; it keeps being asked next time.
+    if (text) {
+      if (p.kind === 'entries') updateEntry(p.id, { note: text.slice(0, 500) });
+      else updateMoney(p.id, { note: text.slice(0, 500) });
+      return; // updateEntry/updateMoney already save, sync and re-render
+    }
+  } else if (p.key) {
+    // Skipped or dismissed: stop asking this particular question this session.
+    state.noteSkipped[p.key] = true;
+  }
+  render();
+}
+
+/* The 📝 on every row opens the same dialog by hand, so notes stay reachable
+   after a question has been skipped — and can be edited afterwards. */
+function editNote(kind, id) {
+  const row = findRow(kind, id);
+  if (!row) return;
+  const q = followUpFor(kind, row);
+  state.notePrompt = {
+    kind, id, key: null,
+    title: row.note ? 'Edit this note' : (q ? q.title : 'Add a note'),
+    hint: q ? q.hint : 'Anything worth remembering about this entry.',
+    placeholder: q ? q.placeholder : 'e.g. who you were with, how it went',
+    activity: row.activity
+  };
+  state.noteDraft = row.note || '';
+  render();
+}
+
+function shiftDay(delta) {
+  const d = new Date(state.selectedDate + 'T00:00:00');
+  d.setDate(d.getDate() + delta);
+  state.selectedDate = iso(d);
+  render();
+}
+
+function clearFocus() { state.focus = null; state.focusOpen = false; }
+
+const ACTIONS = {
+  // Categories and purposes are separate vocabularies, so a focus never carries
+  // across the two trackers.
+  'app-time': () => { state.app = 'time'; clearFocus(); render(); },
+  'app-money': () => { state.app = 'money'; clearFocus(); render(); },
+
+  'range-day': () => { state.range = 'day'; render(); },
+  'range-week': () => { state.range = 'week'; render(); },
+  'range-month': () => { state.range = 'month'; render(); },
+
+  'prev-day': () => shiftDay(-1),
+  'next-day': () => shiftDay(1),
+
+  'toggle-timer': toggleTimer,
+  'pick-timer-cat': (el) => { state.timerCategory = el.dataset.name; render(); },
+
+  'add-entry': addEntry,
+  'add-money': addMoney,
+
+  // Relabels every amount on the next render; the stored numbers are untouched.
+  'set-currency': (el) => {
+    state.currency = el.value;
+    state.currencyUpdatedAt = Date.now();
+    state.dirty.currency = true;
+    save(); queueSync(0); render();
+  },
+
+  /* ── account ── */
+  'auth-mode-login': () => { setAuthMode('login'); },
+  'auth-mode-register': () => { setAuthMode('register'); },
+  'auth-mode-forgot': () => { setAuthMode('forgot'); },
+  'forgot-submit': submitForgot,
+  'reset-submit': submitReset,
+  'note-save': () => closeFollowUp(true),
+  'note-skip': () => closeFollowUp(false),
+  'note-edit': (el) => editNote(el.dataset.kind, el.dataset.id),
+
+  'auth-submit': submitAuth,
+  'sign-out': signOut,
+  'sync-now': () => syncNow(),
+  'migrate-upload': () => {
+    adoptLocalData();
+    state.account = state.auth.email;
+    state.migrateOffer = null;
+    save(); render(); syncNow();
+  },
+  'migrate-discard': () => {
+    resetLocal();
+    state.account = state.auth.email;
+    state.migrateOffer = null;
+    save(); render(); syncNow();
+  },
+
+  'create-cat': () => {
+    const n = state.newCatName.trim(); if (!n) return;
+    addCategoryIfNeeded(n);
+    state.newCatOpen = false; state.newCatName = '';
+    state.form = Object.assign({}, state.form, { category: n });
+    save(); queueSync(0); render();
+  },
+  'cancel-cat': () => { state.newCatOpen = false; state.newCatName = ''; render(); },
+  'create-purpose': () => {
+    const n = state.newPurposeName.trim(); if (!n) return;
+    if (!state.purposes.some((p) => p.name === n)) {
+      state.purposes = state.purposes.concat([touch('purposes', {
+        name: n, color: MONEY_PALETTE[state.purposes.length % MONEY_PALETTE.length], position: state.purposes.length
+      })]);
+    }
+    state.newPurposeOpen = false; state.newPurposeName = '';
+    state.mForm = Object.assign({}, state.mForm, { purpose: n });
+    save(); queueSync(0); render();
+  },
+  'cancel-purpose': () => { state.newPurposeOpen = false; state.newPurposeName = ''; render(); },
+
+  // Deletes are soft: the row leaves the list but its id is remembered, or the
+  // next pull from another device would restore it.
+  'entry-remove': (el) => {
+    state.entries = state.entries.filter((e) => e.id !== el.dataset.id);
+    bury('entries', el.dataset.id);
+    save(); queueSync(0); render();
+  },
+  'money-remove': (el) => {
+    state.money = state.money.filter((e) => e.id !== el.dataset.id);
+    bury('money', el.dataset.id);
+    save(); queueSync(0); render();
+  },
+
+  // A slice names its share; the name is then the handle for the entries.
+  'slice-pick': (el) => {
+    const n = el.dataset.name;
+    state.focusOpen = false;
+    state.focus = state.focus === n ? null : n;
+    render();
+  },
+  'focus-toggle': () => { state.focusOpen = !state.focusOpen; render(); },
+  'legend-pick': (el) => {
+    const n = el.dataset.name;
+    if (state.focus === n && state.focusOpen) clearFocus();
+    else { state.focus = n; state.focusOpen = true; }
+    render();
+  },
+  'focus-clear': () => { clearFocus(); render(); },
+
+  'open-report': () => { state.reportOpen = true; render(); },
+  'close-report': () => { state.reportOpen = false; render(); },
+  'export-pdf': () => window.print(),
+  'export-jpg': () => exportJpg()
+};
+
+const CHANGES = {
+  'form-category': (el) => {
+    if (el.value === '__new') { state.newCatOpen = true; render(); return; }
+    state.form = Object.assign({}, state.form, { category: el.value });
+  },
+  'm-purpose': (el) => {
+    if (el.value === '__new') { state.newPurposeOpen = true; render(); return; }
+    state.mForm = Object.assign({}, state.mForm, { purpose: el.value });
+  },
+  'entry-activity': (el) => updateEntry(el.dataset.id, { activity: el.value }),
+  'entry-category': (el) => updateEntry(el.dataset.id, { category: el.value }),
+  'entry-from': (el) => updateEntry(el.dataset.id, { from: parseHm(el.value) }),
+  'entry-to': (el) => updateEntry(el.dataset.id, { to: parseHm(el.value) }),
+  'money-activity': (el) => updateMoney(el.dataset.id, { activity: el.value }),
+  'money-purpose': (el) => updateMoney(el.dataset.id, { purpose: el.value }),
+  'money-in': (el) => updateMoney(el.dataset.id, { in: Number(el.value) || 0 }),
+  'money-out': (el) => updateMoney(el.dataset.id, { out: Number(el.value) || 0 })
+};
+
+/* ─────────────────────────── wiring ─────────────────────────── */
+
+root.addEventListener('click', (ev) => {
+  const el = ev.target.closest('[data-act]');
+  if (!el || !root.contains(el)) return;
+  // Radios in the range switch fire their action on `change`, not on click.
+  if (el.tagName === 'INPUT' || el.tagName === 'SELECT') return;
+  const fn = ACTIONS[el.dataset.act];
+  if (fn) { ev.preventDefault(); fn(el); }
+});
+
+root.addEventListener('change', (ev) => {
+  const el = ev.target;
+  if (el.dataset && el.dataset.change && CHANGES[el.dataset.change]) { CHANGES[el.dataset.change](el); return; }
+  if (el.dataset && el.dataset.act) {
+    if (CHANGES[el.dataset.act]) { CHANGES[el.dataset.act](el); return; }
+    const fn = ACTIONS[el.dataset.act];
+    if (fn) fn(el);
+  }
+});
+
+// Text fields feed state without re-rendering, so typing is never interrupted.
+root.addEventListener('input', (ev) => {
+  const el = ev.target;
+  if (!el.dataset || !el.dataset.sync) return;
+  setDeep(el.dataset.sync, el.value);
+  if (el.hasAttribute('data-live-dur')) {
+    const out = root.querySelector('[data-form-duration]');
+    if (out) {
+      const f = parseHm(state.form.from), t = parseHm(state.form.to);
+      out.textContent = t > f ? dur(t - f) : 'set a time';
+    }
+  }
+});
+
+root.addEventListener('keydown', (ev) => {
+  const el = ev.target;
+  if (ev.key === 'Enter' && el.dataset && el.dataset.enter) {
+    ev.preventDefault();
+    const fn = ACTIONS[el.dataset.enter];
+    if (fn) fn(el);
+    return;
+  }
+  // Topmost first: the follow-up dialog sits above the report sheet.
+  if (ev.key === 'Escape' && state.notePrompt) { closeFollowUp(false); return; }
+  if (ev.key === 'Escape' && state.reportOpen) { state.reportOpen = false; render(); return; }
+  if (ev.key === 'Escape' && state.focus) { clearFocus(); render(); }
+});
+
+/* ─────────────────────────── JPG export ─────────────────────────── */
+
+/* A context-shaped sink. The sheet is laid out twice — once against this to
+   learn how tall it needs to be, then again against the real canvas — so the
+   height always matches what actually gets drawn. */
+function measuringContext() {
+  const noop = () => {};
+  return {
+    fillStyle: '', strokeStyle: '', font: '', textAlign: '', globalCompositeOperation: '',
+    fillText: noop, fillRect: noop, beginPath: noop, moveTo: noop, lineTo: noop,
+    stroke: noop, arc: noop, closePath: noop, fill: noop,
+    measureText: () => ({ width: 0 })
+  };
+}
+
+function clipText(x, s, max) {
+  let t = String(s);
+  if (!x.measureText || x.measureText(t).width <= max) return t;
+  while (t.length > 1 && x.measureText(t + '…').width > max) t = t.slice(0, -1);
+  return t + '…';
+}
+
+/* Draws the whole sheet and returns the y it finished at. */
+function paintReport(x, W, v, totals, total, isMoney) {
+  const fmtLong = isMoney ? amount : dur;
+  const fmtShort = isMoney ? amount : durShort;
+  const accent = isMoney ? '#3a6b4b' : '#416180';
+
+  x.fillStyle = '#f2f2f3'; x.fillRect(0, 0, W, 200000);
+  x.fillStyle = '#1d1f20';
+  x.font = '600 34px "Barlow Condensed", sans-serif'; x.fillText(isMoney ? 'MONEY REPORT' : 'TIME REPORT', 60, 84);
+  x.font = '400 14px Barlow, sans-serif'; x.fillStyle = '#5d5d60';
+  x.fillText(reportRangeLabel(), 60, 110);
+  x.strokeStyle = '#c9c9cc'; x.beginPath(); x.moveTo(60, 132); x.lineTo(W - 60, 132); x.stroke();
+
+  const cx = 210, cy = 350, r = 120;
+  let a0 = -Math.PI / 2;
+  totals.forEach((t) => {
+    const a1 = a0 + (t.mins / total) * Math.PI * 2;
+    x.beginPath(); x.moveTo(cx, cy); x.arc(cx, cy, r, a0, a1); x.closePath();
+    x.fillStyle = t.color; x.fill(); a0 = a1;
+  });
+  x.globalCompositeOperation = 'destination-out';
+  x.beginPath(); x.arc(cx, cy, 62, 0, Math.PI * 2); x.fill();
+  x.globalCompositeOperation = 'source-over';
+  x.fillStyle = '#1d1f20'; x.textAlign = 'center';
+  x.font = '600 26px "Barlow Condensed", sans-serif'; x.fillText(fmtShort(total), cx, cy + 8);
+  x.textAlign = 'left';
+
+  let ly = 275;
+  totals.forEach((t) => {
+    x.fillStyle = t.color; x.fillRect(400, ly - 10, 12, 12);
+    x.fillStyle = '#1d1f20'; x.font = '400 16px Barlow, sans-serif'; x.fillText(clipText(x, withIcon(t.name), 250), 424, ly);
+    x.fillStyle = '#5d5d60'; x.fillText(`${Math.round((t.mins / total) * 100)}%  ·  ${fmtShort(t.mins)}`, 690, ly);
+    ly += 34;
+  });
+
+  // Clears the legend rather than assuming it fits — a month can surface far
+  // more categories than the original fixed 560 allowed for.
+  let ty = Math.max(560, ly + 26);
+  x.fillStyle = '#5d5d60'; x.font = '400 12px Barlow, sans-serif';
+  x.fillText(isMoney ? 'PURPOSE' : 'CATEGORY', 60, ty); x.fillText('ENTRIES', 520, ty); x.fillText(isMoney ? 'AMOUNT' : 'TIME SPENT', 640, ty); x.fillText('SHARE', 800, ty);
+  ty += 12; x.strokeStyle = '#c9c9cc'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
+  ty += 30;
+  totals.forEach((t) => {
+    x.fillStyle = '#1d1f20'; x.font = '400 16px Barlow, sans-serif';
+    x.fillText(clipText(x, withIcon(t.name), 430), 60, ty); x.fillText(String(t.count), 520, ty);
+    x.fillText(fmtLong(t.mins), 640, ty); x.fillText(`${Math.round((t.mins / total) * 100)}%`, 800, ty);
+    ty += 16; x.strokeStyle = '#e2e2e5'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
+    ty += 26;
+  });
+
+  if (!v.reportEntryCount) return ty;
+
+  ty += 30;
+  x.fillStyle = '#1d1f20'; x.font = '600 22px "Barlow Condensed", sans-serif';
+  x.fillText('EVERY ACTIVITY', 60, ty);
+  x.font = '400 12px Barlow, sans-serif'; x.fillStyle = '#5d5d60'; x.textAlign = 'right';
+  x.fillText(`${v.reportEntryCount} ${v.reportEntryCount === 1 ? 'entry' : 'entries'}`, W - 60, ty);
+  x.textAlign = 'left';
+  ty += 11;
+  x.strokeStyle = '#c9c9cc'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
+  ty += 32;
+
+  v.reportDays.forEach((d) => {
+    x.fillStyle = '#1d1f20'; x.font = '600 17px "Barlow Condensed", sans-serif';
+    x.fillText(d.label, 60, ty);
+    x.font = '400 12px Barlow, sans-serif'; x.fillStyle = '#5d5d60'; x.textAlign = 'right';
+    x.fillText(`${d.inLabel ? d.inLabel + ' in · ' : ''}${d.totalLabel}${isMoney ? ' out' : ''}`, W - 60, ty);
+    x.textAlign = 'left';
+    ty += 8;
+    x.strokeStyle = '#e2e2e5'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
+    ty += 22;
+
+    d.rows.forEach((rw) => {
+      x.font = '400 13px Barlow, sans-serif';
+      if (isMoney) {
+        x.fillStyle = '#1d1f20'; x.fillText(clipText(x, rw.activity, 310), 60, ty);
+        x.fillStyle = rw.color; x.fillRect(392, ty - 8, 8, 8);
+        x.fillStyle = '#5d5d60'; x.fillText(clipText(x, withIcon(rw.name), 190), 406, ty);
+        x.textAlign = 'right';
+        x.fillStyle = accent; x.fillText(rw.in, 730, ty);
+        x.fillStyle = '#1d1f20'; x.fillText(rw.out, W - 60, ty);
+        x.textAlign = 'left';
+      } else {
+        x.fillStyle = '#5d5d60'; x.fillText(rw.when, 60, ty);
+        x.fillStyle = '#1d1f20'; x.fillText(clipText(x, rw.activity, 258), 200, ty);
+        x.fillStyle = rw.color; x.fillRect(478, ty - 8, 8, 8);
+        x.fillStyle = '#5d5d60'; x.fillText(clipText(x, withIcon(rw.name), 240), 492, ty);
+        x.textAlign = 'right';
+        x.fillStyle = '#1d1f20'; x.fillText(rw.out, W - 60, ty);
+        x.textAlign = 'left';
+      }
+      ty += 24;
+    });
+    ty += 18;
+  });
+
+  return ty;
+}
+
+function exportJpg() {
+  const isMoney = state.app === 'money';
+  const v = compute();
+  const totals = isMoney ? totalsByPurpose(moneyRangeEntries()) : totalsByCategory(rangeEntries());
+  const total = totals.reduce((a, b) => a + b.mins, 0) || 1;
+
+  const W = 900;
+  const H = Math.max(1160, Math.ceil(paintReport(measuringContext(), W, v, totals, total, isMoney)) + 84);
+
+  const cv = document.createElement('canvas');
+  cv.width = W * 2; cv.height = H * 2;
+  const x = cv.getContext('2d'); x.scale(2, 2);
+  paintReport(x, W, v, totals, total, isMoney);
+
+  x.fillStyle = '#7a7a7d'; x.font = '400 12px Barlow, sans-serif';
+  x.fillText(`Generated by ZIMPAN · ${state.geo || 'Local time'}`, 60, H - 40);
+
+  const a = document.createElement('a');
+  a.href = cv.toDataURL('image/jpeg', 0.92);
+  a.download = `zimpan-report-${state.selectedDate}.jpg`;
+  a.click();
+}
+
+/* ─────────────────────────── boot ─────────────────────────── */
+
+// The running clock and the "now" stamp tick without a full re-render.
+setInterval(() => {
+  const c = elapsedClock();
+  root.querySelectorAll('[data-clock]').forEach((el) => { el.textContent = c; });
+  const now = new Date();
+  const n = root.querySelector('[data-now]');
+  if (n) n.textContent = now.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+
+  // Keeps "Today, as it happens" honest without re-rendering over your typing.
+  const live = root.querySelector('[data-live-line]');
+  if (live) live.textContent = liveLine();
+  const kicker = root.querySelector('[data-today-kicker]');
+  if (kicker) {
+    const m = now.getHours() * 60 + now.getMinutes();
+    const part = m < 720 ? 'Morning' : m < 1020 ? 'Afternoon' : m < 1260 ? 'Evening' : 'Late';
+    kicker.textContent = `${part} · ${now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+  }
+}, 1000);
+
+try {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  state.geo = tz ? tz.split('/').pop().replace(/_/g, ' ') : null;
+} catch (e) { /* location unavailable — the timezone label still stands in */ }
+
+// A returning device paints from its local copy at once and reconciles behind
+// the scenes; only a browser with no account waits on the network.
+render();
+boot();
+
+// Catches anything the debounce missed — a failed push, or edits made offline.
+setInterval(() => { if (state.auth && pendingCount()) syncNow(); }, 60 * 1000);
+window.addEventListener('online', () => { if (state.auth) syncNow(); });
+window.addEventListener('offline', () => { if (state.auth) setNet('offline', ''); });

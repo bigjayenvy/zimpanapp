@@ -1,0 +1,22 @@
+---
+# cPanel deployment. Runs when you press "Deploy HEAD Commit" in
+# Git Version Control, with the repository checkout as the working directory.
+#
+# Files are copied OUT of the checkout INTO the live application folder rather
+# than the app being run from the checkout directly. That matters: ~/zimpan/server
+# also holds things git must never own — the node_modules symlink into the
+# virtualenv, Passenger's tmp/ directory, and stderr.log.
+#
+# Globs rather than a hand-maintained file list, because a list that has to be
+# updated every time a file is added is exactly how a deploy ends up missing
+# mail.js. Nothing secret can leak through them: .env, node_modules and backups/
+# are gitignored, so they are not in the checkout to be copied.
+deployment:
+  tasks:
+    - export DEPLOYPATH=/home/zimpxioc/zimpan
+    - /bin/mkdir -p $DEPLOYPATH/ds $DEPLOYPATH/server
+    - /bin/cp -f app.js index.html $DEPLOYPATH/
+    - /bin/cp -f ds/*.css $DEPLOYPATH/ds/
+    - /bin/cp -f server/*.js server/*.sql server/package.json server/package-lock.json $DEPLOYPATH/server/
+    # Passenger watches this file; touching it restarts the app on the next request.
+    - /bin/touch $DEPLOYPATH/server/tmp/restart.txt

@@ -1,0 +1,18 @@
+# Installed on the server by "Run NPM Install", never shipped.
+node_modules/
+
+# Credentials. These live in cPanel's environment variables in production.
+.env
+
+# Database dumps — they contain password hashes and session tokens.
+backups/
+
+# Runtime artefacts owned by Passenger, not by the repo.
+*.log
+tmp/
+data/
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
