@@ -48,7 +48,18 @@ const CURRENCIES = [
   { code: 'EUR', symbol: '€', label: 'Euro' }
 ];
 const currency = () => CURRENCIES.find((c) => c.code === state.currency) || CURRENCIES[0];
-const amount = (n) => `${currency().symbol}${Math.round(Math.abs(n)).toLocaleString('en-US')}`;
+
+// Two decimals only when the amount actually has them, so a whole figure reads
+// as ₱13,070 rather than ₱13,070.00. Rounding first keeps float sums from
+// showing a spurious ".01".
+const money2 = (n) => Math.round(Math.abs(Number(n) || 0) * 100) / 100;
+const amount = (n) => {
+  const v = money2(n);
+  const cents = Math.round(v * 100) % 100 !== 0;
+  return `${currency().symbol}${v.toLocaleString('en-US', {
+    minimumFractionDigits: cents ? 2 : 0, maximumFractionDigits: 2
+  })}`;
+};
 const signed = (n) => (n < 0 ? `−${amount(n)}` : amount(n));
 
 const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
@@ -1666,8 +1677,8 @@ function moneyDesktop(v) {
               <tr>
                 <td data-col="activity"><input class="cell-input" data-k="mr-${esc(e.id)}-a" data-change="money-activity" data-id="${esc(e.id)}" value="${esc(e.activity)}"${e.note ? ` title="${esc(e.note)}"` : ''}><button class="cell-note" data-act="note-edit" data-kind="money" data-id="${esc(e.id)}" title="${e.note ? esc(e.note) : 'Add a note'}" style="opacity:${e.note ? '.8' : '.25'}">📝</button></td>
                 <td data-col="purpose"><select data-change="money-purpose" data-id="${esc(e.id)}" style="${rowChipStyle(purposeColor(e.purpose))}">${options(state.purposes.map((p) => p.name), e.purpose)}</select></td>
-                <td data-col="in" data-label="Received" style="text-align: right;"><input class="cell-num is-in" type="number" min="0" placeholder="0" data-change="money-in" data-id="${esc(e.id)}" value="${e.in || ''}"></td>
-                <td data-col="out" data-label="Spent" style="text-align: right;"><input class="cell-num" type="number" min="0" placeholder="0" data-change="money-out" data-id="${esc(e.id)}" value="${e.out || ''}"></td>
+                <td data-col="in" data-label="Received" style="text-align: right;"><input class="cell-num is-in" type="number" min="0" step="0.01" placeholder="0" data-change="money-in" data-id="${esc(e.id)}" value="${e.in || ''}"></td>
+                <td data-col="out" data-label="Spent" style="text-align: right;"><input class="cell-num" type="number" min="0" step="0.01" placeholder="0" data-change="money-out" data-id="${esc(e.id)}" value="${e.out || ''}"></td>
                 <td data-col="remove" style="text-align: right;"><button class="cell-del" data-act="money-remove" data-id="${esc(e.id)}" title="Delete entry">×</button></td>
               </tr>`).join('');
 
@@ -1704,8 +1715,8 @@ function moneyDesktop(v) {
           <div class="field" style="flex: 2 1 190px; min-width: 170px;"><label>Purpose</label>
             <select class="input" data-act="m-purpose">${options(state.purposes.map((p) => p.name), state.mForm.purpose, '<option value="__new">+ New purpose…</option>')}</select>
           </div>
-          <div class="field" style="flex: 0 1 130px; min-width: 118px;"><label>Received</label><input class="input" type="number" min="0" placeholder="0" data-k="m-in" data-sync="mForm.in" value="${esc(state.mForm.in)}"></div>
-          <div class="field" style="flex: 0 1 130px; min-width: 118px;"><label>Spent</label><input class="input" type="number" min="0" placeholder="0" data-k="m-out" data-sync="mForm.out" value="${esc(state.mForm.out)}"></div>
+          <div class="field" style="flex: 0 1 130px; min-width: 118px;"><label>Received</label><input class="input" type="number" min="0" step="0.01" placeholder="0" data-k="m-in" data-sync="mForm.in" value="${esc(state.mForm.in)}"></div>
+          <div class="field" style="flex: 0 1 130px; min-width: 118px;"><label>Spent</label><input class="input" type="number" min="0" step="0.01" placeholder="0" data-k="m-out" data-sync="mForm.out" value="${esc(state.mForm.out)}"></div>
           <button class="btn btn-primary" data-act="add-money" style="height: 36px;">Add entry</button>
         </div>
         ${state.newPurposeOpen ? `
@@ -2067,7 +2078,7 @@ function addEntry() {
 }
 
 function addMoney() {
-  const inV = Number(state.mForm.in) || 0, outV = Number(state.mForm.out) || 0;
+  const inV = money2(state.mForm.in), outV = money2(state.mForm.out);
   if (!state.mForm.activity.trim() || (!inV && !outV)) return;
   const row = touch('money', { id: 'mn' + Date.now(), date: state.mForm.date, activity: state.mForm.activity.trim(), purpose: state.mForm.purpose, in: inV, out: outV, note: '' });
   state.money = state.money.concat([row]);
@@ -2278,8 +2289,8 @@ const CHANGES = {
   'entry-to': (el) => updateEntry(el.dataset.id, { to: parseHm(el.value) }),
   'money-activity': (el) => updateMoney(el.dataset.id, { activity: el.value }),
   'money-purpose': (el) => updateMoney(el.dataset.id, { purpose: el.value }),
-  'money-in': (el) => updateMoney(el.dataset.id, { in: Number(el.value) || 0 }),
-  'money-out': (el) => updateMoney(el.dataset.id, { out: Number(el.value) || 0 })
+  'money-in': (el) => updateMoney(el.dataset.id, { in: money2(el.value) }),
+  'money-out': (el) => updateMoney(el.dataset.id, { out: money2(el.value) })
 };
 
 /* ─────────────────────────── wiring ─────────────────────────── */

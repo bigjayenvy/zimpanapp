@@ -31,6 +31,15 @@ const int = (v, field, min, max) => {
   if (n < min || n > max) fail(`${field} must be between ${min} and ${max}`);
   return n;
 };
+/* Money, unlike minutes, is not a whole number. Anything finer than the minor
+   unit is rounded rather than refused — a stray third decimal is not worth
+   blocking a whole sync over. */
+const cash = (v, field, max) => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) fail(`${field} must be a number`);
+  if (n < 0 || n > max) fail(`${field} must be between 0 and ${max}`);
+  return Math.round(n * 100) / 100;
+};
 const bool = (v) => (v ? 1 : 0);
 const isoDate = (v, field) => {
   const s = str(v, field, 10);
@@ -145,7 +154,7 @@ export async function applyChanges(userId, changes) {
     return [userId, id, isoDate(e.date, `${at}.date`),
       str(e.activity, `${at}.activity`, 200, { allowEmpty: true }),
       str(e.purpose, `${at}.purpose`, 60),
-      int(e.in ?? 0, `${at}.in`, 0, 1e12), int(e.out ?? 0, `${at}.out`, 0, 1e12),
+      cash(e.in ?? 0, `${at}.in`, 1e12), cash(e.out ?? 0, `${at}.out`, 1e12),
       str(e.note ?? '', `${at}.note`, 500, { allowEmpty: true }),
       when, 0];
   });

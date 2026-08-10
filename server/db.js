@@ -113,6 +113,18 @@ async function alterExisting() {
     await pool.query('ALTER TABLE users MODIFY password_hash VARCHAR(255) NULL');
   }
 
+  /* Amounts began as BIGINT, which silently forbade cents. Widening to
+     DECIMAL(15,2) leaves existing whole values untouched — 23580 becomes
+     23580.00, the same number — so there is nothing to convert. */
+  const [amounts] = await pool.query(
+    'SELECT COLUMN_NAME AS name, COLUMN_TYPE AS type FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME IN (?, ?)',
+    [CONFIG.database, 'money_entries', 'amount_in', 'amount_out']);
+  for (const col of amounts) {
+    if (/^bigint/i.test(col.type)) {
+      await pool.query(`ALTER TABLE money_entries MODIFY ${col.name} DECIMAL(15,2) NOT NULL DEFAULT 0`);
+    }
+  }
+
   for (const table of ['entries', 'money_entries']) {
     const [c] = await pool.query(
       'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',

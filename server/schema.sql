@@ -107,8 +107,10 @@ CREATE TABLE IF NOT EXISTS money_entries (
   date       CHAR(10)     NOT NULL,
   activity   VARCHAR(200) NOT NULL,
   purpose    VARCHAR(60)  NOT NULL,
-  amount_in  BIGINT       NOT NULL DEFAULT 0,
-  amount_out BIGINT       NOT NULL DEFAULT 0,
+  -- DECIMAL, not a float: money needs exact arithmetic, and every currency the
+  -- app offers has a two-place minor unit.
+  amount_in  DECIMAL(15,2) NOT NULL DEFAULT 0,
+  amount_out DECIMAL(15,2) NOT NULL DEFAULT 0,
   note       VARCHAR(500) NULL,
   updated_at BIGINT       NOT NULL,
   deleted    TINYINT(1)   NOT NULL DEFAULT 0,
