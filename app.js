@@ -383,7 +383,7 @@ const state = {
   // question stops asking until the next page load.
   notePrompt: null, noteDraft: '', noteSkipped: {},
   toast: '',
-  netState: 'idle', netMessage: '',
+  netState: 'idle', netMessage: '', netError: '', netErrorRow: null,
   syncing: false,
 
   geo: null
@@ -492,6 +492,19 @@ function clearPushed(sent) {
   if (sent.currency && state.currencyUpdatedAt === sent.currency.updatedAt) state.dirty.currency = false;
 }
 
+/* Resolves the row the server complained about back to something nameable, by
+   rebuilding the same payload in the same order the server indexed. */
+function describeBlockedRow() {
+  const at = state.netErrorRow;
+  if (!at) return null;
+  const sent = collectChanges()[at.kind];
+  const row = sent && sent[at.index];
+  if (!row) return null;
+  const key = at.kind === 'categories' || at.kind === 'purposes' ? row.name : row.id;
+  const live = findRow(at.kind, key);
+  return { kind: at.kind, key, label: (live && live.activity) || (live && live.name) || row.activity || row.name || key };
+}
+
 const pendingCount = () =>
   KINDS.reduce((n, k) => n + Object.keys(state.dirty[k]).length, 0) + (state.dirty.currency ? 1 : 0);
 
@@ -509,11 +522,14 @@ function paintNet() {
   el.textContent = netLabel();
   el.style.color = state.netState === 'offline' || state.netState === 'error'
     ? 'var(--color-text)' : 'var(--color-neutral-600)';
+  const btn = el.closest('button');
+  if (btn) btn.title = state.netState === 'error' ? state.netError : 'Sync now';
 }
 
 function netLabel() {
   const pending = pendingCount();
   if (state.netState === 'syncing') return 'Syncing…';
+  if (state.netState === 'error') return pending ? `Sync blocked · ${pending} waiting` : 'Sync blocked';
   if (state.netState === 'offline') return pending ? `Offline · ${pending} waiting` : 'Offline';
   if (state.netState === 'synced') return pending ? `${pending} waiting` : 'All changes saved';
   return pending ? `${pending} waiting` : '';
@@ -546,6 +562,19 @@ async function syncNow() {
       // Session expired or revoked elsewhere. The local copy is untouched.
       state.auth = null;
       setNet('idle', '');
+      render();
+      return;
+    }
+    /* A 4xx means the server understood us and refused. Retrying the same
+       payload will fail identically forever, so say what happened rather than
+       blaming the network and queueing silently. */
+    if (err.status >= 400 && err.status < 500) {
+      state.netError = err.message || 'The server rejected these changes.';
+      // Validation messages name the offending row ("entries[7].activity …"),
+      // which is enough to identify it and offer a way past it.
+      const at = /^(entries|money|categories|purposes)\[(\d+)\]/.exec(state.netError);
+      state.netErrorRow = at ? { kind: at[1], index: Number(at[2]) } : null;
+      setNet('error', '');
       render();
       return;
     }
@@ -1135,6 +1164,24 @@ function header(v) {
         <button class="btn btn-ghost" data-act="sign-out" style="font-size:12px;">Sign out</button>
       </div>` : ''}
     <button class="btn btn-primary" data-act="open-report" style="position:relative">Export report</button>
+  </div>`;
+}
+
+/* Shown when the server refuses the queue. Loud on purpose: nothing will reach
+   the server until it is dealt with, and the old behaviour called this
+   "Offline", which suggested waiting would fix it. */
+function syncErrorBanner() {
+  if (state.netState !== 'error') return '';
+  const blocked = describeBlockedRow();
+  return `
+  <div style="background: var(--color-neutral-200); border-bottom: 1px solid var(--color-divider); padding: 10px 28px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px;">
+    <strong style="flex: none;">Sync blocked</strong>
+    <span style="color: var(--color-neutral-800); min-width: 0;">${esc(state.netError)}</span>
+    ${blocked ? `<span style="color: var(--color-neutral-700);">Offending entry: “${esc(blocked.label)}”.</span>` : ''}
+    <span style="margin-left: auto; display: flex; gap: 8px; flex: none;">
+      <button class="btn btn-secondary" data-act="sync-now" style="font-size: 12px;">Try again</button>
+      ${blocked ? `<button class="btn btn-ghost" data-act="sync-discard" style="font-size: 12px;" title="Keep it on this device but stop trying to upload it">Leave it behind</button>` : ''}
+    </span>
   </div>`;
 }
 
@@ -1847,6 +1894,7 @@ function render() {
 <div id="zimpan-progress" class="topbar" style="display:none"><i></i></div>
 <div data-app="${state.app}" style="min-height: 100vh; background: var(--color-bg); color: var(--color-text); font-family: var(--font-body); padding-bottom: 48px;">
   ${header(v)}
+  ${syncErrorBanner()}
   ${body}
   ${state.reportOpen ? reportSheet(v) : ''}
   ${notePromptDialog()}
@@ -2131,7 +2179,21 @@ const ACTIONS = {
 
   'auth-submit': submitAuth,
   'sign-out': signOut,
-  'sync-now': () => syncNow(),
+  'sync-now': () => { if (state.netState === 'error') setNet('idle', ''); syncNow(); },
+
+  /* Last resort for a change the server will never accept: drop it from the
+     outbox so the other queued edits can go up. The row stays on this device —
+     only its place in the queue is given up. */
+  'sync-discard': () => {
+    const row = describeBlockedRow();
+    if (!row) return;
+    delete state.dirty[row.kind][String(row.key)];
+    state.netError = ''; state.netErrorRow = null;
+    setNet('idle', '');
+    save();
+    flash(`Left behind · ${row.label}`);
+    syncNow();
+  },
   'migrate-upload': () => {
     adoptLocalData();
     state.account = state.auth.email;
