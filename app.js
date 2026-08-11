@@ -1353,23 +1353,40 @@ function timerChips() {
 }
 
 /* ── mobile bottom bar ──
-   Five destinations, fixed to the bottom where a thumb reaches. Hidden above
-   720px, where the app bar keeps its own buttons. */
+
+   Line icons drawn here rather than pulled from an icon library: they inherit
+   currentColor, stay sharp at any pixel density, and add no request. Common
+   attributes live on the <svg> so each path stays readable. */
+
+const icon = (paths) => `
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths}</svg>`;
+
+const NAV_ICONS = {
+  time: icon('<circle cx="12" cy="12" r="9"/><path d="M12 7.2V12l3.2 1.9"/>'),
+  money: icon('<path d="M20 9.5V8a2 2 0 0 0-2-2H5.5A2.5 2.5 0 0 0 3 8.5v9A2.5 2.5 0 0 0 5.5 20H18a2 2 0 0 0 2-2v-1.5"/><path d="M21.5 9.5h-4a2.5 2.5 0 0 0 0 5h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 0-.5-.5Z"/>'),
+  donate: icon('<path d="M19 13.5c1.4-1.35 3-3 3-5.2A4.8 4.8 0 0 0 17.2 3.5c-1.7 0-2.9.5-4.2 1.9-1.3-1.4-2.5-1.9-4.2-1.9A4.8 4.8 0 0 0 4 8.3c0 2.2 1.6 3.85 3 5.2l5 5Z"/>'),
+  report: icon('<path d="M14 3H7.5A2.5 2.5 0 0 0 5 5.5v13A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V8Z"/><path d="M14 3v5h5"/><path d="M9 17.5v-2.8M12 17.5v-5M15 17.5v-1.8"/>'),
+  signout: icon('<path d="M9.5 21H6a2.5 2.5 0 0 1-2.5-2.5v-13A2.5 2.5 0 0 1 6 3h3.5"/><path d="M16 16.5 20.5 12 16 7.5"/><path d="M20.5 12H9.5"/>')
+};
+
+// Five destinations, fixed where a thumb reaches. Hidden above 720px, where the
+// app bar keeps its own buttons.
 function mobileNav(v) {
-  const item = (act, icon, label, current) => `
+  const item = (act, key, label, current) => `
     <button data-act="${act}"${current ? ' aria-current="page"' : ''}>
-      <span class="bn-icon" aria-hidden="true">${icon}</span><span class="bn-label">${esc(label)}</span>
+      <span class="bn-icon">${NAV_ICONS[key]}</span><span class="bn-label">${esc(label)}</span>
     </button>`;
 
   return `
   <nav class="bottomnav no-print" aria-label="Main">
-    ${item('app-time', '⏱️', 'Time', !v.isMoney)}
-    ${item('app-money', '💰', 'Money', v.isMoney)}
+    ${item('app-time', 'time', 'Time', !v.isMoney)}
+    ${item('app-money', 'money', 'Money', v.isMoney)}
     <a href="${DONATE_URL}" target="_blank" rel="noopener noreferrer">
-      <span class="bn-icon" aria-hidden="true">💙</span><span class="bn-label">Donate</span>
+      <span class="bn-icon">${NAV_ICONS.donate}</span><span class="bn-label">Donate</span>
     </a>
-    ${item('open-report', '📄', 'Report', false)}
-    ${item('sign-out', '↪', 'Sign out', false)}
+    ${item('open-report', 'report', 'Report', false)}
+    ${item('sign-out', 'signout', 'Sign out', false)}
   </nav>`;
 }
 
