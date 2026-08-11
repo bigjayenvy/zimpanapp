@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ZIMPAN — Time &amp; Money Tracker</title>
+<link rel="icon" type="image/svg+xml" href="ds/favicon.svg">
+<link rel="apple-touch-icon" href="ds/favicon.svg">
+<meta name="theme-color" content="#1e3358">
 <link rel="stylesheet" href="ds/styles.css">
 <style>
   body { margin: 0; }
@@ -74,6 +77,52 @@
   @media (prefers-reduced-motion: reduce) {
     .spinner { animation-duration: 2.4s; }
     .topbar > i { animation-duration: 3s; }
+  }
+
+  /* — drawers —
+     Collapsed sections keep the phone view short. The button says how much is
+     hidden, so "Show more" is never a guess. */
+  .drawer-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--color-divider); background: transparent;
+    font: inherit; font-size: 12px; color: var(--color-neutral-700);
+    padding: 4px 12px; border-radius: 999px; cursor: pointer;
+  }
+  .drawer-btn:hover { border-color: var(--color-accent); color: var(--color-accent-700); }
+  .drawer-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+  .drawer-row { display: flex; justify-content: center; padding: 10px 0 2px; }
+
+  /* — mobile bottom bar —
+     Hidden entirely on desktop; the top bar keeps its buttons there. */
+  .bottomnav { display: none; }
+
+  @media (max-width: 720px) {
+    .appbar-tabs, .appbar-actions { display: none !important; }
+
+    .bottomnav {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 45;
+      display: flex; align-items: stretch;
+      background: var(--color-bg);
+      border-top: 1px solid var(--color-divider);
+      box-shadow: 0 -2px 10px color-mix(in srgb, #2b2b2d 10%, transparent);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    .bottomnav a, .bottomnav button {
+      flex: 1 1 0; min-width: 0;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+      border: 0; background: transparent; cursor: pointer;
+      font-family: var(--font-body); font-size: 9.5px; letter-spacing: .02em;
+      color: var(--color-neutral-700); text-decoration: none;
+      padding: 8px 2px 9px; -webkit-tap-highlight-color: transparent;
+    }
+    .bottomnav .bn-icon { font-size: 17px; line-height: 1; }
+    .bottomnav .bn-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+    .bottomnav [aria-current="page"] { color: var(--color-accent-700); font-weight: 600; }
+    .bottomnav button:focus-visible, .bottomnav a:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -3px; }
+
+    /* Content must clear the fixed bar. */
+    [data-page-grid] { padding-bottom: 84px !important; }
+    .toast { bottom: 78px; }
   }
 
   /* — app bar — */

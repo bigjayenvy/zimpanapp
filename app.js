@@ -18,6 +18,34 @@ const MONEY_PALETTE = ['#3a6b4b', '#6ba982', '#163123', '#a8d4b6', '#4f8a63', '#
 const PURPOSES = ['Shopping', 'Projects', 'Movies', 'Petrol', 'Groceries', 'Eat Out', 'House Improvements', 'Birthdays', 'Commute', 'Gadgets', 'Utilities', 'Appliances'];
 const STORE_KEY = 'zimpan.v1';
 
+/* ─────────────────────────── brand ───────────────────────────
+
+   The Z drawn as a circuit trace with nodes at its corners and along the
+   diagonal. Vector rather than the source PNG so it stays sharp at favicon
+   size and inherits colour — currentColor lets it invert wherever it sits. */
+
+const LOGO_MARK = (size) => `
+<svg viewBox="0 0 100 100" width="${size}" height="${size}" aria-hidden="true" focusable="false" style="display:block;flex:none;">
+  <path d="M22 20 H78 L22 80 H78" fill="none" stroke="currentColor" stroke-width="11"></path>
+  <circle cx="22" cy="20" r="9" fill="currentColor"></circle>
+  <circle cx="58" cy="41" r="8" fill="currentColor"></circle>
+  <circle cx="44" cy="56" r="8" fill="currentColor"></circle>
+  <circle cx="78" cy="80" r="9" fill="currentColor"></circle>
+</svg>`;
+
+const DONATE_URL = 'https://www.paypal.com/ncp/payment/CJ6PTT55VQWX6';
+
+function wordmark(markSize, titleSize) {
+  return `
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <span style="color: var(--color-accent-900);">${LOGO_MARK(markSize)}</span>
+      <span style="display: flex; flex-direction: column; gap: 1px;">
+        <span style="font-family: var(--font-heading); font-weight: 600; font-size: ${titleSize}px; letter-spacing: .02em; line-height: 1;">ZIMPAN<span style="color: var(--color-accent-700);">.</span></span>
+        <span style="font-size: ${Math.max(9, Math.round(titleSize * 0.46))}px; letter-spacing: .14em; text-transform: uppercase; color: var(--color-neutral-600);">Track What Matters</span>
+      </span>
+    </div>`;
+}
+
 /* ─────────────────────────── formatting ─────────────────────────── */
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -280,7 +308,8 @@ function save() {
       categories: state.categories, purposes: state.purposes,
       currency: state.currency, currencyUpdatedAt: state.currencyUpdatedAt,
       tombstones: state.tombstones, dirty: state.dirty,
-      lastSyncAt: state.lastSyncAt, account: state.account
+      lastSyncAt: state.lastSyncAt, account: state.account,
+      drawers: state.drawers
     }));
   } catch (e) { /* private mode or full quota — the session still works */ }
 }
@@ -379,6 +408,9 @@ const state = {
   dirty: Object.assign(EMPTY_KEYED(), stored.dirty, { currency: !!(stored.dirty && stored.dirty.currency) }),
   lastSyncAt: Number(stored.lastSyncAt) || 0,
   account: stored.account || null,
+
+  // Collapsed by default; whether you left one open is remembered.
+  drawers: Object.assign({ categories: false, activities: false, lookback: false }, stored.drawers),
 
   /* ── session (per-load) ── */
   booted: false,
@@ -1153,14 +1185,60 @@ function options(names, selected, extra) {
 
 /* ─────────────────────────── templates ─────────────────────────── */
 
+/* ── drawers ── */
+
+// The count goes in the label so "Show more" never hides an unknown quantity.
+function drawerToggle(key, hiddenCount, noun) {
+  const open = state.drawers[key];
+  return `
+        <div class="drawer-row">
+          <button class="drawer-btn" data-act="toggle-drawer" data-drawer="${key}" aria-expanded="${open}">
+            ${open ? 'Show less' : `Show ${hiddenCount} more${noun ? ` ${esc(noun)}` : ''}`}
+            <span aria-hidden="true">${open ? '▴' : '▾'}</span>
+          </button>
+        </div>`;
+}
+
+const CHIPS_COLLAPSED = 6;
+
+/* Collapsed, the chip row shows the first few — but never at the cost of
+   hiding the one currently selected, which would leave the timer looking
+   unset. */
+function timerChips() {
+  const all = state.categories;
+  if (state.drawers.categories || all.length <= CHIPS_COLLAPSED) return all;
+  const shown = all.slice(0, CHIPS_COLLAPSED);
+  if (shown.some((c) => c.name === state.timerCategory)) return shown;
+  const selected = all.find((c) => c.name === state.timerCategory);
+  return selected ? shown.slice(0, CHIPS_COLLAPSED - 1).concat([selected]) : shown;
+}
+
+/* ── mobile bottom bar ──
+   Five destinations, fixed to the bottom where a thumb reaches. Hidden above
+   720px, where the app bar keeps its own buttons. */
+function mobileNav(v) {
+  const item = (act, icon, label, current) => `
+    <button data-act="${act}"${current ? ' aria-current="page"' : ''}>
+      <span class="bn-icon" aria-hidden="true">${icon}</span><span class="bn-label">${esc(label)}</span>
+    </button>`;
+
+  return `
+  <nav class="bottomnav no-print" aria-label="Main">
+    ${item('app-time', '⏱️', 'Time', !v.isMoney)}
+    ${item('app-money', '💰', 'Money', v.isMoney)}
+    <a href="${DONATE_URL}" target="_blank" rel="noopener noreferrer">
+      <span class="bn-icon" aria-hidden="true">💙</span><span class="bn-label">Donate</span>
+    </a>
+    ${item('open-report', '📄', 'Report', false)}
+    ${item('sign-out', '↪', 'Sign out', false)}
+  </nav>`;
+}
+
 function header(v) {
   return `
   <div class="appbar">
-    <div style="display: flex; flex-direction: column; gap: 1px;">
-      <div style="font-family: var(--font-heading); font-weight: 600; font-size: 20px; letter-spacing: .02em; line-height: 1;">ZIMPAN<span style="color: var(--color-accent-700);">.</span></div>
-      <div style="font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--color-neutral-600);">Track What Matters</div>
-    </div>
-    <div style="display: flex; border: 1px solid var(--color-divider); border-radius: 999px; overflow: hidden;">
+    ${wordmark(26, 20)}
+    <div class="appbar-tabs" style="display: flex; border: 1px solid var(--color-divider); border-radius: 999px; overflow: hidden;">
       <button data-act="app-time" style="${tabStyle(!v.isMoney)}">Time Tracker</button>
       <button data-act="app-money" style="${tabStyle(v.isMoney)}">Money Tracker</button>
     </div>
@@ -1169,12 +1247,13 @@ function header(v) {
       ${state.auth ? `<span style="opacity:.4">/</span>
         <button data-act="sync-now" title="Sync now" style="border:0;background:transparent;padding:0;font:inherit;font-size:12px;cursor:pointer;color:var(--color-neutral-600);"><span data-net>${esc(netLabel())}</span></button>` : ''}
     </div>
-    ${state.auth ? `
-      <div style="display:flex;align-items:center;gap:10px;">
+    <div class="appbar-actions" style="display:flex;align-items:center;gap:10px;">
+      ${state.auth ? `
         <span style="font-size:12px;color:var(--color-neutral-700);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(state.auth.email)}</span>
-        <button class="btn btn-ghost" data-act="sign-out" style="font-size:12px;">Sign out</button>
-      </div>` : ''}
-    <button class="btn btn-primary" data-act="open-report" style="position:relative">Export report</button>
+        <button class="btn btn-ghost" data-act="sign-out" style="font-size:12px;">Sign out</button>` : ''}
+      <a class="btn btn-secondary" href="${DONATE_URL}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;">Donate</a>
+      <button class="btn btn-primary" data-act="open-report" style="position:relative">Export report</button>
+    </div>
   </div>`;
 }
 
@@ -1201,8 +1280,7 @@ function syncErrorBanner() {
 const authShell = (inner) => `
   <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:28px 18px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);">
     <div class="blueprint" style="width:400px;max-width:100%;padding:32px 30px 30px;">
-      <div style="font-family:var(--font-heading);font-weight:600;font-size:24px;letter-spacing:.02em;line-height:1;">ZIMPAN<span style="color:var(--color-accent-700);">.</span></div>
-      <div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-neutral-600);margin-top:3px;">Track What Matters</div>
+      ${wordmark(34, 24)}
       ${inner}
     </div>
   </div>`;
@@ -1328,10 +1406,7 @@ function notePromptDialog() {
 function splashScreen() {
   return `
   <div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);">
-    <div style="text-align:center;">
-      <div style="font-family:var(--font-heading);font-weight:600;font-size:24px;letter-spacing:.02em;line-height:1;">ZIMPAN<span style="color:var(--color-accent-700);">.</span></div>
-      <div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-neutral-600);margin-top:3px;">Track What Matters</div>
-    </div>
+    ${wordmark(34, 24)}
     <span class="spinner" style="color:var(--color-accent-700);"></span>
   </div>`;
 }
@@ -1513,7 +1588,7 @@ function pastCard(v) {
         <div style="font-size: 12px; color: var(--color-neutral-600); margin-bottom: 12px;">${esc(v.pastLabel)}</div>
         <div style="font-size: 13.5px; line-height: 1.6;">${esc(v.pastHeadline)}</div>
         ${v.pastBusiest ? `<div style="font-size: 12.5px; line-height: 1.6; color: var(--color-neutral-700); margin-top: 4px;">${esc(v.pastBusiest)}</div>` : ''}
-        ${v.pastEmpty ? '' : `
+        ${v.pastEmpty || !state.drawers.lookback ? '' : `
         <div style="display: flex; flex-direction: column; gap: 8px; margin: 16px 0 18px;">
           ${v.pastTop.map((t) => `
             <div>
@@ -1528,6 +1603,7 @@ function pastCard(v) {
         </div>
         <div style="display: flex; flex-direction: column; gap: 13px;">${wellbeingRows(v.pastReadings)}</div>
         ${adviceBlock(v.pastAdvice)}`}
+        ${v.pastEmpty ? '' : drawerToggle('lookback', v.pastReadings.length, 'details')}
       </div>`;
 }
 
@@ -1540,8 +1616,11 @@ function timerCard(v) {
         <div style="display: flex; flex-direction: column; gap: 8px; min-width: 0;">
           <input class="input" data-k="timer-activity" data-sync="timerActivity" placeholder="What are you doing right now?" value="${esc(state.timerActivity)}">
           <div style="display: flex; flex-wrap: wrap; gap: 6px;">
-            ${state.categories.map((c) => `<button data-act="pick-timer-cat" data-name="${esc(c.name)}" style="${chipStyle(state.timerCategory === c.name, c.color)}">${esc(catIcon(c.name))} ${esc(c.name)}</button>`).join('')}
+            ${timerChips().map((c) => `<button data-act="pick-timer-cat" data-name="${esc(c.name)}" style="${chipStyle(state.timerCategory === c.name, c.color)}">${esc(catIcon(c.name))} ${esc(c.name)}</button>`).join('')}
           </div>
+          ${state.categories.length > CHIPS_COLLAPSED
+            ? drawerToggle('categories', state.categories.length - CHIPS_COLLAPSED, 'categories')
+            : ''}
         </div>
         <button class="timer-btn" data-act="toggle-timer" style="${timerBtnStyle(!!state.timerStart)}">${v.timerBtnLabel}</button>
       </div>`;
@@ -1586,8 +1665,13 @@ function dayNav(v, countLabel) {
         </div>`;
 }
 
+const ROWS_COLLAPSED = 5;
+
 function timeTableCard(v) {
-  const rows = v.dayList.map((e) => {
+  const visible = state.drawers.activities || v.dayList.length <= ROWS_COLLAPSED
+    ? v.dayList
+    : v.dayList.slice(0, ROWS_COLLAPSED);
+  const rows = visible.map((e) => {
     const spent = Math.max(0, e.to - e.from);
     return `
               <tr>
@@ -1608,6 +1692,7 @@ function timeTableCard(v) {
           <tbody>${rows}</tbody>
         </table>
         </div>
+        ${v.dayList.length > ROWS_COLLAPSED ? drawerToggle('activities', v.dayList.length - ROWS_COLLAPSED, 'entries') : ''}
         ${v.dayList.length === 0 ? '<div style="padding: 26px 0 30px; text-align: center; font-size: 13px; color: var(--color-neutral-600);">Nothing logged yet — start the timer, or add a row above.</div>' : ''}
       </div>`;
 }
@@ -1909,6 +1994,7 @@ function render() {
   ${body}
   ${state.reportOpen ? reportSheet(v) : ''}
   ${notePromptDialog()}
+  ${mobileNav(v)}
 </div>`;
 
   restoreFocus(f);
@@ -2190,6 +2276,11 @@ const ACTIONS = {
 
   'auth-submit': submitAuth,
   'sign-out': signOut,
+  'toggle-drawer': (el) => {
+    const key = el.dataset.drawer;
+    state.drawers[key] = !state.drawers[key];
+    save(); render();
+  },
   'sync-now': () => { if (state.netState === 'error') setNet('idle', ''); syncNow(); },
 
   /* Last resort for a change the server will never accept: drop it from the

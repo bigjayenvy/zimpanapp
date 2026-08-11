@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="ZIMPAN">
+  <title>ZIMPAN</title>
+  <style>
+    .trace { fill: none; stroke: #1e3358; stroke-width: 11; }
+    .node  { fill: #1e3358; }
+    /* A tab bar in dark mode needs a light mark, not a navy one. */
+    @media (prefers-color-scheme: dark) {
+      .trace { stroke: #9dc3e6; }
+      .node  { fill: #9dc3e6; }
+    }
+  </style>
+  <path class="trace" d="M22 20 H78 L22 80 H78" />
+  <circle class="node" cx="22" cy="20" r="9" />
+  <circle class="node" cx="58" cy="41" r="8" />
+  <circle class="node" cx="44" cy="56" r="8" />
+  <circle class="node" cx="78" cy="80" r="9" />
+</svg>
