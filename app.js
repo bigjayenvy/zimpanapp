@@ -1546,9 +1546,8 @@ function authScreen() {
   <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:28px 18px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);">
     <div class="blueprint" style="width:400px;max-width:100%;padding:32px 30px 30px;">
       ${authLockup()}
-      <div style="font-size:13px;color:var(--color-neutral-700);text-align:center;margin:12px 0 22px;">Where your time and money actually go.</div>
 
-      <div style="display:flex;border:1px solid var(--color-divider);border-radius:999px;overflow:hidden;margin-bottom:20px;">
+      <div style="display:flex;border:1px solid var(--color-divider);border-radius:999px;overflow:hidden;margin:22px 0 20px;">
         <button data-act="auth-mode-login" style="${tabStyle(!register)};flex:1;">Sign in</button>
         <button data-act="auth-mode-register" style="${tabStyle(register)};flex:1;">Create account</button>
       </div>
