@@ -102,15 +102,29 @@
   /* — drawers —
      Collapsed sections keep the phone view short. The button says how much is
      hidden, so "Show more" is never a guess. */
+  /* Solid pill by default, inverting to white on hover. The accent tokens are
+     used rather than a fixed navy so the money tracker's green theme carries
+     through here too. */
   .drawer-btn {
-    display: inline-flex; align-items: center; gap: 6px;
-    border: 1px solid var(--color-divider); background: transparent;
-    font: inherit; font-size: 12px; color: var(--color-neutral-700);
-    padding: 4px 12px; border-radius: 999px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 7px;
+    border: 1px solid var(--color-accent-700);
+    background: var(--color-accent-700);
+    color: #fff;
+    font-family: var(--font-body); font-size: 12.5px; font-weight: 600;
+    padding: 7px 17px; border-radius: 999px; cursor: pointer;
+    transition: background-color .15s ease, color .15s ease, border-color .15s ease;
   }
-  .drawer-btn:hover { border-color: var(--color-accent); color: var(--color-accent-700); }
+  .drawer-btn:hover,
+  .drawer-btn:focus-visible {
+    background: #fff;
+    color: var(--color-accent-900);
+    border-color: var(--color-accent-900);
+  }
   .drawer-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
-  .drawer-row { display: flex; justify-content: center; padding: 10px 0 2px; }
+  .drawer-btn .drawer-caret { font-size: 10px; line-height: 1; opacity: .85; }
+  .drawer-row { display: flex; justify-content: center; padding: 12px 0 2px; }
+
+  @media (prefers-reduced-motion: reduce) { .drawer-btn { transition: none; } }
 
   /* — mobile bottom bar —
      Hidden entirely on desktop; the top bar keeps its buttons there. */

@@ -1319,17 +1319,24 @@ function options(names, selected, extra) {
 
 /* ── drawers ── */
 
-// The count goes in the label so "Show more" never hides an unknown quantity.
-function drawerToggle(key, hiddenCount, noun) {
+/* The count goes in the default label so "Show more" never hides an unknown
+   quantity. `labels` overrides it where a section reads better named — the
+   wellbeing cards say "Read Full Report" rather than counting rows. */
+function drawerToggle(key, hiddenCount, noun, labels) {
   const open = state.drawers[key];
+  const text = open
+    ? (labels ? labels.less : 'Show less')
+    : (labels ? labels.more : `Show ${hiddenCount} more${noun ? ` ${noun}` : ''}`);
   return `
         <div class="drawer-row">
           <button class="drawer-btn" data-act="toggle-drawer" data-drawer="${key}" aria-expanded="${open}">
-            ${open ? 'Show less' : `Show ${hiddenCount} more${noun ? ` ${esc(noun)}` : ''}`}
-            <span aria-hidden="true">${open ? '▴' : '▾'}</span>
+            ${esc(text)}
+            <span class="drawer-caret" aria-hidden="true">${open ? '▲' : '▼'}</span>
           </button>
         </div>`;
 }
+
+const REPORT_LABELS = { more: 'Read Full Report', less: 'Hide Full Report' };
 
 const CHIPS_COLLAPSED = 6;
 
@@ -1816,7 +1823,7 @@ function todayCard(v) {
           <div style="display: flex; flex-direction: column; gap: 13px;">${wellbeingRows(v.todayReadings)}</div>
           ${foodBlock(v.todayFood)}
           ${adviceBlock(v.todayAdvice)}`}
-        ${v.todayEmpty ? '' : drawerToggle('today', v.todayReadings.length + 1, 'details')}
+        ${v.todayEmpty ? '' : drawerToggle('today', 0, '', REPORT_LABELS)}
       </div>`;
 }
 
@@ -1845,7 +1852,7 @@ function pastCard(v) {
         <div style="display: flex; flex-direction: column; gap: 13px;">${wellbeingRows(v.pastReadings)}</div>
         ${foodBlock(v.pastFood)}
         ${adviceBlock(v.pastAdvice)}`}
-        ${v.pastEmpty ? '' : drawerToggle('lookback', v.pastReadings.length, 'details')}
+        ${v.pastEmpty ? '' : drawerToggle('lookback', 0, '', REPORT_LABELS)}
       </div>`;
 }
 
