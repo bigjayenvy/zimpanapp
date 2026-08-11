@@ -309,8 +309,15 @@ app.use((req, res) => {
 });
 
 app.use((err, req, res, _next) => {
-  console.error('[zimpan]', err);
-  res.status(500).json({ error: 'Something went wrong on our end.' });
+  /* A missing static file arrives here as a 404-shaped error. Reporting it as
+     500 makes a typo'd asset path look like the server is broken. */
+  const status = Number(err.status || err.statusCode) || 500;
+  if (status >= 500) console.error('[zimpan]', err);
+  if (status === 404) {
+    if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'No such endpoint.' });
+    return res.status(404).type('text/plain').send('Not found');
+  }
+  res.status(status).json({ error: status >= 500 ? 'Something went wrong on our end.' : 'That request could not be handled.' });
 });
 
 migrate()

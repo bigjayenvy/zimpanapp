@@ -3,7 +3,27 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ZIMPAN — Time &amp; Money Tracker</title>
+<title>ZIMPAN — Free Time &amp; Money Tracker. Track What Matters.</title>
+<meta name="description" content="ZIMPAN is a free tracker for where your time and money actually go. Log your day in seconds, see the patterns, and know how you spend both. Free forever.">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://zimpan.com/">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="ZIMPAN">
+<meta property="og:title" content="ZIMPAN — Free Time &amp; Money Tracker">
+<meta property="og:description" content="See where your time and money actually go. Log your day in seconds, spot the patterns, and get honest insights on how you spend both. Free forever.">
+<meta property="og:url" content="https://zimpan.com/">
+<meta property="og:image" content="https://zimpan.com/ds/og-image.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="ZIMPAN — track where your time and money go">
+<meta property="og:locale" content="en_US">
+
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="ZIMPAN — Free Time &amp; Money Tracker">
+<meta name="twitter:description" content="See where your time and money actually go. Free forever.">
+<meta name="twitter:image" content="https://zimpan.com/ds/og-image.jpg">
+
 <link rel="icon" type="image/svg+xml" href="ds/favicon.svg">
 <link rel="apple-touch-icon" href="ds/favicon.svg">
 <meta name="theme-color" content="#1e3358">
@@ -148,10 +168,12 @@
   /* — timer — */
   .timer-card { display: grid; grid-template-columns: auto 1fr auto; gap: 22px; align-items: center; }
   .timer-btn {
-    padding: 16px 30px; border-radius: 999px; cursor: pointer;
-    font-family: var(--font-heading); font-weight: 600; font-size: 16px;
+    padding: 60px 40px; border-radius: 20px; cursor: pointer;
+    font-family: var(--font-heading); font-weight: 600; font-size: 20px;
     color: var(--color-bg);
   }
+  /* The block is tall by design; on a phone it should not eat the whole screen. */
+  @media (max-width: 900px) { .timer-btn { padding: 34px 40px; } }
 
   /* — report — */
   .report-wrap { padding: 36px 20px; }

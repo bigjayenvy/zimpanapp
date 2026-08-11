@@ -410,7 +410,7 @@ const state = {
   account: stored.account || null,
 
   // Collapsed by default; whether you left one open is remembered.
-  drawers: Object.assign({ categories: false, activities: false, lookback: false }, stored.drawers),
+  drawers: Object.assign({ categories: false, activities: false, lookback: false, legend: false, leaderboard: false }, stored.drawers),
 
   /* ── session (per-load) ── */
   booted: false,
@@ -425,6 +425,7 @@ const state = {
   // noteSkipped is per-session on purpose: skipping is an answer, so the same
   // question stops asking until the next page load.
   notePrompt: null, noteDraft: '', noteSkipped: {},
+  legalOpen: null,
   toast: '',
   netState: 'idle', netMessage: '', netError: '', netErrorRow: null,
   syncing: false,
@@ -879,33 +880,128 @@ function wellbeing(list) {
 }
 
 /* Wording that reads the same whether the window is one day or thirty — the
-   per-day aside is what carries the difference. */
+   per-day aside carries the difference. Each line is capped at 300 characters
+   by clamp() below, so a long one is trimmed rather than allowed to sprawl. */
 const NOTES = {
   physical: {
-    strong: (t, p) => `${t} of movement${p} — your body is getting what it asks for.`,
-    steady: (t, p) => `${t} of movement${p}. A decent base, with room on top.`,
-    thin: (t, p) => `Only ${t} of movement${p}. Mostly still otherwise.`,
-    none: () => 'No movement logged — the body reads a still day as a signal to slow everything down.'
+    strong: (t, p) => `${t} of movement${p} — enough to matter. Regular activity is the single habit with the widest reach: it steadies sleep, mood and blood sugar at once. The gain comes from consistency rather than intensity, so protecting the routine matters more than any one hard session.`,
+    steady: (t, p) => `${t} of movement${p}. A real base, though below the half-hour a day most guidance settles on. The cheapest way to close that gap is usually to lengthen something already in the routine rather than to add a new commitment you then have to defend.`,
+    thin: (t, p) => `Only ${t} of movement${p} — the rest of the time was largely still. Long unbroken sitting affects circulation and energy on its own, separately from whether you exercise, so short breaks scattered through the day count for more than their length suggests.`,
+    none: () => 'No movement logged at all. The body reads a still stretch as a signal to wind everything down — energy, appetite and sleep quality drift together. A brisk walk is the lowest-effort way back, and it does not need to be long to register.'
   },
   emotional: {
-    strong: (t, p) => `${t} with the people who matter${p}. That is what keeps the rest bearable.`,
-    steady: (t, p) => `${t} of time with others${p} — present, if not abundant.`,
-    thin: (t, p) => `Just ${t} with other people${p}. Thin company.`,
-    none: () => 'Nothing logged with other people. A day spent entirely alone tends to be felt later.'
+    strong: (t, p) => `${t} with the people who matter${p}. Time spent in company is among the strongest predictors of how a stretch is remembered, and it buffers stress that would otherwise land squarely on you. This is the part of the week worth defending first.`,
+    steady: (t, p) => `${t} of time with others${p} — present, if not abundant. Connection tends to be the first thing squeezed when work expands, and the loss is quiet enough that it usually goes unnoticed until the mood has already shifted.`,
+    thin: (t, p) => `Just ${t} with other people${p}. Thin company over a stretch this long tends to be felt as low mood or shorter patience well before it is recognised as loneliness, because the cause is an absence rather than an event.`,
+    none: () => 'Nothing logged with other people. A stretch spent entirely alone is usually felt afterwards rather than during, and it is easy to attribute the flatness to work or sleep instead. Even a short call registers differently than time alone.'
   },
   mental: {
-    strong: (t, p) => `${t} of real concentration${p}. Sharp, and worth protecting.`,
-    steady: (t, p) => `${t} of focused work${p} — a workable load.`,
-    thin: (t, p) => `${t} of focused work${p}. Light, whether by choice or drift.`,
-    none: () => 'No focused work logged — restful, or scattered, depending on how it felt.'
+    strong: (t, p) => `${t} of real concentration${p}. That is a productive load and worth protecting — but sustained focus draws down the same reserves rest restores, so the ceiling is set by recovery rather than by willpower or available hours.`,
+    steady: (t, p) => `${t} of focused work${p} — a workable load with room either way. Attention holds up best in blocks with genuine breaks between them, rather than a long stretch defended against interruption until it collapses.`,
+    thin: (t, p) => `${t} of focused work${p}. Light, whether by choice or by drift. Worth knowing which: a deliberately light stretch restores you, while a scattered one leaves the same tiredness as a heavy one without the work to show for it.`,
+    none: () => 'No focused work logged. Restful or scattered, depending on how it felt — and those two produce very different weeks from identical numbers. If it felt busy but nothing landed, the time likely went in fragments too small to log.'
   },
   spiritual: {
-    strong: (t, p) => `${t} of quiet or reflection${p}. Rare, and it shows in everything else.`,
-    steady: (t, p) => `${t} of stillness or reflection${p}.`,
-    thin: (t, p) => `Only ${t} of anything quiet or reflective${p}.`,
-    none: () => 'Nothing still or reflective logged — no room where the day could settle.'
+    strong: (t, p) => `${t} of quiet or reflection${p}. Deliberate stillness is rare enough that it shows up everywhere else — in patience, in perspective, in how heavily setbacks land. Whatever form it takes, it is doing more work than the minutes suggest.`,
+    steady: (t, p) => `${t} of stillness or reflection${p}. Enough to notice the difference, and the kind of habit that compounds: its value comes from being regular rather than long, so short and daily beats occasional and extended.`,
+    thin: (t, p) => `Only ${t} of anything quiet or reflective${p}. Without some room that is not filled, a stretch tends to be experienced as a queue of tasks rather than as time you actually spent, which is why busy weeks so often feel like they vanished.`,
+    none: () => 'Nothing still or reflective logged — no room where the stretch could settle. Prayer, journalling, or simply sitting without a screen all serve the same purpose: somewhere for everything else to land before the next thing starts.'
   }
 };
+
+/* Keeps whole sentences within a budget, dropping from the end rather than
+   cutting one off mid-phrase. Sentences are supplied most-important-first. */
+function fitSentences(parts, max) {
+  const kept = [];
+  let used = 0;
+  for (const part of parts) {
+    const cost = used ? part.length + 1 : part.length;
+    if (used + cost > max) break;
+    kept.push(part);
+    used += cost;
+  }
+  return kept.join(' ');
+}
+
+// Hard ceiling on any single insight, per the brief.
+const clamp = (text, max) => {
+  const t = String(text || '').trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max - 1);
+  const stop = cut.lastIndexOf(' ');
+  return `${(stop > max * 0.6 ? cut.slice(0, stop) : cut).replace(/[,;:.\s]+$/, '')}…`;
+};
+
+/* ── what was eaten ──
+
+   Built only from what you wrote down: the activity names and the notes the
+   food question collects. It describes patterns and repeats general nutrition
+   guidance — it is not an assessment of your health, and it cannot be, since a
+   line of free text says nothing about portions, medication or conditions.
+   Everything here is hedged accordingly and points back at your doctor. */
+
+const FOOD_GROUPS = [
+  { key: 'vegetables', good: true, label: 'vegetables', re: /veg|salad|gulay|kangkong|pechay|malunggay|broccoli|spinach|lettuce|carrot|cabbage|greens|ampalaya|okra|eggplant|talong/ },
+  { key: 'fruit', good: true, label: 'fruit', re: /fruit|banana|saging|apple|mango|orange|papaya|pineapple|melon|berries|grapes|avocado/ },
+  { key: 'protein', good: true, label: 'protein', re: /chicken|manok|fish|isda|bangus|tilapia|tuna|beef|baboy|pork|egg|itlog|tofu|beans|monggo|lentil|shrimp|hipon|seafood/ },
+  { key: 'wholegrain', good: true, label: 'whole grains', re: /oats|oatmeal|brown rice|wholemeal|whole wheat|quinoa|barley/ },
+  { key: 'water', good: true, label: 'water', re: /\bwater\b|tubig|hydrat/ },
+  { key: 'grains', label: 'rice or bread', re: /\brice\b|kanin|bread|pandesal|pasta|noodle|cereal|tortilla/ },
+  { key: 'fried', risk: true, label: 'fried food', re: /fried|crispy|lechon|chicharon|bacon|tempura|fries|lumpia|tocino|longganisa/ },
+  { key: 'sweet', risk: true, label: 'sugary food or drinks', re: /cake|halo-halo|ice cream|dessert|chocolate|candy|soda|coke|sprite|iced tea|boba|milk tea|donut|pastry|sweet|leche flan|sugar/ },
+  { key: 'processed', risk: true, label: 'processed or fast food', re: /instant|canned|hotdog|sausage|spam|corned beef|chips|fast food|jollibee|mcdo|burger|pizza|fried chicken|takeout|siomai/ },
+  { key: 'caffeine', watch: true, label: 'caffeine', re: /coffee|kape|espresso|latte|americano|energy drink|red bull/ },
+  { key: 'alcohol', watch: true, label: 'alcohol', re: /beer|wine|whisky|vodka|gin|rum|cocktail|alcohol|inuman/ }
+];
+
+const isFoodRow = (row) => {
+  const q = followUpFor(row.purpose ? 'money' : 'entries', row);
+  return !!q && (q.key === 'food' || q.key === 'shopping-food');
+};
+
+function foodReport(entries, money, days) {
+  const rows = entries.filter(isFoodRow).concat(money.filter(isFoodRow));
+  const withNotes = rows.filter((r) => (r.note || '').trim());
+  const text = rows.map((r) => `${r.activity || ''} ${r.note || ''}`).join(' ').toLowerCase();
+  const found = FOOD_GROUPS.filter((g) => g.re.test(text));
+  const list = (arr) => arr.map((g) => g.label).join(', ').replace(/, ([^,]*)$/, ' and $1');
+
+  const good = found.filter((g) => g.good);
+  const risk = found.filter((g) => g.risk);
+  const watch = found.filter((g) => g.watch);
+  const per = days > 1 ? ` across ${days} days` : '';
+
+  if (!rows.length) {
+    return {
+      meals: 0,
+      observation: `No meals logged${per}. Food is the easiest thing to eat without noticing, and the hardest to remember accurately a week later — logging even roughly is what makes any of this readable.`,
+      advice: 'Log a meal or two and answer the “What did you eat?” question. Two or three days is enough for a pattern to show.',
+      hasFindings: false
+    };
+  }
+
+  if (!withNotes.length) {
+    return {
+      meals: rows.length,
+      observation: `${rows.length} food ${rows.length === 1 ? 'entry' : 'entries'} logged${per}, but none say what was in them. The timing is useful on its own — long gaps and late meals both show up here — though the contents are where the useful part lives.`,
+      advice: 'Next time the “What did you eat?” box appears, a few words is plenty — “chicken, rice, salad” already tells you something a month from now.',
+      hasFindings: false
+    };
+  }
+
+  const parts = [`${rows.length} food ${rows.length === 1 ? 'entry' : 'entries'} logged${per}, ${withNotes.length} with details.`];
+  if (good.length) parts.push(`Working for you: ${list(good)}.`);
+  if (risk.length) parts.push(`Worth watching: ${list(risk)} — regular rather than occasional, these are what tend to move weight, blood pressure and blood sugar.`);
+  if (!risk.length && good.length) parts.push('Nothing logged stands out as a concern.');
+  if (watch.length) parts.push(`${list(watch).replace(/^./, (c) => c.toUpperCase())} also appears; worth noting how it sits against your sleep.`);
+  if (!good.length && !risk.length) parts.push('Not enough detail yet to read the balance.');
+
+  const advice = risk.length
+    ? `Swapping one ${risk[0].label.replace(/ or .*/, '')} occasion a week for something cooked at home is the smallest change that tends to hold. General guidance only — anything specific to you, especially with a medical condition or medication, belongs with your doctor.`
+    : `Keep the pattern and keep logging it. General guidance only — for anything specific to you, your doctor is the right person to ask.`;
+
+  return { meals: rows.length, observation: fitSentences(parts, 300), advice: clamp(advice, 300), hasFindings: true };
+}
 
 function dimensionReadings(wb, days) {
   const d = Math.max(1, days);
@@ -919,7 +1015,7 @@ function dimensionReadings(wb, days) {
       key: dim.key, label: dim.label, status, ratio,
       // The meter is capped; `ratio` stays raw so overload is still detectable.
       pct: Math.max(0, Math.min(100, Math.round(ratio * 100))),
-      note: NOTES[dim.key][status](durShort(Math.round(total)), aside)
+      note: clamp(NOTES[dim.key][status](durShort(Math.round(total)), aside), 300)
     };
   });
 }
@@ -931,13 +1027,23 @@ function adviceFor(wb, readings, days) {
   const d = Math.max(1, days);
   const low = (k) => r(k).status === 'thin' || r(k).status === 'none';
 
-  if (low('physical')) out.push('Put 20–30 minutes of movement somewhere in the day. A walk counts, and it is the cheapest thing here that changes how the rest feels.');
-  if (wb.tracked && wb.still > wb.tracked * .35 && wb.still / d > 90) out.push(`${durShort(Math.round(wb.still))} went to screens and sitting. Trading one block of that for something that moves or connects is the highest-value swap available.`);
-  if (low('emotional')) out.push('Little time with other people. A short call or one shared meal does more for how you feel than another hour alone with a screen.');
-  if (r('mental').ratio > 3) out.push('That is a heavy load of concentrated work. Deliberate breaks are not lost time — they are what keeps the work any good.');
-  if (r('spiritual').status === 'none') out.push('Nothing quiet logged at all. Ten unhurried minutes — prayer, journalling, sitting still — gives the rest of the day somewhere to land.');
-  if (wb.tracked && wb.vague > wb.tracked * .5) out.push('A lot of what you logged does not say much about itself. More specific activity names will sharpen these notes considerably.');
-  return out;
+  if (low('physical')) out.push('Put 20–30 minutes of movement in most days — a brisk walk qualifies. It is the cheapest change here and the one that moves sleep, mood and energy together rather than one at a time.');
+  if (wb.tracked && wb.still > wb.tracked * .35 && wb.still / d > 90) out.push(`${durShort(Math.round(wb.still))} went to screens and sitting. Breaking that up matters as much as its total: standing every half hour or so counts for more than one long session later.`);
+  if (low('emotional')) out.push('Little time with other people. One call or shared meal does more for how a week is remembered than another evening alone with a screen, and it is easier to schedule than to feel like doing.');
+  if (r('mental').ratio > 3) out.push('That is a heavy concentration load. Breaks are not lost time — attention recovers in them, and work done past the point of recovery usually needs redoing.');
+  if (r('spiritual').status === 'none') out.push('Nothing quiet logged. Ten unhurried minutes — prayer, journalling, sitting without a screen — gives the rest of the day somewhere to settle before the next thing starts.');
+  if (wb.tracked && wb.vague > wb.tracked * .5) out.push('Much of what you logged does not describe itself. More specific activity names would sharpen every one of these notes.');
+
+  /* Capped as a block rather than per line: the highest-priority suggestions
+     are pushed first, so trimming from the end drops the least important. */
+  const kept = [];
+  let budget = 600;
+  for (const line of out) {
+    if (line.length + 1 > budget) break;
+    kept.push(line);
+    budget -= line.length + 1;
+  }
+  return kept;
 }
 
 /* Everything the templates read, computed once per render. */
@@ -1055,6 +1161,9 @@ function compute() {
     pastFallback = true;
   }
   const pastDates = Array.from(new Set(pastList.map((e) => e.date))).sort();
+  // Money logged on the same finished days, so the food read covers both trackers.
+  const pastDateSet = new Set(pastDates);
+  const pastMoney = s.money.filter((e) => pastDateSet.has(e.date));
   const pastWb = wellbeing(pastList);
   const pastTotals = totalsByCategory(pastList);
   const byDay = {};
@@ -1095,6 +1204,7 @@ function compute() {
     todayLive: liveLine(),
     todayReadings: dimensionReadings(todayWb, 1),
     todayAdvice: adviceFor(todayWb, dimensionReadings(todayWb, 1), 1),
+    todayFood: foodReport(todayList, s.money.filter((e) => e.date === todayIso), 1),
     todayEmpty: todayList.length === 0,
 
     pastLabel,
@@ -1110,6 +1220,7 @@ function compute() {
     })),
     pastReadings: dimensionReadings(pastWb, pastDates.length),
     pastAdvice: adviceFor(pastWb, dimensionReadings(pastWb, pastDates.length), pastDates.length),
+    pastFood: foodReport(pastList, pastMoney, Math.max(1, pastDates.length)),
     pastEmpty: pastDates.length === 0,
 
     untracked: durShort(untrackedMins),
@@ -1174,7 +1285,12 @@ function elapsedClock() {
 const chipStyle = (active, color) => `display:inline-flex;align-items:center;cursor:pointer;font-size:11px;padding:4px 12px;border-radius:999px;border:1px solid ${active ? color : 'var(--color-divider)'};background:${active ? color : 'transparent'};color:${active ? '#f2f2f3' : 'var(--color-neutral-800)'};font-family:var(--font-body);`;
 const tabStyle = (active) => `padding:7px 16px;border-radius:999px;font-size:13px;cursor:pointer;border:0;font-family:var(--font-heading);font-weight:600;background:${active ? 'var(--color-accent)' : 'transparent'};color:${active ? 'var(--color-bg)' : 'var(--color-text)'};`;
 // Sizing lives in the .timer-btn class so the breakpoints can widen it.
-const timerBtnStyle = (running) => `border:1px solid ${running ? 'var(--color-accent-900)' : 'var(--color-accent)'};background:${running ? 'var(--color-accent-900)' : 'var(--color-accent)'};`;
+/* Running is a deeper shade of the same green, so the two states stay
+   distinguishable without resorting to red — stopping saves the entry rather
+   than discarding it, and red would say otherwise. */
+const TIMER_GREEN = '#15816e';
+const TIMER_GREEN_RUNNING = '#0e5f51';
+const timerBtnStyle = (running) => `border:1px solid #b3b3b3;background:${running ? TIMER_GREEN_RUNNING : TIMER_GREEN};`;
 const rowChipStyle = (color) => `border:0;background:${color}1f;color:var(--color-accent-900);font:inherit;font-size:12px;padding:3px 10px;border-radius:999px;cursor:pointer;`;
 
 // The value stays the bare name — only the label carries the icon — so every
@@ -1275,6 +1391,72 @@ function syncErrorBanner() {
   </div>`;
 }
 
+/* ── legal ──
+   Written to describe what this app actually does rather than to cover every
+   eventuality. Worth having someone qualified read before launch. */
+
+const LEGAL_UPDATED = '11 August 2026';
+
+const LEGAL = {
+  privacy: {
+    title: 'Privacy Policy',
+    body: [
+      ['What we hold', 'Your email address, and a scrambled version of your password that cannot be reversed back into it. If you sign in with Google we also store the account identifier Google gives us and your display name — never your Google password. Beyond that: the entries you log, their categories, amounts and any notes you add, plus your currency preference.'],
+      ['Why', 'To show you your own data across your devices. That is the whole purpose. We do not profile you, sell anything, or share your entries with anyone.'],
+      ['Where it lives', 'On a MySQL database on our hosting at Namecheap, and in your own browser. ZIMPAN keeps a copy locally so it works offline — which means signing out or clearing your browser data removes that local copy from that device.'],
+      ['Cookies', 'One cookie, holding a random session token so you stay signed in. It is essential to the app working and is not used for advertising or analytics. There are no third-party trackers, no advertising pixels, and no analytics scripts on this site.'],
+      ['Other services', 'Google, only if you choose to sign in with it, and only to confirm who you are. PayPal, only if you choose to donate — that happens on PayPal\'s own site and we never see your payment details. Neither receives your logged entries.'],
+      ['How long', 'Until you ask us to delete it. Sessions expire on their own after thirty days.'],
+      ['Your data is yours', 'Export a copy any time with the report tools. To have your account and everything in it permanently deleted, email us and we will action it — deletion is irreversible.'],
+      ['Changes', 'If this policy changes materially we will say so in the app rather than quietly editing this page.']
+    ]
+  },
+  terms: {
+    title: 'Terms of Use',
+    body: [
+      ['What ZIMPAN is', 'A free personal tracker for your time and money. Free forever — no subscription, no paid tier, no advertising. Donations are voluntary, buy no additional features, and are not refundable.'],
+      ['Not professional advice', 'The insights, wellbeing readings, food observations and suggestions are generated automatically from what you log, using general rules. They are not medical, nutritional, psychological or financial advice, and no professional has reviewed them for you. Before acting on anything here — especially with a health condition, medication, or money that matters — check with a qualified professional. Decisions you make remain yours.'],
+      ['Your account', 'Keep your password to yourself; you are responsible for what happens under your account. Tell us promptly if you think someone else has access.'],
+      ['Fair use', 'Use ZIMPAN for your own tracking. Do not attempt to break into it, disrupt it for others, or use it to store unlawful material.'],
+      ['No guarantees', 'ZIMPAN is provided as-is. We work to keep it available and your data intact, but we cannot promise uninterrupted service or guarantee against loss. Keep your own copy of anything you would be upset to lose — the export tools are there for exactly that.'],
+      ['Ending it', 'Stop using it whenever you like and ask us to delete your account. We may suspend accounts that abuse the service or put others at risk.'],
+      ['Changes', 'These terms may be updated. Continuing to use ZIMPAN after a change means you accept the revised version.']
+    ]
+  }
+};
+
+function legalSheet() {
+  const doc = LEGAL[state.legalOpen];
+  if (!doc) return '';
+  return `
+    <div class="report-wrap" data-legal-backdrop style="position: fixed; inset: 0; background: color-mix(in srgb, var(--color-neutral-900) 55%, transparent); display: flex; align-items: flex-start; justify-content: center; overflow: auto; z-index: 55;">
+      <div style="width: 680px; max-width: 100%;">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 14px;">
+          <span style="color: var(--color-bg); font-size: 13px; margin-right: auto;">Last updated ${esc(LEGAL_UPDATED)}</span>
+          <button class="btn btn-secondary" data-act="legal-close" style="background: var(--color-bg);">Close</button>
+        </div>
+        <div class="report-sheet" style="background: var(--color-bg); box-shadow: var(--shadow-lg);">
+          <h4 style="margin: 0 0 6px; font-size: 22px;">${esc(doc.title)}</h4>
+          <div style="font-size: 12.5px; color: var(--color-neutral-600); margin-bottom: 22px;">ZIMPAN · zimpan.com</div>
+          ${doc.body.map(([heading, text]) => `
+            <div style="margin-bottom: 18px;">
+              <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 5px;">${esc(heading)}</div>
+              <div style="font-size: 13.5px; line-height: 1.65; color: var(--color-neutral-800);">${esc(text)}</div>
+            </div>`).join('')}
+          <div style="margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--color-divider); font-size: 12px; color: var(--color-neutral-600);">
+            Questions about either document? Get in touch and we will answer.
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+const legalLinks = (color) => `
+  <div style="display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; font-size: 12px;">
+    <button data-act="legal-privacy" style="border:0;background:transparent;padding:0;font:inherit;font-size:12px;color:${color};cursor:pointer;text-decoration:underline;text-underline-offset:2px;">Privacy Policy</button>
+    <button data-act="legal-terms" style="border:0;background:transparent;padding:0;font:inherit;font-size:12px;color:${color};cursor:pointer;text-decoration:underline;text-underline-offset:2px;">Terms of Use</button>
+  </div>`;
+
 /* ── account screens ── */
 
 const authShell = (inner) => `
@@ -1359,6 +1541,10 @@ function authScreen() {
         ${state.authBusy ? '<span class="spinner"></span>' : ''}
         ${state.authBusy ? (register ? 'Creating your account…' : 'Signing you in…') : (register ? 'Create account' : 'Sign in')}
       </button>
+
+      <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--color-divider);">
+        ${legalLinks('var(--color-neutral-600)')}
+      </div>
     </div>
   </div>`;
 }
@@ -1473,8 +1659,12 @@ function donut(v, size, stroke, totalSize) {
     </div>`;
 }
 
+const LIST_COLLAPSED = 5;
+
 function legend(v) {
-  return v.slices.map((s) => {
+  const all = v.slices;
+  const shown = state.drawers.legend || all.length <= LIST_COLLAPSED ? all : all.slice(0, LIST_COLLAPSED);
+  return shown.map((s) => {
     const on = v.focusName === s.name;
     return `
     <button data-act="legend-pick" data-name="${esc(s.name)}" title="Show the entries behind ${esc(s.name)}"
@@ -1485,7 +1675,9 @@ function legend(v) {
       <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(withIcon(s.name))}</span>
       <span style="font-variant-numeric: tabular-nums; color: var(--color-neutral-700);">${esc(s.pct)}</span>
     </button>`;
-  }).join('');
+  }).join('') + (all.length > LIST_COLLAPSED
+    ? drawerToggle('legend', all.length - LIST_COLLAPSED, v.isMoney ? 'purposes' : 'categories')
+    : '');
 }
 
 /* The drilled-down entries. Range-aware, so week and month views list days the
@@ -1516,7 +1708,9 @@ function focusPanel(v) {
 }
 
 function bars(v) {
-  return v.leaderboard.map((l) => `
+  const all = v.leaderboard;
+  const shown = state.drawers.leaderboard || all.length <= LIST_COLLAPSED ? all : all.slice(0, LIST_COLLAPSED);
+  return shown.map((l) => `
     <div>
       <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 5px;">
         <span>${esc(withIcon(l.name))}</span><span style="color: var(--color-neutral-700); font-variant-numeric: tabular-nums;">${esc(l.label)}</span>
@@ -1524,7 +1718,9 @@ function bars(v) {
       <div style="height: 8px; background: var(--color-neutral-200);">
         <div style="height: 100%; width: ${l.width}; background: ${esc(l.color)};"></div>
       </div>
-    </div>`).join('');
+    </div>`).join('') + (all.length > LIST_COLLAPSED
+    ? drawerToggle('leaderboard', all.length - LIST_COLLAPSED, v.isMoney ? 'purposes' : 'categories')
+    : '');
 }
 
 /* ── wellbeing cards ── */
@@ -1549,6 +1745,8 @@ function wellbeingRows(readings) {
           </div>`).join('');
 }
 
+const DISCLAIMER = 'Suggestions only, drawn from what you logged. ZIMPAN is not a medical, nutritional or financial adviser — anything you act on, particularly with a health condition or medication involved, is worth putting to a qualified professional first.';
+
 function adviceBlock(list) {
   if (!list.length) {
     return `
@@ -1562,6 +1760,19 @@ function adviceBlock(list) {
             <ul style="margin: 0; padding-left: 17px; display: flex; flex-direction: column; gap: 7px; font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800);">
               ${list.map((a) => `<li>${esc(a)}</li>`).join('')}
             </ul>
+            <div style="margin-top: 10px; font-size: 11.5px; line-height: 1.5; color: var(--color-neutral-600);">${esc(DISCLAIMER)}</div>
+          </div>`;
+}
+
+/* The food block sits between the wellbeing rows and the advice — it is the
+   one part built from what you wrote rather than from the clock. */
+function foodBlock(food) {
+  if (!food) return '';
+  return `
+          <div style="margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--color-divider);">
+            <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 8px;">What you ate</div>
+            <div style="font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800);">${esc(food.observation)}</div>
+            <div style="font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800); margin-top: 7px;">${esc(food.advice)}</div>
           </div>`;
 }
 
@@ -1575,6 +1786,7 @@ function todayCard(v) {
         <div data-live-line style="font-size: 12px; color: var(--color-neutral-600); margin-bottom: 12px;">${esc(v.todayLive)}</div>
         <div style="font-size: 13.5px; line-height: 1.6; margin-bottom: 16px;">${esc(v.todayHeadline)}</div>
         ${v.todayEmpty ? '' : `<div style="display: flex; flex-direction: column; gap: 13px;">${wellbeingRows(v.todayReadings)}</div>`}
+        ${v.todayEmpty ? '' : foodBlock(v.todayFood)}
         ${v.todayEmpty ? '' : adviceBlock(v.todayAdvice)}
       </div>`;
 }
@@ -1602,6 +1814,7 @@ function pastCard(v) {
             </div>`).join('')}
         </div>
         <div style="display: flex; flex-direction: column; gap: 13px;">${wellbeingRows(v.pastReadings)}</div>
+        ${foodBlock(v.pastFood)}
         ${adviceBlock(v.pastAdvice)}`}
         ${v.pastEmpty ? '' : drawerToggle('lookback', v.pastReadings.length, 'details')}
       </div>`;
@@ -1979,7 +2192,12 @@ function render() {
   // browser already has an account and can work offline), then the migration
   // question, then the app itself.
   if (!state.booted && !state.account) { root.innerHTML = splashScreen(); return; }
-  if (state.booted && !state.auth) { root.innerHTML = authScreen(); restoreFocus(f); mountGoogleButton(); return; }
+  if (state.booted && !state.auth) {
+    root.innerHTML = authScreen() + legalSheet();
+    restoreFocus(f);
+    mountGoogleButton();
+    return;
+  }
   if (state.migrateOffer) { root.innerHTML = migrateScreen(); return; }
 
   const v = compute();
@@ -1992,8 +2210,10 @@ function render() {
   ${header(v)}
   ${syncErrorBanner()}
   ${body}
+  <div class="no-print" style="padding: 26px 28px 10px;">${legalLinks('var(--color-neutral-600)')}</div>
   ${state.reportOpen ? reportSheet(v) : ''}
   ${notePromptDialog()}
+  ${legalSheet()}
   ${mobileNav(v)}
 </div>`;
 
@@ -2276,6 +2496,9 @@ const ACTIONS = {
 
   'auth-submit': submitAuth,
   'sign-out': signOut,
+  'legal-privacy': () => { state.legalOpen = 'privacy'; render(); },
+  'legal-terms': () => { state.legalOpen = 'terms'; render(); },
+  'legal-close': () => { state.legalOpen = null; render(); },
   'toggle-drawer': (el) => {
     const key = el.dataset.drawer;
     state.drawers[key] = !state.drawers[key];
@@ -2419,7 +2642,10 @@ root.addEventListener('input', (ev) => {
   }
 });
 
-root.addEventListener('keydown', (ev) => {
+/* Bound to the document, not to #app: a re-render drops focus, and an Escape
+   that only works while something inside the app happens to be focused is an
+   Escape that does not work. */
+document.addEventListener('keydown', (ev) => {
   const el = ev.target;
   if (ev.key === 'Enter' && el.dataset && el.dataset.enter) {
     ev.preventDefault();
@@ -2429,6 +2655,7 @@ root.addEventListener('keydown', (ev) => {
   }
   // Topmost first: the follow-up dialog sits above the report sheet.
   if (ev.key === 'Escape' && state.notePrompt) { closeFollowUp(false); return; }
+  if (ev.key === 'Escape' && state.legalOpen) { state.legalOpen = null; render(); return; }
   if (ev.key === 'Escape' && state.reportOpen) { state.reportOpen = false; render(); return; }
   if (ev.key === 'Escape' && state.focus) { clearFocus(); render(); }
 });
