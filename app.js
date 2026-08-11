@@ -309,7 +309,8 @@ function save() {
       currency: state.currency, currencyUpdatedAt: state.currencyUpdatedAt,
       tombstones: state.tombstones, dirty: state.dirty,
       lastSyncAt: state.lastSyncAt, account: state.account,
-      drawers: state.drawers
+      drawers: state.drawers,
+      timerStart: state.timerStart, timerActivity: state.timerActivity, timerCategory: state.timerCategory
     }));
   } catch (e) { /* private mode or full quota — the session still works */ }
 }
@@ -395,7 +396,13 @@ const state = {
   newCatOpen: false, newCatName: '',
   newPurposeOpen: false, newPurposeName: '',
 
-  timerStart: null, timerActivity: '', timerCategory: (stored.categories[0] || {}).name || 'Chores',
+  /* Persisted, and that is the whole trick: a stopwatch needs a start time, not
+     a running process. Phones freeze and reload background tabs freely, so
+     anything held only in memory is gone the moment you lock the screen. With
+     the timestamp on disk the elapsed time is recomputed from the clock. */
+  timerStart: Number(stored.timerStart) || null,
+  timerActivity: stored.timerActivity || '',
+  timerCategory: stored.timerCategory || (stored.categories[0] || {}).name || 'Chores',
   reportOpen: false,
 
   // Slice drill-down: the category/purpose the donut is focused on, and
@@ -410,7 +417,7 @@ const state = {
   account: stored.account || null,
 
   // Collapsed by default; whether you left one open is remembered.
-  drawers: Object.assign({ categories: false, activities: false, lookback: false, legend: false, leaderboard: false }, stored.drawers),
+  drawers: Object.assign({ categories: false, activities: false, lookback: false, legend: false, leaderboard: false, today: false }, stored.drawers),
 
   /* ── session (per-load) ── */
   booted: false,
@@ -1185,6 +1192,15 @@ function compute() {
 
     clock: elapsedClock(),
     timerBtnLabel: s.timerStart ? 'Stop & save' : 'Start',
+    /* A timer that survives reloads can also survive being forgotten, so it
+       says when it started and speaks up once that gets implausible. */
+    timerSince: s.timerStart
+      ? `since ${new Date(s.timerStart).toLocaleString(undefined,
+          iso(new Date(s.timerStart)) === todayIso
+            ? { hour: 'numeric', minute: '2-digit' }
+            : { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`
+      : '',
+    timerStale: !!s.timerStart && (now - s.timerStart) > 12 * 60 * 60 * 1000,
     formDuration: formTo > formFrom ? dur(formTo - formFrom) : 'set a time',
 
     dayTotalLabel: dur(dayTracked),
@@ -1459,10 +1475,22 @@ const legalLinks = (color) => `
 
 /* ── account screens ── */
 
+/* The sign-in page gets the full stacked lockup rather than the app bar's
+   horizontal one — it is the only screen with room for the mark to be the
+   first thing you see. */
+const authLockup = () => `
+      <div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:12px;margin-bottom:6px;">
+        <span style="color:var(--color-accent-900);">${LOGO_MARK(72)}</span>
+        <span style="display:flex;flex-direction:column;gap:3px;">
+          <span style="font-family:var(--font-heading);font-weight:600;font-size:30px;letter-spacing:.02em;line-height:1;">ZIMPAN<span style="color:var(--color-accent-700);">.</span></span>
+          <span style="font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--color-neutral-600);">Track What Matters</span>
+        </span>
+      </div>`;
+
 const authShell = (inner) => `
   <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:28px 18px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);">
     <div class="blueprint" style="width:400px;max-width:100%;padding:32px 30px 30px;">
-      ${wordmark(34, 24)}
+      ${authLockup()}
       ${inner}
     </div>
   </div>`;
@@ -1509,9 +1537,8 @@ function authScreen() {
   return `
   <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:28px 18px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);">
     <div class="blueprint" style="width:400px;max-width:100%;padding:32px 30px 30px;">
-      <div style="font-family:var(--font-heading);font-weight:600;font-size:24px;letter-spacing:.02em;line-height:1;">ZIMPAN<span style="color:var(--color-accent-700);">.</span></div>
-      <div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-neutral-600);margin-top:3px;">Track What Matters</div>
-      <div style="font-size:13px;color:var(--color-neutral-700);margin:12px 0 22px;">Where your time and money actually go.</div>
+      ${authLockup()}
+      <div style="font-size:13px;color:var(--color-neutral-700);text-align:center;margin:12px 0 22px;">Where your time and money actually go.</div>
 
       <div style="display:flex;border:1px solid var(--color-divider);border-radius:999px;overflow:hidden;margin-bottom:20px;">
         <button data-act="auth-mode-login" style="${tabStyle(!register)};flex:1;">Sign in</button>
@@ -1785,9 +1812,11 @@ function todayCard(v) {
         </div>
         <div data-live-line style="font-size: 12px; color: var(--color-neutral-600); margin-bottom: 12px;">${esc(v.todayLive)}</div>
         <div style="font-size: 13.5px; line-height: 1.6; margin-bottom: 16px;">${esc(v.todayHeadline)}</div>
-        ${v.todayEmpty ? '' : `<div style="display: flex; flex-direction: column; gap: 13px;">${wellbeingRows(v.todayReadings)}</div>`}
-        ${v.todayEmpty ? '' : foodBlock(v.todayFood)}
-        ${v.todayEmpty ? '' : adviceBlock(v.todayAdvice)}
+        ${v.todayEmpty || !state.drawers.today ? '' : `
+          <div style="display: flex; flex-direction: column; gap: 13px;">${wellbeingRows(v.todayReadings)}</div>
+          ${foodBlock(v.todayFood)}
+          ${adviceBlock(v.todayAdvice)}`}
+        ${v.todayEmpty ? '' : drawerToggle('today', v.todayReadings.length + 1, 'details')}
       </div>`;
 }
 
@@ -1825,6 +1854,7 @@ function timerCard(v) {
       <div class="blueprint timer-card" style="padding: 20px 22px;">        <div>
           <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 4px;">Running</div>
           <div data-clock style="font-family: var(--font-heading); font-size: 46px; line-height: 1; font-variant-numeric: tabular-nums;">${v.clock}</div>
+          ${v.timerSince ? `<div style="font-size: 11px; color: ${v.timerStale ? 'var(--color-text)' : 'var(--color-neutral-600)'}; margin-top: 5px;">${esc(v.timerSince)}${v.timerStale ? ' · still running — did you forget to stop it?' : ''}</div>` : ''}
         </div>
         <div style="display: flex; flex-direction: column; gap: 8px; min-width: 0;">
           <input class="input" data-k="timer-activity" data-sync="timerActivity" placeholder="What are you doing right now?" value="${esc(state.timerActivity)}">
@@ -2069,22 +2099,24 @@ function reportActivities(v) {
   // Sits under the activity, indented to the same column, so a day still scans
   // as a list of entries rather than a wall of prose.
   const noteLine = (r, indent) => (r.note ? `
-              <div style="padding: 0 0 6px ${indent}px; margin-top: -2px; border-bottom: 1px solid var(--color-neutral-200); break-inside: avoid;">
+              <div class="ract-note" style="padding: 0 0 6px ${indent}px; margin-top: -2px; border-bottom: 1px solid var(--color-neutral-200); break-inside: avoid;">
                 <span style="font-size: 11.5px; line-height: 1.5; color: var(--color-neutral-700);">${esc(r.note)}</span>
               </div>` : '');
 
+  /* Classed so the mobile rules can restack these. The fixed columns add up to
+     more than a phone is wide, which is what made them collide. */
   const row = (r) => (v.isMoney ? `
-              <div style="display: flex; gap: 12px; align-items: baseline; padding: 6px 0; ${r.note ? '' : 'border-bottom: 1px solid var(--color-neutral-200);'} break-inside: avoid;">
-                <span style="flex: 1; min-width: 0; font-size: 13px;">${esc(r.activity)}</span>
-                <span style="flex: 0 0 168px; display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--color-neutral-700);"><span style="width: 8px; height: 8px; flex: none; background: ${esc(r.color)};"></span>${esc(withIcon(r.name))}</span>
-                <span style="flex: 0 0 88px; text-align: right; font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--color-accent-700);">${esc(r.in)}</span>
-                <span style="flex: 0 0 88px; text-align: right; font-size: 12.5px; font-variant-numeric: tabular-nums;">${esc(r.out)}</span>
+              <div class="ract" style="display: flex; gap: 12px; align-items: baseline; padding: 6px 0; ${r.note ? '' : 'border-bottom: 1px solid var(--color-neutral-200);'} break-inside: avoid;">
+                <span class="ract-what" style="flex: 1; min-width: 0; font-size: 13px;">${esc(r.activity)}</span>
+                <span class="ract-cat" style="flex: 0 0 168px; display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--color-neutral-700);"><span style="width: 8px; height: 8px; flex: none; background: ${esc(r.color)};"></span>${esc(withIcon(r.name))}</span>
+                <span class="ract-amt" style="flex: 0 0 88px; text-align: right; font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--color-accent-700);">${esc(r.in)}</span>
+                <span class="ract-amt" style="flex: 0 0 88px; text-align: right; font-size: 12.5px; font-variant-numeric: tabular-nums;">${esc(r.out)}</span>
               </div>${noteLine(r, 0)}` : `
-              <div style="display: flex; gap: 12px; align-items: baseline; padding: 6px 0; ${r.note ? '' : 'border-bottom: 1px solid var(--color-neutral-200);'} break-inside: avoid;">
-                <span style="flex: 0 0 132px; font-size: 11.5px; color: var(--color-neutral-600); font-variant-numeric: tabular-nums;">${esc(r.when)}</span>
-                <span style="flex: 1; min-width: 0; font-size: 13px;">${esc(r.activity)}</span>
-                <span style="flex: 0 0 150px; display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--color-neutral-700);"><span style="width: 8px; height: 8px; flex: none; background: ${esc(r.color)};"></span>${esc(withIcon(r.name))}</span>
-                <span style="flex: 0 0 62px; text-align: right; font-size: 12.5px; font-variant-numeric: tabular-nums;">${esc(r.out)}</span>
+              <div class="ract" style="display: flex; gap: 12px; align-items: baseline; padding: 6px 0; ${r.note ? '' : 'border-bottom: 1px solid var(--color-neutral-200);'} break-inside: avoid;">
+                <span class="ract-when" style="flex: 0 0 132px; font-size: 11.5px; color: var(--color-neutral-600); font-variant-numeric: tabular-nums;">${esc(r.when)}</span>
+                <span class="ract-what" style="flex: 1; min-width: 0; font-size: 13px;">${esc(r.activity)}</span>
+                <span class="ract-cat" style="flex: 0 0 150px; display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--color-neutral-700);"><span style="width: 8px; height: 8px; flex: none; background: ${esc(r.color)};"></span>${esc(withIcon(r.name))}</span>
+                <span class="ract-amt" style="flex: 0 0 62px; text-align: right; font-size: 12.5px; font-variant-numeric: tabular-nums;">${esc(r.out)}</span>
               </div>${noteLine(r, 144)}`);
 
   return `
@@ -2349,8 +2381,16 @@ function addCategoryIfNeeded(name) {
   })]);
 }
 
+// Debounced: typing should not hit localStorage on every keystroke.
+let timerSaveTimer = null;
+function queueTimerSave() {
+  clearTimeout(timerSaveTimer);
+  timerSaveTimer = setTimeout(save, 400);
+}
+
 function toggleTimer() {
-  if (!state.timerStart) { state.timerStart = Date.now(); render(); return; }
+  // Written to disk immediately, so a reload one second later still knows.
+  if (!state.timerStart) { state.timerStart = Date.now(); save(); render(); return; }
   const round = CONFIG.roundToMinutes || 1;
   const startD = new Date(state.timerStart), endD = new Date();
   const rnd = (m) => Math.round(m / round) * round;
@@ -2471,7 +2511,7 @@ const ACTIONS = {
   'next-day': () => shiftDay(1),
 
   'toggle-timer': toggleTimer,
-  'pick-timer-cat': (el) => { state.timerCategory = el.dataset.name; render(); },
+  'pick-timer-cat': (el) => { state.timerCategory = el.dataset.name; save(); render(); },
 
   'add-entry': addEntry,
   'add-money': addMoney,
@@ -2633,6 +2673,8 @@ root.addEventListener('input', (ev) => {
   const el = ev.target;
   if (!el.dataset || !el.dataset.sync) return;
   setDeep(el.dataset.sync, el.value);
+  // What you are timing has to survive a reload too, not just the start time.
+  if (el.dataset.sync === 'timerActivity') queueTimerSave();
   if (el.hasAttribute('data-live-dur')) {
     const out = root.querySelector('[data-form-duration]');
     if (out) {
@@ -2807,7 +2849,7 @@ function exportJpg() {
 /* ─────────────────────────── boot ─────────────────────────── */
 
 // The running clock and the "now" stamp tick without a full re-render.
-setInterval(() => {
+function tickLive() {
   const c = elapsedClock();
   root.querySelectorAll('[data-clock]').forEach((el) => { el.textContent = c; });
   const now = new Date();
@@ -2823,7 +2865,9 @@ setInterval(() => {
     const part = m < 720 ? 'Morning' : m < 1020 ? 'Afternoon' : m < 1260 ? 'Evening' : 'Late';
     kicker.textContent = `${part} · ${now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
   }
-}, 1000);
+}
+
+setInterval(tickLive, 1000);
 
 try {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
@@ -2837,5 +2881,14 @@ boot();
 
 // Catches anything the debounce missed — a failed push, or edits made offline.
 setInterval(() => { if (state.auth && pendingCount()) syncNow(); }, 60 * 1000);
+/* Coming back from a locked screen or another app: the 1s ticker may have been
+   frozen the whole time, so repaint at once rather than showing a stale clock
+   for up to a second. */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  tickLive();
+  if (state.auth) syncNow();
+});
+
 window.addEventListener('online', () => { if (state.auth) syncNow(); });
 window.addEventListener('offline', () => { if (state.auth) setNet('offline', ''); });
