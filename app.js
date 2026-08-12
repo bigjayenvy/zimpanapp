@@ -256,13 +256,11 @@ function seedState() {
   return {
     entries: seed.concat(hist),
     money: mSeed.concat(mHist),
+    // Starting set for a new account. Existing accounts keep whatever they have.
     categories: [
-      { name: 'Chores', color: PALETTE[0] },
-      { name: 'Workout', color: PALETTE[1] },
-      { name: 'Potato Couching', color: PALETTE[2] },
-      { name: 'Family Time', color: PALETTE[3] },
-      { name: 'Focus Work', color: PALETTE[4] }
-    ],
+      'Chores', 'Workout', 'Potato Couching', 'Family Time', 'Focus Work',
+      'Eat', 'Sleep', 'Prayers and Reflections', 'Meetings', 'Cooking'
+    ].map((name, i) => ({ name, color: PALETTE[i % PALETTE.length] })),
     purposes: PURPOSES.map((n, i) => ({ name: n, color: PALETTE[i % PALETTE.length] }))
   };
 }
@@ -428,6 +426,7 @@ const state = {
   /* ── session (per-load) ── */
   booted: false,
   auth: null,
+  authOpen: false,
   googleClientId: null,
   // 'login' | 'register' | 'forgot' | 'reset'
   authMode: 'login',
@@ -1080,8 +1079,16 @@ const METS = [
 
 const DEFAULT_WEIGHT_KG = 70;
 
-function burnFor(entries, weightKg) {
+/* Resting burn — what the body spends doing nothing. Proper formulae want
+   height, age and sex; from weight alone about 22 kcal per kilogram per day is
+   the usual midpoint, good to roughly ±25%. Reported on its own rather than
+   folded into the workout figure: at ~1,900 a day it would swamp both sides of
+   the comparison and leave it meaningless. */
+const KCAL_PER_KG_PER_DAY = 22;
+
+function burnFor(entries, weightKg, days) {
   const kg = Number(weightKg) || DEFAULT_WEIGHT_KG;
+  const span = Math.max(1, days || 1);
   let kcal = 0, minutes = 0;
   entries.forEach((e) => {
     const text = `${e.activity || ''} ${e.category || ''} ${e.note || ''}`.toLowerCase();
@@ -1092,7 +1099,13 @@ function burnFor(entries, weightKg) {
     minutes += mins;
     kcal += hit.met * kg * (mins / 60);
   });
-  return { kcal: Math.round(kcal), minutes, assumedWeight: !weightKg };
+  return {
+    kcal: Math.round(kcal),
+    minutes,
+    restKcal: Math.round(KCAL_PER_KG_PER_DAY * kg * span),
+    days: span,
+    assumedWeight: !weightKg
+  };
 }
 
 function foodReport(entries, money, days) {
@@ -1363,7 +1376,7 @@ function compute() {
     todayReadings: dimensionReadings(todayWb, 1),
     todayAdvice: adviceFor(todayWb, dimensionReadings(todayWb, 1), 1),
     todayFood: foodReport(todayList, s.money.filter((e) => e.date === todayIso), 1),
-    todayBurn: burnFor(todayList, s.weightKg),
+    todayBurn: burnFor(todayList, s.weightKg, 1),
     todayEmpty: todayList.length === 0,
 
     pastLabel,
@@ -1372,7 +1385,9 @@ function compute() {
       : 'Nothing to look back on yet — the notes fill in as days finish.',
     // Only worth saying when there is more than one day to compare.
     pastBusiest: busiest && pastDates.length > 1 ? `Busiest day was ${dayLabel(busiest)} at ${durShort(byDay[busiest])}.` : '',
-    pastTop: pastTotals.slice(0, 3).map((t) => ({
+    // Every category, not a top three — the whole block already sits behind
+    // the Read Full Report drawer, so there is room to be complete.
+    pastTop: pastTotals.map((t) => ({
       name: t.name, color: t.color, label: durShort(t.mins),
       width: `${Math.round((t.mins / (pastWb.tracked || 1)) * 100)}%`,
       pct: `${Math.round((t.mins / (pastWb.tracked || 1)) * 100)}%`
@@ -1380,7 +1395,7 @@ function compute() {
     pastReadings: dimensionReadings(pastWb, pastDates.length),
     pastAdvice: adviceFor(pastWb, dimensionReadings(pastWb, pastDates.length), pastDates.length),
     pastFood: foodReport(pastList, pastMoney, Math.max(1, pastDates.length)),
-    pastBurn: burnFor(pastList, s.weightKg),
+    pastBurn: burnFor(pastList, s.weightKg, Math.max(1, pastDates.length)),
     pastEmpty: pastDates.length === 0,
 
     untracked: durShort(untrackedMins),
@@ -1551,7 +1566,7 @@ function header(v) {
       ${state.auth ? `
         <span style="font-size:12px;color:var(--color-neutral-700);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(state.auth.email)}</span>
         <button class="btn btn-ghost" data-act="sign-out" style="font-size:12px;">Sign out</button>` : ''}
-      <a class="btn btn-secondary" href="${DONATE_URL}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;">Donate</a>
+      <a class="btn btn-donate" href="${DONATE_URL}" target="_blank" rel="noopener noreferrer">${NAV_ICONS.donate}<span>Donate</span></a>
       <button class="btn btn-primary" data-act="open-report" style="position:relative">Export report</button>
     </div>
   </div>`;
@@ -1656,9 +1671,75 @@ const authLockup = () => `
         </span>
       </div>`;
 
+/* ── landing ──
+   What a signed-out visitor sees. Sign-in is a lightbox raised from here, so
+   the first screen sells the thing rather than demanding credentials. */
+function landingScreen() {
+  const cta = (size) => `
+    <button data-act="auth-open" class="btn btn-primary" style="
+      font-size: ${size}px; font-weight: 600; padding: ${size > 15 ? '13px 30px' : '10px 24px'};
+      border-radius: 999px; cursor: pointer;">Start Tracking Now</button>`;
+
+  return `
+  <div style="min-height:100vh;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);">
+    <header style="display:flex;align-items:center;gap:16px;padding:18px 28px;flex-wrap:wrap;">
+      ${wordmark(30, 22)}
+      <div style="margin-left:auto;">${cta(14)}</div>
+    </header>
+
+    <section class="hero">
+      <div class="hero-copy">
+        <h1 style="font-family:var(--font-heading);font-weight:600;font-size:clamp(30px,5.2vw,52px);line-height:1.08;letter-spacing:-.01em;margin:0 0 18px;text-wrap:balance;">
+          Your Smart Tracking Center for Everything
+        </h1>
+        <p style="font-size:15.5px;line-height:1.7;color:var(--color-neutral-800);margin:0 0 26px;max-width:56ch;">
+          Zimpan is a <strong>free</strong> all-in-one tool that helps you optimize how you track and
+          manage your time, finances, projects, workouts, and even calories. Get meaningful insights,
+          improve efficiency, stay organized, and focus on what truly matters.
+        </p>
+        ${cta(16)}
+        <p style="font-size:12.5px;color:var(--color-neutral-600);margin:16px 0 0;">
+          Free forever · No card required · Your data stays yours
+        </p>
+      </div>
+
+      <div class="hero-art">
+        <img src="ds/hero.jpg" alt="Tracking the day on a phone"
+             onerror="this.closest('.hero-art').style.display='none'"
+             style="width:100%;height:auto;display:block;border-radius:14px;box-shadow:var(--shadow-lg);">
+      </div>
+    </section>
+
+    <section style="max-width:1100px;margin:0 auto;padding:8px 28px 56px;">
+      <div class="landing-points">
+        ${[['Time', 'Start a timer or log by hand. See exactly where the hours went.'],
+           ['Money', 'Track what comes in and what goes out, in your own currency.'],
+           ['Insights', 'Honest read-outs on movement, focus, rest and what you ate.']]
+          .map(([title, body]) => `
+          <div class="blueprint" style="padding:18px 20px 20px;">
+            <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-accent-700);margin-bottom:6px;">${esc(title)}</div>
+            <div style="font-size:13.5px;line-height:1.6;color:var(--color-neutral-800);">${esc(body)}</div>
+          </div>`).join('')}
+      </div>
+    </section>
+
+    <footer style="border-top:1px solid var(--color-divider);padding:20px 28px 32px;">
+      ${legalLinks('var(--color-neutral-600)')}
+    </footer>
+  </div>`;
+}
+
+/* The sign-in panel is a lightbox over the landing page. Escape and the
+   backdrop both dismiss it, except during a reset, where there is nowhere
+   sensible to go back to. */
 const authShell = (inner) => `
-  <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:28px 18px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);">
-    <div class="blueprint" style="width:400px;max-width:100%;padding:32px 30px 30px;">
+  <div data-auth-backdrop style="position:fixed;inset:0;z-index:50;overflow:auto;padding:24px 16px;
+       background:color-mix(in srgb, var(--color-neutral-900) 58%, transparent);
+       display:flex;align-items:flex-start;justify-content:center;">
+    <div class="blueprint" style="width:400px;max-width:100%;padding:30px 28px 28px;background:var(--color-bg);margin:auto;position:relative;">
+      ${state.authMode === 'reset' ? '' : `
+        <button data-act="auth-close" aria-label="Close" style="position:absolute;top:10px;right:12px;border:0;background:transparent;
+          font-size:22px;line-height:1;color:var(--color-neutral-600);cursor:pointer;padding:4px 8px;">×</button>`}
       ${authLockup()}
       ${inner}
     </div>
@@ -1703,10 +1784,7 @@ function authScreen() {
   if (state.authMode === 'forgot') return forgotScreen();
   if (state.authMode === 'reset') return resetScreen();
   const register = state.authMode === 'register';
-  return `
-  <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:28px 18px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);">
-    <div class="blueprint" style="width:400px;max-width:100%;padding:32px 30px 30px;">
-      ${authLockup()}
+  return authShell(`
 
       <div style="display:flex;border:1px solid var(--color-divider);border-radius:999px;overflow:hidden;margin:22px 0 20px;">
         <button data-act="auth-mode-login" style="${tabStyle(!register)};flex:1;">Sign in</button>
@@ -1739,9 +1817,7 @@ function authScreen() {
 
       <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--color-divider);">
         ${legalLinks('var(--color-neutral-600)')}
-      </div>
-    </div>
-  </div>`;
+      </div>`);
 }
 
 function migrateScreen() {
@@ -1979,11 +2055,15 @@ function energyLine(food, burn) {
   const net = burn.kcal - food.kcal;
   return `
         <div style="margin-top: 10px; font-size: 19px; line-height: 1.35; font-weight: 700; color: var(--zg-strong);">
-          Calories burned ~${burn.kcal.toLocaleString('en-US')} versus calories consumed ~${food.kcal.toLocaleString('en-US')}
+          Calories burned from workout ~${burn.kcal.toLocaleString('en-US')} versus calories consumed with food eaten ~${food.kcal.toLocaleString('en-US')}
         </div>
+        ${burn.restKcal ? `
+        <div style="font-size: 12.5px; line-height: 1.5; color: var(--zg-text); font-weight: 600; margin-top: 5px;">
+          Plus roughly ${burn.restKcal.toLocaleString('en-US')} burned at rest${burn.days > 1 ? ` over ${burn.days} days` : ''} just keeping you running.
+        </div>` : ''}
         <div style="font-size: 11.5px; line-height: 1.5; color: var(--color-neutral-600); margin-top: 3px;">
-          Both estimated${burn.assumedWeight && burn.kcal ? ', burn assumes an average build — add your weight below for a closer figure' : ''}.
-          ${net === 0 ? '' : net > 0 ? `Around ${Math.abs(net).toLocaleString('en-US')} more burned than eaten.` : `Around ${Math.abs(net).toLocaleString('en-US')} more eaten than burned.`}
+          All estimated${burn.assumedWeight ? ', assuming an average build — add your weight below for closer figures' : ' from your weight alone, so treat them as ballpark'}.
+          ${burn.restKcal ? 'Resting burn is deliberately kept out of the comparison above, or it would swamp both sides. ' : ''}${net === 0 ? '' : net > 0 ? `Around ${Math.abs(net).toLocaleString('en-US')} more burned in exercise than eaten.` : `Around ${Math.abs(net).toLocaleString('en-US')} more eaten than burned in exercise.`}
         </div>`;
 }
 
@@ -2210,7 +2290,7 @@ function timeDesktop(v) {
           <h4 style="margin: 0; margin-right: auto;">Where the time went</h4>
           ${segRange('range', ['Day', 'Week', 'Month'])}
         </div>
-        <div style="display: flex; gap: 24px; align-items: center; flex-wrap: wrap;">
+        <div class="chart-row" style="display: flex; gap: 24px; align-items: center; flex-wrap: wrap;">
           ${donut(v, 190, 34, 27)}
           <div style="display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0;">${legend(v)}</div>
         </div>
@@ -2233,7 +2313,7 @@ function timeDesktop(v) {
       </div>
 
       <div style="padding: 4px 2px 0;">
-        <h4 style="margin: 0 0 3px; font-size: 18px;">Your Insights, our recommendations</h4>
+        <h4 style="margin: 0 0 5px; font-size: 24px; line-height: 1.2;">Your Insights, our recommendations</h4>
         <div style="font-size: 12px; line-height: 1.5; color: var(--color-neutral-600);">
           Read from what you logged. Estimates, not measurements — and never a substitute for professional advice.
         </div>
@@ -2317,7 +2397,7 @@ function moneyDesktop(v) {
           <h4 style="margin: 0; margin-right: auto;">Where the money went</h4>
           ${segRange('mrange2', ['Day', 'Week', 'Month'])}
         </div>
-        <div style="display: flex; gap: 24px; align-items: center; flex-wrap: wrap;">
+        <div class="chart-row" style="display: flex; gap: 24px; align-items: center; flex-wrap: wrap;">
           ${donut(v, 190, 34, 24)}
           <div style="display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0;">${legend(v)}</div>
         </div>
@@ -2470,9 +2550,12 @@ function render() {
   // question, then the app itself.
   if (!state.booted && !state.account) { root.innerHTML = splashScreen(); return; }
   if (state.booted && !state.auth) {
-    root.innerHTML = authScreen() + legalSheet();
+    // A reset link has to open its panel directly; there is no landing page
+    // journey that leads to it.
+    const panelOpen = state.authOpen || state.authMode === 'reset';
+    root.innerHTML = landingScreen() + (panelOpen ? authScreen() : '') + legalSheet();
     restoreFocus(f);
-    mountGoogleButton();
+    if (panelOpen) mountGoogleButton();
     return;
   }
   if (state.migrateOffer) { root.innerHTML = migrateScreen(); return; }
@@ -2652,7 +2735,11 @@ function toggleTimer() {
   state.timerStart = null;
   state.timerActivity = '';
   state.selectedDate = entry.date;
+  // Stopping a timer is the natural moment to ask what it was — same rule as a
+  // manual entry, including the "skipped this session" suppression.
+  askFollowUp('entries', entry);
   save(); queueSync(0); render();
+  if (!state.notePrompt) flash(`Saved · ${entry.activity}`);
 }
 
 function addEntry() {
@@ -2770,6 +2857,8 @@ const ACTIONS = {
   },
 
   /* ── account ── */
+  'auth-open': () => { state.authOpen = true; setAuthMode('login'); },
+  'auth-close': () => { state.authOpen = false; state.authError = ''; state.authNotice = ''; render(); },
   'auth-mode-login': () => { setAuthMode('login'); },
   'auth-mode-register': () => { setAuthMode('register'); },
   'auth-mode-forgot': () => { setAuthMode('forgot'); },
@@ -2956,6 +3045,7 @@ document.addEventListener('keydown', (ev) => {
   // Topmost first: the follow-up dialog sits above the report sheet.
   if (ev.key === 'Escape' && state.notePrompt) { closeFollowUp(false); return; }
   if (ev.key === 'Escape' && state.legalOpen) { state.legalOpen = null; render(); return; }
+  if (ev.key === 'Escape' && state.authOpen && state.authMode !== 'reset') { state.authOpen = false; render(); return; }
   if (ev.key === 'Escape' && state.reportOpen) { state.reportOpen = false; render(); return; }
   if (ev.key === 'Escape' && state.focus) { clearFocus(); render(); }
 });
