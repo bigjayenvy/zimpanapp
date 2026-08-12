@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS users (
   google_sub    VARCHAR(64)  NULL,
   display_name  VARCHAR(120) NULL,
   currency      VARCHAR(8)   NOT NULL DEFAULT 'PHP',
+  -- Optional. Only used to scale the calorie-burn estimate; blank falls back
+  -- to an average build.
+  weight_kg     SMALLINT UNSIGNED NULL,
   created_at    BIGINT       NOT NULL,
   updated_at    BIGINT       NOT NULL,
   PRIMARY KEY (id),

@@ -55,6 +55,20 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .seg-opt { padding-inline: 15px; }
   input[type="time"]::-webkit-calendar-picker-indicator { opacity: .35; }
 
+  /* — the green —
+     --zg-strong is the requested #00a149, used only where the type is large
+     enough to clear WCAG AA at its 3.03:1 contrast on this background.
+     --zg-text is the same hue darkened to 4.89:1, so the small inline labels
+     that replaced grey stay readable on a phone in daylight. */
+  :root {
+    --zg-strong: #00a149;
+    --zg-text: #007a38;
+  }
+
+  /* Small inline labels move from grey to green wholesale. neutral-600 is the
+     app's caption grey; the darker body greys are deliberately left alone. */
+  [data-app] { --color-neutral-600: var(--zg-text); }
+
   /* — money tracker theme —
      Accent tokens are inherited custom properties, so re-declaring them on the
      page wrapper repoints every accent in the money view — buttons, kickers,
@@ -104,12 +118,19 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     max-width: calc(100vw - 40px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
 
+  /* A labelled control rather than a faint glyph — at 25% opacity nobody
+     could tell it was a button. */
   .cell-note {
-    border: 0; background: transparent; cursor: pointer;
-    font-size: 11px; line-height: 1; padding: 2px 3px; margin-left: 3px;
-    border-radius: 3px; vertical-align: middle;
+    border: 1px solid var(--color-divider); background: transparent;
+    cursor: pointer; font-family: var(--font-body); font-size: 10.5px;
+    line-height: 1; padding: 3px 9px; margin-left: 6px;
+    border-radius: 999px; vertical-align: middle; white-space: nowrap;
+    color: var(--color-neutral-700);
   }
-  .cell-note:hover { opacity: 1 !important; background: var(--color-neutral-200); }
+  .cell-note[data-has-note] {
+    border-color: var(--zg-strong); color: var(--zg-text); font-weight: 600;
+  }
+  .cell-note:hover { background: var(--color-accent-700); border-color: var(--color-accent-700); color: #fff; }
   .cell-note:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
 
   @media (prefers-reduced-motion: reduce) {

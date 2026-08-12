@@ -73,7 +73,7 @@ export async function changesSince(userId, since) {
              FROM categories WHERE user_id = ? AND updated_at > ?`, [userId, since]),
     query(`SELECT name, color, position, updated_at, deleted
              FROM purposes WHERE user_id = ? AND updated_at > ?`, [userId, since]),
-    one('SELECT currency, updated_at FROM users WHERE id = ?', [userId])
+    one('SELECT currency, weight_kg, updated_at FROM users WHERE id = ?', [userId])
   ]);
 
   const named = (rows) => rows.map((r) => ({
@@ -96,6 +96,9 @@ export async function changesSince(userId, since) {
     purposes: named(purposes),
     currency: user && Number(user.updated_at) > since
       ? { value: user.currency, updatedAt: Number(user.updated_at) }
+      : null,
+    weightKg: user && Number(user.updated_at) > since
+      ? { value: user.weight_kg == null ? null : Number(user.weight_kg), updatedAt: Number(user.updated_at) }
       : null
   };
 }
@@ -177,6 +180,14 @@ export async function applyChanges(userId, changes) {
     currency = [value, stamp(c.currency.updatedAt, 'currency.updatedAt')];
   }
 
+  let weight = null;
+  if (c.weightKg && typeof c.weightKg === 'object') {
+    const raw = c.weightKg.value;
+    // Null clears it, which is how "prefer not to say" is expressed.
+    const value = raw == null || raw === '' ? null : int(raw, 'weightKg.value', 20, 400);
+    weight = [value, stamp(c.weightKg.updatedAt, 'weightKg.updatedAt')];
+  }
+
   await transaction(async (conn) => {
     const run = async (sql, rows) => { for (const r of rows) await conn.execute(sql, r); };
     await run(UPSERT_ENTRY, entries);
@@ -186,6 +197,10 @@ export async function applyChanges(userId, changes) {
     if (currency) {
       await conn.execute('UPDATE users SET currency = ?, updated_at = ? WHERE id = ? AND updated_at <= ?',
         [currency[0], currency[1], userId, currency[1]]);
+    }
+    if (weight) {
+      await conn.execute('UPDATE users SET weight_kg = ?, updated_at = ? WHERE id = ? AND updated_at <= ?',
+        [weight[0], weight[1], userId, weight[1]]);
     }
   });
 

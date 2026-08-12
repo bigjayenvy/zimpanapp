@@ -307,6 +307,8 @@ function save() {
       entries: state.entries, money: state.money,
       categories: state.categories, purposes: state.purposes,
       currency: state.currency, currencyUpdatedAt: state.currencyUpdatedAt,
+      weightKg: state.weightKg, weightUpdatedAt: state.weightUpdatedAt,
+      entryMode: state.entryMode,
       tombstones: state.tombstones, dirty: state.dirty,
       lastSyncAt: state.lastSyncAt, account: state.account,
       drawers: state.drawers,
@@ -389,6 +391,10 @@ const state = {
   categories: stored.categories,
   purposes: stored.purposes,
   currency: CURRENCIES.some((c) => c.code === stored.currency) ? stored.currency : 'PHP',
+  weightKg: Number(stored.weightKg) || null,
+  weightUpdatedAt: Number(stored.weightUpdatedAt) || 0,
+  // 'timer' or 'manual' — only one entry card is on screen at a time.
+  entryMode: stored.entryMode === 'manual' ? 'manual' : 'timer',
 
   form: { date: todayIso, activity: '', category: (stored.categories[0] || {}).name || 'Chores', from: hm(today.getHours() * 60 + today.getMinutes()), to: '' },
   mForm: { date: todayIso, activity: '', purpose: 'Groceries', in: '', out: '' },
@@ -497,6 +503,7 @@ function collectChanges() {
     if (rows.length) out[kind] = rows;
   });
   if (state.dirty.currency) out.currency = { value: state.currency, updatedAt: state.currencyUpdatedAt };
+  if (state.dirty.weight) out.weightKg = { value: state.weightKg, updatedAt: state.weightUpdatedAt };
   return out;
 }
 
@@ -527,6 +534,11 @@ function mergeChanges(changes) {
     state.currencyUpdatedAt = changes.currency.updatedAt;
     state.dirty.currency = false;
   }
+  if (changes.weightKg && changes.weightKg.updatedAt >= state.weightUpdatedAt) {
+    state.weightKg = changes.weightKg.value == null ? null : Number(changes.weightKg.value);
+    state.weightUpdatedAt = changes.weightKg.updatedAt;
+    state.dirty.weight = false;
+  }
 }
 
 /* Clears the outbox only for rows untouched since they were collected — an
@@ -541,6 +553,7 @@ function clearPushed(sent) {
     });
   });
   if (sent.currency && state.currencyUpdatedAt === sent.currency.updatedAt) state.dirty.currency = false;
+  if (sent.weightKg && state.weightUpdatedAt === sent.weightKg.updatedAt) state.dirty.weight = false;
 }
 
 /* Resolves the row the server complained about back to something nameable, by
@@ -557,7 +570,8 @@ function describeBlockedRow() {
 }
 
 const pendingCount = () =>
-  KINDS.reduce((n, k) => n + Object.keys(state.dirty[k]).length, 0) + (state.dirty.currency ? 1 : 0);
+  KINDS.reduce((n, k) => n + Object.keys(state.dirty[k]).length, 0)
+  + (state.dirty.currency ? 1 : 0) + (state.dirty.weight ? 1 : 0);
 
 function setNet(netState, message) {
   state.netState = netState;
@@ -966,6 +980,107 @@ const isFoodRow = (row) => {
   return !!q && (q.key === 'food' || q.key === 'shopping-food');
 };
 
+/* ── rough energy maths ──
+
+   Every number below is an estimate and is labelled as one wherever it is
+   shown. A line of text says nothing about portion size, cooking method or
+   what was left on the plate, so treat these as orders of magnitude rather
+   than measurements. Values are per typical serving.
+
+   Sources are the usual public nutrition tables, rounded hard — precision
+   here would be false confidence. */
+
+/* `g` groups rules describing the same food. Only the first match within a
+   group counts, so "fried chicken" is not also billed as plain chicken.
+   Specific patterns therefore have to precede general ones. */
+const SERVINGS = [
+  { g: 'grain', re: /brown rice|quinoa|barley|wholemeal/, kcal: 215, p: 5, c: 45, f: 1.8 },
+  { g: 'grain', re: /\brice\b|kanin/, kcal: 205, p: 4, c: 45, f: 0.4 },
+  { g: 'bread', re: /bread|pandesal|toast/, kcal: 160, p: 6, c: 30, f: 2 },
+  { g: 'pasta', re: /pasta|noodle|spaghetti|pancit/, kcal: 300, p: 11, c: 56, f: 3 },
+  { g: 'oats', re: /oats|oatmeal|cereal/, kcal: 160, p: 6, c: 27, f: 3 },
+  { g: 'chicken', re: /fried chicken|chicken inasal|lechon manok/, kcal: 420, p: 32, c: 12, f: 26 },
+  { g: 'chicken', re: /chicken|manok/, kcal: 240, p: 34, c: 0, f: 11 },
+  { g: 'fish', re: /fish|isda|bangus|tilapia|tuna|salmon/, kcal: 210, p: 30, c: 0, f: 9 },
+  { g: 'beef', re: /beef|steak|baka/, kcal: 290, p: 30, c: 0, f: 18 },
+  { g: 'pork', re: /\bpork\b|baboy|liempo|lechon kawali|lechon baboy/, kcal: 320, p: 27, c: 0, f: 23 },
+  { g: 'egg', re: /\begg|itlog/, kcal: 90, p: 7, c: 0.5, f: 6.5 },
+  { g: 'plant', re: /tofu|tokwa|beans|monggo|lentil/, kcal: 150, p: 12, c: 12, f: 6 },
+  { g: 'seafood', re: /shrimp|hipon|seafood/, kcal: 140, p: 26, c: 1, f: 2 },
+  { g: 'veg', re: /salad|gulay|kangkong|pechay|vegetable|broccoli|spinach|malunggay/, kcal: 70, p: 3, c: 10, f: 2 },
+  { g: 'fruit', re: /banana|saging|apple|mango|orange|papaya|pineapple|melon|berries|fruit/, kcal: 95, p: 1, c: 24, f: 0.3 },
+  { g: 'curedmeat', re: /bacon|chicharon|tocino|longganisa|sausage|hotdog/, kcal: 300, p: 14, c: 3, f: 26 },
+  { g: 'fastfood', re: /burger|pizza|fries|lumpia|tempura|siomai/, kcal: 400, p: 15, c: 40, f: 20 },
+  { g: 'instant', re: /instant noodle|canned|spam|corned beef/, kcal: 380, p: 13, c: 45, f: 16 },
+  { g: 'dessert', re: /cake|donut|pastry|leche flan|ice cream|halo-halo|dessert|chocolate/, kcal: 330, p: 4, c: 45, f: 15 },
+  { g: 'drink', re: /milk tea|boba/, kcal: 250, p: 3, c: 45, f: 6 },
+  { g: 'drink', re: /soda|coke|sprite|softdrink|iced tea|juice/, kcal: 180, p: 0, c: 44, f: 0 },
+  { g: 'coffee', re: /coffee|kape|latte|espresso/, kcal: 60, p: 2, c: 8, f: 2 },
+  { g: 'dairy', re: /yogurt|cheese|\bmilk\b(?! ?tea)/, kcal: 130, p: 8, c: 10, f: 6 },
+  { g: 'soup', re: /soup|sinigang|tinola|nilaga/, kcal: 180, p: 14, c: 12, f: 8 },
+  { g: 'stew', re: /adobo|caldereta|menudo|curry|afritada/, kcal: 350, p: 25, c: 12, f: 22 }
+];
+
+// A meal we cannot read at all still happened; ignoring it would understate
+// the day more than a rough placeholder does.
+const UNKNOWN_MEAL = { kcal: 450, p: 20, c: 50, f: 16 };
+
+function nutritionFor(rows) {
+  let kcal = 0, p = 0, c = 0, f = 0, read = 0, guessed = 0;
+  rows.forEach((row) => {
+    const text = `${row.activity || ''} ${row.note || ''}`.toLowerCase();
+    // One serving per food group: the first (most specific) rule that matches.
+    const claimed = new Set();
+    const hits = SERVINGS.filter((s) => {
+      if (claimed.has(s.g) || !s.re.test(text)) return false;
+      claimed.add(s.g);
+      return true;
+    });
+    if (hits.length) {
+      read += 1;
+      hits.forEach((h) => { kcal += h.kcal; p += h.p; c += h.c; f += h.f; });
+    } else {
+      guessed += 1;
+      kcal += UNKNOWN_MEAL.kcal; p += UNKNOWN_MEAL.p; c += UNKNOWN_MEAL.c; f += UNKNOWN_MEAL.f;
+    }
+  });
+  return { kcal: Math.round(kcal), protein: Math.round(p), carbs: Math.round(c), fat: Math.round(f), read, guessed };
+}
+
+/* MET values — energy cost relative to sitting still. Burn is
+   MET × kilograms × hours, the standard approximation. */
+const METS = [
+  { re: /run|jog|sprint/, met: 9.8 },
+  { re: /treadmill/, met: 7.0 },
+  { re: /swim/, met: 7.0 },
+  { re: /bike|cycl|spin/, met: 7.5 },
+  { re: /hike/, met: 6.0 },
+  { re: /basketball|football|badminton|tennis|sport/, met: 6.5 },
+  { re: /crossfit|hiit|zumba/, met: 8.0 },
+  { re: /gym|weights|lift|strength/, met: 5.0 },
+  { re: /pilates|stretch/, met: 3.0 },
+  { re: /yoga/, met: 2.5 },
+  { re: /walk|lakad|stroll/, met: 3.5 },
+  { re: /workout|exercise|cardio/, met: 5.0 }
+];
+
+const DEFAULT_WEIGHT_KG = 70;
+
+function burnFor(entries, weightKg) {
+  const kg = Number(weightKg) || DEFAULT_WEIGHT_KG;
+  let kcal = 0, minutes = 0;
+  entries.forEach((e) => {
+    const text = `${e.activity || ''} ${e.category || ''} ${e.note || ''}`.toLowerCase();
+    const hit = METS.find((m) => m.re.test(text));
+    if (!hit) return;
+    const mins = Math.max(0, (e.to || 0) - (e.from || 0));
+    if (!mins) return;
+    minutes += mins;
+    kcal += hit.met * kg * (mins / 60);
+  });
+  return { kcal: Math.round(kcal), minutes, assumedWeight: !weightKg };
+}
+
 function foodReport(entries, money, days) {
   const rows = entries.filter(isFoodRow).concat(money.filter(isFoodRow));
   const withNotes = rows.filter((r) => (r.note || '').trim());
@@ -983,6 +1098,7 @@ function foodReport(entries, money, days) {
       meals: 0,
       observation: `No meals logged${per}. Food is the easiest thing to eat without noticing, and the hardest to remember accurately a week later — logging even roughly is what makes any of this readable.`,
       advice: 'Log a meal or two and answer the “What did you eat?” question. Two or three days is enough for a pattern to show.',
+      nutrition: '', kcal: 0,
       hasFindings: false
     };
   }
@@ -992,6 +1108,7 @@ function foodReport(entries, money, days) {
       meals: rows.length,
       observation: `${rows.length} food ${rows.length === 1 ? 'entry' : 'entries'} logged${per}, but none say what was in them. The timing is useful on its own — long gaps and late meals both show up here — though the contents are where the useful part lives.`,
       advice: 'Next time the “What did you eat?” box appears, a few words is plenty — “chicken, rice, salad” already tells you something a month from now.',
+      nutrition: '', kcal: 0,
       hasFindings: false
     };
   }
@@ -1007,7 +1124,18 @@ function foodReport(entries, money, days) {
     ? `Swapping one ${risk[0].label.replace(/ or .*/, '')} occasion a week for something cooked at home is the smallest change that tends to hold. General guidance only — anything specific to you, especially with a medical condition or medication, belongs with your doctor.`
     : `Keep the pattern and keep logging it. General guidance only — for anything specific to you, your doctor is the right person to ask.`;
 
-  return { meals: rows.length, observation: fitSentences(parts, 300), advice: clamp(advice, 300), hasFindings: true };
+  const n = nutritionFor(rows);
+  const perDay = days > 1 ? ` (about ${Math.round(n.kcal / days)} a day)` : '';
+  const nutrition = `Roughly ${n.kcal.toLocaleString('en-US')} kcal${perDay} — around ${n.protein}g protein, ${n.carbs}g carbs, ${n.fat}g fat. Estimated from what you wrote${n.guessed ? `, with ${n.guessed} ${n.guessed === 1 ? 'entry' : 'entries'} too vague to read` : ''}.`;
+
+  return {
+    meals: rows.length,
+    observation: fitSentences(parts, 300),
+    advice: clamp(advice, 300),
+    nutrition: clamp(nutrition, 300),
+    kcal: n.kcal,
+    hasFindings: true
+  };
 }
 
 function dimensionReadings(wb, days) {
@@ -1221,6 +1349,7 @@ function compute() {
     todayReadings: dimensionReadings(todayWb, 1),
     todayAdvice: adviceFor(todayWb, dimensionReadings(todayWb, 1), 1),
     todayFood: foodReport(todayList, s.money.filter((e) => e.date === todayIso), 1),
+    todayBurn: burnFor(todayList, s.weightKg),
     todayEmpty: todayList.length === 0,
 
     pastLabel,
@@ -1237,6 +1366,7 @@ function compute() {
     pastReadings: dimensionReadings(pastWb, pastDates.length),
     pastAdvice: adviceFor(pastWb, dimensionReadings(pastWb, pastDates.length), pastDates.length),
     pastFood: foodReport(pastList, pastMoney, Math.max(1, pastDates.length)),
+    pastBurn: burnFor(pastList, s.weightKg),
     pastEmpty: pastDates.length === 0,
 
     untracked: durShort(untrackedMins),
@@ -1823,8 +1953,24 @@ function foodBlock(food) {
           <div style="margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--color-divider);">
             <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 8px;">What you ate</div>
             <div style="font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800);">${esc(food.observation)}</div>
+            ${food.nutrition ? `<div style="font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800); margin-top: 7px;">${esc(food.nutrition)}</div>` : ''}
             <div style="font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800); margin-top: 7px;">${esc(food.advice)}</div>
           </div>`;
+}
+
+/* The headline number pair. Deliberately blunt about being an estimate — the
+   food side is read from free text and the burn side leans on a MET table. */
+function energyLine(food, burn) {
+  if (!food.kcal && !burn.kcal) return '';
+  const net = burn.kcal - food.kcal;
+  return `
+        <div style="margin-top: 10px; font-size: 19px; line-height: 1.35; font-weight: 700; color: var(--zg-strong);">
+          Calories burned ~${burn.kcal.toLocaleString('en-US')} versus calories consumed ~${food.kcal.toLocaleString('en-US')}
+        </div>
+        <div style="font-size: 11.5px; line-height: 1.5; color: var(--color-neutral-600); margin-top: 3px;">
+          Both estimated${burn.assumedWeight && burn.kcal ? ', burn assumes an average build — add your weight below for a closer figure' : ''}.
+          ${net === 0 ? '' : net > 0 ? `Around ${Math.abs(net).toLocaleString('en-US')} more burned than eaten.` : `Around ${Math.abs(net).toLocaleString('en-US')} more eaten than burned.`}
+        </div>`;
 }
 
 function todayCard(v) {
@@ -1834,13 +1980,37 @@ function todayCard(v) {
           <h4 style="margin: 0;">Today, as it happens</h4>
           <span data-today-kicker style="font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--color-accent-700); margin-left: auto;">${esc(v.todayKicker)}</span>
         </div>
-        <div data-live-line style="font-size: 12px; color: var(--color-neutral-600); margin-bottom: 12px;">${esc(v.todayLive)}</div>
-        <div style="font-size: 13.5px; line-height: 1.6; margin-bottom: 16px;">${esc(v.todayHeadline)}</div>
+        <div data-live-line style="font-size: 12px; color: var(--color-neutral-600);">${esc(v.todayLive)}</div>
+        ${energyLine(v.todayFood, v.todayBurn)}
+        <div style="font-size: 13.5px; line-height: 1.6; margin: 14px 0 16px;">${esc(v.todayHeadline)}</div>
         ${v.todayEmpty || !state.drawers.today ? '' : `
           <div style="display: flex; flex-direction: column; gap: 13px;">${wellbeingRows(v.todayReadings)}</div>
           ${foodBlock(v.todayFood)}
           ${adviceBlock(v.todayAdvice)}`}
         ${v.todayEmpty ? '' : drawerToggle('today', 0, '', REPORT_LABELS)}
+      </div>`;
+}
+
+/* Optional, and the only personal measurement the app asks for. It exists
+   solely to scale the burn estimate; leaving it blank costs accuracy, not
+   function. */
+function weightCard(v) {
+  return `
+      <div class="blueprint" style="padding: 16px 22px 18px;">
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+          <div style="min-width: 0; flex: 1 1 190px;">
+            <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 3px;">Your weight</div>
+            <div style="font-size: 12px; line-height: 1.5; color: var(--color-neutral-600);">
+              Optional. Used only to sharpen the calorie-burn estimate${state.weightKg ? '' : ' — an average build is assumed until you set it'}.
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 7px; flex: none;">
+            <input class="input" type="number" min="20" max="400" step="1" inputmode="numeric"
+              data-k="weight-kg" data-act="set-weight" placeholder="70"
+              value="${state.weightKg || ''}" style="width: 84px; text-align: right;">
+            <span style="font-size: 12.5px; color: var(--color-neutral-600);">kg</span>
+          </div>
+        </div>
       </div>`;
 }
 
@@ -1853,6 +2023,7 @@ function pastCard(v) {
         <div style="font-size: 12px; color: var(--color-neutral-600); margin-bottom: 12px;">${esc(v.pastLabel)}</div>
         <div style="font-size: 13.5px; line-height: 1.6;">${esc(v.pastHeadline)}</div>
         ${v.pastBusiest ? `<div style="font-size: 12.5px; line-height: 1.6; color: var(--color-neutral-700); margin-top: 4px;">${esc(v.pastBusiest)}</div>` : ''}
+        ${energyLine(v.pastFood, v.pastBurn)}
         ${v.pastEmpty || !state.drawers.lookback ? '' : `
         <div style="display: flex; flex-direction: column; gap: 8px; margin: 16px 0 18px;">
           ${v.pastTop.map((t) => `
@@ -1870,6 +2041,28 @@ function pastCard(v) {
         ${foodBlock(v.pastFood)}
         ${adviceBlock(v.pastAdvice)}`}
         ${v.pastEmpty ? '' : drawerToggle('lookback', 0, '', REPORT_LABELS)}
+      </div>`;
+}
+
+/* One entry method on screen at a time. The timer and the manual form do the
+   same job by different routes, and showing both doubled the height of the
+   page for no gain. */
+function entryModeBar() {
+  const pill = (mode, label) => {
+    const on = state.entryMode === mode;
+    return `<button data-act="entry-mode-${mode}" aria-pressed="${on}" style="
+      border: 1px solid var(--color-accent-700);
+      background: ${on ? 'var(--color-accent-700)' : 'transparent'};
+      color: ${on ? '#fff' : 'var(--color-accent-900)'};
+      font-family: var(--font-body); font-size: 13.5px; font-weight: 600;
+      padding: 9px 22px; border-radius: 999px; cursor: pointer;
+      transition: background-color .15s ease, color .15s ease;">${esc(label)}</button>`;
+  };
+  return `
+      <div style="display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;">
+        ${pill('timer', 'Track Real Time')}
+        ${pill('manual', 'Manual Entry')}
+        <button data-act="open-new-cat" style="border:0;background:transparent;padding:6px 4px;font:inherit;font-size:13px;color:var(--color-accent-700);cursor:pointer;">Add a category +</button>
       </div>`;
 }
 
@@ -1942,7 +2135,7 @@ function timeTableCard(v) {
     const spent = Math.max(0, e.to - e.from);
     return `
               <tr>
-                <td data-col="activity"><input class="cell-input" data-k="r-${esc(e.id)}-a" data-change="entry-activity" data-id="${esc(e.id)}" value="${esc(e.activity)}"${e.note ? ` title="${esc(e.note)}"` : ''}><button class="cell-note" data-act="note-edit" data-kind="entries" data-id="${esc(e.id)}" title="${e.note ? esc(e.note) : 'Add a note'}" style="opacity:${e.note ? '.8' : '.25'}">📝</button></td>
+                <td data-col="activity"><input class="cell-input" data-k="r-${esc(e.id)}-a" data-change="entry-activity" data-id="${esc(e.id)}" value="${esc(e.activity)}"${e.note ? ` title="${esc(e.note)}"` : ''}><button class="cell-note" data-act="note-edit" data-kind="entries" data-id="${esc(e.id)}" title="${e.note ? esc(e.note) : 'Add a note for this entry'}"${e.note ? ' data-has-note' : ''}>${e.note ? 'Note' : 'Add note'}</button></td>
                 <td data-col="category"><select data-change="entry-category" data-id="${esc(e.id)}" style="${rowChipStyle(colorOf(e.category))}">${options(state.categories.map((c) => c.name), e.category)}</select></td>
                 <td data-col="from" data-label="From"><input class="cell-time" type="time" data-change="entry-from" data-id="${esc(e.id)}" value="${hm(e.from)}"></td>
                 <td data-col="to" data-label="To"><input class="cell-time" type="time" data-change="entry-to" data-id="${esc(e.id)}" value="${hm(e.to)}"></td>
@@ -1984,8 +2177,8 @@ function timeDesktop(v) {
   <div data-page-grid style="display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 28px; padding: 28px; max-width: 1560px; margin: 0 auto; align-items: start;">
 
     <div style="display: flex; flex-direction: column; gap: 22px; min-width: 0;">
-      ${timerCard(v)}
-      ${addEntryCard(v)}
+      ${entryModeBar()}
+      ${state.entryMode === 'manual' ? addEntryCard(v) : timerCard(v)}
       ${timeTableCard(v)}
       ${timelineCard(v)}
     </div>
@@ -2018,8 +2211,15 @@ function timeDesktop(v) {
         </div>
       </div>
 
+      <div style="padding: 4px 2px 0;">
+        <h4 style="margin: 0 0 3px; font-size: 18px;">Your Insights, our recommendations</h4>
+        <div style="font-size: 12px; line-height: 1.5; color: var(--color-neutral-600);">
+          Read from what you logged. Estimates, not measurements — and never a substitute for professional advice.
+        </div>
+      </div>
       ${todayCard(v)}
       ${pastCard(v)}
+      ${weightCard(v)}
     </div>
   </div>`;
 }
@@ -2027,7 +2227,7 @@ function timeDesktop(v) {
 function moneyDesktop(v) {
   const rows = v.mDayList.map((e) => `
               <tr>
-                <td data-col="activity"><input class="cell-input" data-k="mr-${esc(e.id)}-a" data-change="money-activity" data-id="${esc(e.id)}" value="${esc(e.activity)}"${e.note ? ` title="${esc(e.note)}"` : ''}><button class="cell-note" data-act="note-edit" data-kind="money" data-id="${esc(e.id)}" title="${e.note ? esc(e.note) : 'Add a note'}" style="opacity:${e.note ? '.8' : '.25'}">📝</button></td>
+                <td data-col="activity"><input class="cell-input" data-k="mr-${esc(e.id)}-a" data-change="money-activity" data-id="${esc(e.id)}" value="${esc(e.activity)}"${e.note ? ` title="${esc(e.note)}"` : ''}><button class="cell-note" data-act="note-edit" data-kind="money" data-id="${esc(e.id)}" title="${e.note ? esc(e.note) : 'Add a note for this entry'}"${e.note ? ' data-has-note' : ''}>${e.note ? 'Note' : 'Add note'}</button></td>
                 <td data-col="purpose"><select data-change="money-purpose" data-id="${esc(e.id)}" style="${rowChipStyle(purposeColor(e.purpose))}">${options(state.purposes.map((p) => p.name), e.purpose)}</select></td>
                 <td data-col="in" data-label="Received" style="text-align: right;"><input class="cell-num is-in" type="number" min="0" step="0.01" placeholder="0" data-change="money-in" data-id="${esc(e.id)}" value="${e.in || ''}"></td>
                 <td data-col="out" data-label="Spent" style="text-align: right;"><input class="cell-num" type="number" min="0" step="0.01" placeholder="0" data-change="money-out" data-id="${esc(e.id)}" value="${e.out || ''}"></td>
@@ -2563,6 +2763,19 @@ const ACTIONS = {
   'legal-privacy': () => { state.legalOpen = 'privacy'; render(); },
   'legal-terms': () => { state.legalOpen = 'terms'; render(); },
   'legal-close': () => { state.legalOpen = null; render(); },
+  'entry-mode-timer': () => { state.entryMode = 'timer'; save(); render(); },
+  'entry-mode-manual': () => { state.entryMode = 'manual'; save(); render(); },
+  // The category form lives in the manual card, so switch there to show it.
+  'open-new-cat': () => { state.entryMode = 'manual'; state.newCatOpen = true; save(); render(); },
+
+  'set-weight': (el) => {
+    const kg = Math.round(Number(el.value));
+    state.weightKg = Number.isFinite(kg) && kg >= 20 && kg <= 400 ? kg : null;
+    state.weightUpdatedAt = Date.now();
+    state.dirty.weight = true;
+    save(); queueSync(0); render();
+  },
+
   'toggle-drawer': (el) => {
     const key = el.dataset.drawer;
     state.drawers[key] = !state.drawers[key];
