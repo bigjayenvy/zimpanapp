@@ -2121,8 +2121,13 @@ function addEntryCard(v) {
           <div class="field" style="flex: 2 1 180px; min-width: 160px;"><label>Category</label>
             <select class="input" data-act="form-category">${options(state.categories.map((c) => c.name), state.form.category, '<option value="__new">+ New category…</option>')}</select>
           </div>
-          <div class="field" style="flex: 0 1 118px; min-width: 108px;"><label>From</label><input class="input" type="time" data-k="form-from" data-sync="form.from" data-live-dur value="${esc(state.form.from)}"></div>
-          <div class="field" style="flex: 0 1 118px; min-width: 108px;"><label>To</label><input class="input" type="time" data-k="form-to" data-sync="form.to" data-live-dur value="${esc(state.form.to)}"></div>
+          <!-- From and To share a wrapper so they wrap as a pair. Left as
+               siblings they split across lines the moment the row runs out of
+               width, which reads as two unrelated fields. -->
+          <div style="display: flex; gap: 10px; flex: 1 1 246px; min-width: 216px;">
+            <div class="field" style="flex: 1 1 0; min-width: 0;"><label>From</label><input class="input" type="time" data-k="form-from" data-sync="form.from" data-live-dur value="${esc(state.form.from)}"></div>
+            <div class="field" style="flex: 1 1 0; min-width: 0;"><label>To</label><input class="input" type="time" data-k="form-to" data-sync="form.to" data-live-dur value="${esc(state.form.to)}"></div>
+          </div>
           <div class="field" style="flex: 0 1 100px; min-width: 92px;"><label>Time spent</label><div data-form-duration style="height: 36px; display: flex; align-items: center; font-size: 14px; font-variant-numeric: tabular-nums; color: var(--color-accent-700);">${esc(v.formDuration)}</div></div>
           <button class="btn btn-primary" data-act="add-entry" style="height: 36px;">Add entry</button>
         </div>
