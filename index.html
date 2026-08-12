@@ -21,7 +21,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 
   gtag('config', 'G-G15EB551N1');
 </script>
-<title>ZIMPAN — Free Time &amp; Money Tracker. Track What Matters.</title>
+<title>Zimpan | All-in-One Tracker for What Matters Most (Time, Money, Well-Being, and more)</title>
 <meta name="description" content="ZIMPAN is a free tracker for where your time and money actually go. Log your day in seconds, see the patterns, and know how you spend both. Free forever.">
 <meta name="robots" content="index, follow">
 <link rel="canonical" href="https://zimpan.com/">
@@ -225,16 +225,63 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 
   /* — landing — */
   .hero {
-    display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
-    gap: 48px; align-items: center;
-    max-width: 1100px; margin: 0 auto; padding: 40px 28px 44px;
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+    gap: 44px; align-items: center;
+    max-width: 1180px; margin: 0 auto; padding: 30px 28px 34px;
   }
-  .landing-points { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; }
 
-  @media (max-width: 860px) {
-    .hero { grid-template-columns: minmax(0, 1fr); gap: 26px; padding: 22px 20px 30px; }
-    .hero-art { order: -1; }
+  .hero-noart { grid-template-columns: minmax(0, 1fr); }
+  .hero-noart .hero-art { display: none; }
+  .hero-noart .hero-copy { max-width: 760px; margin: 0 auto; text-align: center; }
+  .hero-noart .hero-checks { max-width: 560px; margin-left: auto; margin-right: auto; }
+  .hero-noart .hero-checks li { justify-content: flex-start; }
+
+  .hero-checks {
+    list-style: none; margin: 0 0 26px; padding: 0;
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 22px;
+  }
+  .hero-checks li {
+    display: flex; align-items: center; gap: 9px;
+    font-size: 14.5px; color: var(--color-neutral-800); min-width: 0;
+  }
+  .hero-check { display: flex; flex: none; color: var(--zg-strong); }
+  .hero-check svg { width: 19px; height: 19px; display: block; }
+
+  .landing-points { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }
+  .feature-card {
+    display: flex; align-items: flex-start; gap: 14px;
+    background: var(--color-bg); border: 1px solid var(--color-divider);
+    border-radius: 14px; padding: 18px 18px 20px;
+    box-shadow: 0 1px 3px color-mix(in srgb, #2b2b2d 7%, transparent);
+  }
+  .feature-badge {
+    flex: none; width: 52px; height: 52px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--color-accent-100); color: var(--color-accent-700);
+  }
+  .feature-badge svg { width: 26px; height: 26px; display: block; }
+
+  @media (max-width: 900px) {
+    /* Copy first, then the image — the reading order the mobile design uses. */
+    .hero { grid-template-columns: minmax(0, 1fr); gap: 22px; padding: 18px 20px 26px; }
+    .hero-checks { gap: 9px 16px; margin-bottom: 20px; }
+    .hero-checks li { font-size: 13.5px; }
     .landing-points { gap: 12px; }
+    .feature-card { padding: 15px 16px 17px; gap: 12px; }
+    .feature-badge { width: 46px; height: 46px; }
+    .feature-badge svg { width: 23px; height: 23px; }
+  }
+
+  /* Two columns down to the narrowest common phone; the labels shrink rather
+     than stacking, which is how the design reads. */
+  @media (max-width: 420px) {
+    .hero-checks { gap: 8px 12px; }
+    .hero-checks li { font-size: 12.5px; }
+    .hero-check svg { width: 17px; height: 17px; }
+  }
+  @media (max-width: 330px) {
+    .hero-checks { grid-template-columns: minmax(0, 1fr); }
   }
 
   /* — app bar — */

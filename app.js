@@ -1674,6 +1674,28 @@ const authLockup = () => `
 /* ── landing ──
    What a signed-out visitor sees. Sign-in is a lightbox raised from here, so
    the first screen sells the thing rather than demanding credentials. */
+
+const FEATURE_ICONS = {
+  time: icon('<circle cx="12" cy="12" r="8.5"/><path d="M12 7.4V12l3.2 1.9"/>'),
+  money: icon('<ellipse cx="12" cy="6.6" rx="6.8" ry="2.9"/><path d="M5.2 6.6v10.8c0 1.6 3 2.9 6.8 2.9s6.8-1.3 6.8-2.9V6.6"/><path d="M5.2 12c0 1.6 3 2.9 6.8 2.9s6.8-1.3 6.8-2.9"/>'),
+  insights: icon('<circle cx="6" cy="7.2" r="2.1"/><circle cx="18" cy="6.2" r="2.1"/><circle cx="12" cy="17.4" r="2.1"/><path d="M7.5 8.8 10.8 15.6M16.6 8 13.3 15.5M8.1 6.9 15.9 6.4"/>'),
+  sleep: icon('<path d="M20 14.6A8.3 8.3 0 0 1 9.4 4 8.6 8.6 0 1 0 20 14.6Z"/><path d="M16.6 3.4v3.2M15 5h3.2"/>')
+};
+
+const CHECK_ICON = icon('<circle cx="12" cy="12" r="9"/><path d="m8.4 12.4 2.5 2.5 4.7-5.3"/>');
+
+const LANDING_CHECKS = ['Financial Overview', 'Time & Project Tracking', 'Activity & Focus', 'Sleep & Well-being'];
+
+/* Wording tightened where the original overstated the product: the insights
+   are rule-based rather than AI, currency switching relabels rather than
+   converting, and the timeline is a single row rather than a gantt chart. */
+const LANDING_FEATURES = [
+  ['time', 'Time', 'Optimize Your Time', 'Log by hand or use instant timers. See your whole day on a timeline, with efficiency reports.'],
+  ['money', 'Money', 'Track Every Penny', 'Log income and expenses, switch between four currencies, and watch your spending trends.'],
+  ['insights', 'Insights', 'Gain Deep Insights', 'Analyze movement, rest, focus and diet patterns with automatic reports.'],
+  ['sleep', 'Sleep', 'Improve Your Sleep', 'Log sleep duration and quality to build better rest habits.']
+];
+
 function landingScreen() {
   const cta = (size) => `
     <button data-act="auth-open" class="btn btn-primary" style="
@@ -1689,41 +1711,49 @@ function landingScreen() {
 
     <section class="hero">
       <div class="hero-copy">
-        <h1 style="font-family:var(--font-heading);font-weight:600;font-size:clamp(30px,5.2vw,52px);line-height:1.08;letter-spacing:-.01em;margin:0 0 18px;text-wrap:balance;">
+        <h1 style="font-family:var(--font-heading);font-weight:700;font-size:clamp(32px,5.4vw,54px);line-height:1.06;letter-spacing:-.015em;margin:0 0 16px;text-wrap:balance;">
           Your Smart Tracking Center for Everything
         </h1>
-        <p style="font-size:15.5px;line-height:1.7;color:var(--color-neutral-800);margin:0 0 26px;max-width:56ch;">
-          Zimpan is a <strong>free</strong> all-in-one tool that helps you optimize how you track and
-          manage your time, finances, projects, workouts, and even calories. Get meaningful insights,
-          improve efficiency, stay organized, and focus on what truly matters.
+        <p style="font-size:16px;line-height:1.65;color:var(--color-neutral-800);margin:0 0 22px;max-width:52ch;">
+          Zimpan is a <strong>free</strong> all-in-one tool to effortlessly optimize how you track
+          and manage your life.
         </p>
+
+        <ul class="hero-checks">
+          ${LANDING_CHECKS.map((t) => `
+            <li><span class="hero-check">${CHECK_ICON}</span>${esc(t)}</li>`).join('')}
+        </ul>
+
         ${cta(16)}
-        <p style="font-size:12.5px;color:var(--color-neutral-600);margin:16px 0 0;">
-          Free forever · No card required · Your data stays yours
-        </p>
       </div>
 
       <div class="hero-art">
-        <img src="ds/hero.jpg" alt="Tracking the day on a phone"
-             onerror="this.closest('.hero-art').style.display='none'"
-             style="width:100%;height:auto;display:block;border-radius:14px;box-shadow:var(--shadow-lg);">
+        <!-- Until ds/hero.jpg exists the hero collapses to a single column;
+             hiding only the image would leave half the row empty. -->
+        <img src="ds/hero.jpg" alt="Tracking time, money and wellbeing on a phone"
+             onerror="this.closest('.hero').classList.add('hero-noart')"
+             style="width:100%;height:auto;display:block;border-radius:16px;">
       </div>
     </section>
 
-    <section style="max-width:1100px;margin:0 auto;padding:8px 28px 56px;">
+    <section style="max-width:1180px;margin:0 auto;padding:4px 28px 12px;">
       <div class="landing-points">
-        ${[['Time', 'Start a timer or log by hand. See exactly where the hours went.'],
-           ['Money', 'Track what comes in and what goes out, in your own currency.'],
-           ['Insights', 'Honest read-outs on movement, focus, rest and what you ate.']]
-          .map(([title, body]) => `
-          <div class="blueprint" style="padding:18px 20px 20px;">
-            <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-accent-700);margin-bottom:6px;">${esc(title)}</div>
-            <div style="font-size:13.5px;line-height:1.6;color:var(--color-neutral-800);">${esc(body)}</div>
+        ${LANDING_FEATURES.map(([key, eyebrow, title, body]) => `
+          <div class="feature-card">
+            <span class="feature-badge">${FEATURE_ICONS[key]}</span>
+            <div style="min-width:0;">
+              <div style="font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-neutral-600);margin-bottom:2px;">${esc(eyebrow)}</div>
+              <div style="font-family:var(--font-heading);font-weight:700;font-size:19px;line-height:1.2;margin-bottom:6px;">${esc(title)}</div>
+              <div style="font-size:13.5px;line-height:1.6;color:var(--color-neutral-800);">${esc(body)}</div>
+            </div>
           </div>`).join('')}
       </div>
     </section>
 
-    <footer style="border-top:1px solid var(--color-divider);padding:20px 28px 32px;">
+    <footer style="padding:22px 28px 34px;display:flex;flex-direction:column;align-items:center;gap:12px;">
+      <div style="font-size:13px;color:var(--color-neutral-800);text-align:center;">
+        <strong>Free forever</strong> · No credit card required · Your data stays yours
+      </div>
       ${legalLinks('var(--color-neutral-600)')}
     </footer>
   </div>`;
@@ -2058,7 +2088,7 @@ function energyLine(food, burn) {
           Calories burned from workout ~${burn.kcal.toLocaleString('en-US')} versus calories consumed with food eaten ~${food.kcal.toLocaleString('en-US')}
         </div>
         ${burn.restKcal ? `
-        <div style="font-size: 12.5px; line-height: 1.5; color: var(--zg-text); font-weight: 600; margin-top: 5px;">
+        <div style="font-size: 12.5px; line-height: 1.5; color: var(--zg-text); font-weight: 600; font-style: italic; margin-top: 5px;">
           Plus roughly ${burn.restKcal.toLocaleString('en-US')} burned at rest${burn.days > 1 ? ` over ${burn.days} days` : ''} just keeping you running.
         </div>` : ''}
         <div style="font-size: 11.5px; line-height: 1.5; color: var(--color-neutral-600); margin-top: 3px;">
