@@ -440,7 +440,7 @@ const state = {
   notePrompt: null, noteDraft: '', noteSkipped: {},
   legalOpen: null,
   toast: '',
-  netState: 'idle', netMessage: '', netError: '', netErrorRow: null,
+  netState: 'idle', netMessage: '', netError: '', netErrorRow: null, netErrorKind: '',
   syncing: false,
 
   geo: null
@@ -594,7 +594,10 @@ function paintNet() {
 function netLabel() {
   const pending = pendingCount();
   if (state.netState === 'syncing') return 'Syncing…';
-  if (state.netState === 'error') return pending ? `Sync blocked · ${pending} waiting` : 'Sync blocked';
+  if (state.netState === 'error') {
+    const what = state.netErrorKind === 'server' ? 'Server error' : 'Sync blocked';
+    return pending ? `${what} · ${pending} waiting` : what;
+  }
   if (state.netState === 'offline') return pending ? `Offline · ${pending} waiting` : 'Offline';
   if (state.netState === 'synced') return pending ? `${pending} waiting` : 'All changes saved';
   return pending ? `${pending} waiting` : '';
@@ -633,7 +636,18 @@ async function syncNow() {
     /* A 4xx means the server understood us and refused. Retrying the same
        payload will fail identically forever, so say what happened rather than
        blaming the network and queueing silently. */
+    /* A 5xx means the server was reached and broke. Calling that "offline"
+       sends you looking at your connection when the answer is in stderr.log. */
+    if (err.status >= 500) {
+      state.netErrorKind = 'server';
+      state.netError = `The server returned an error (${err.status}). Its log will say why — often a database column the code expects but the schema has not got yet.`;
+      state.netErrorRow = null;
+      setNet('error', '');
+      render();
+      return;
+    }
     if (err.status >= 400 && err.status < 500) {
+      state.netErrorKind = 'client';
       state.netError = err.message || 'The server rejected these changes.';
       // Validation messages name the offending row ("entries[7].activity …"),
       // which is enough to identify it and offer a way past it.
@@ -1551,7 +1565,7 @@ function syncErrorBanner() {
   const blocked = describeBlockedRow();
   return `
   <div style="background: var(--color-neutral-200); border-bottom: 1px solid var(--color-divider); padding: 10px 28px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px;">
-    <strong style="flex: none;">Sync blocked</strong>
+    <strong style="flex: none;">${state.netErrorKind === 'server' ? 'Server error' : 'Sync blocked'}</strong>
     <span style="color: var(--color-neutral-800); min-width: 0;">${esc(state.netError)}</span>
     ${blocked ? `<span style="color: var(--color-neutral-700);">Offending entry: “${esc(blocked.label)}”.</span>` : ''}
     <span style="margin-left: auto; display: flex; gap: 8px; flex: none;">
@@ -2059,17 +2073,26 @@ function entryModeBar() {
       transition: background-color .15s ease, color .15s ease;">${esc(label)}</button>`;
   };
   return `
-      <div style="display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;">
-        ${pill('timer', 'Track Real Time')}
-        ${pill('manual', 'Manual Entry')}
-        <button data-act="open-new-cat" style="border:0;background:transparent;padding:6px 4px;font:inherit;font-size:13px;color:var(--color-accent-700);cursor:pointer;">Add a category +</button>
+      <div>
+        <div style="display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;">
+          ${pill('timer', 'Track Real Time')}
+          ${pill('manual', 'Manual Entry')}
+          <button data-act="open-new-cat" style="border:0;background:transparent;padding:6px 4px;font:inherit;font-size:13px;color:var(--color-accent-700);cursor:pointer;">Add a category +</button>
+        </div>
+        ${state.newCatOpen ? `
+          <div class="blueprint" style="margin-top: 12px; padding: 14px 18px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <span style="font-size: 12px; color: var(--color-neutral-700); flex: none;">Name your new category</span>
+            <input class="input" data-k="new-cat" data-sync="newCatName" data-enter="create-cat" style="flex: 1 1 200px; min-width: 160px;" placeholder="e.g. Side hustle" value="${esc(state.newCatName)}">
+            <button class="btn btn-secondary" data-act="create-cat">Create</button>
+            <button class="btn btn-ghost" data-act="cancel-cat">Cancel</button>
+          </div>` : ''}
       </div>`;
 }
 
 function timerCard(v) {
   return `
       <div class="blueprint timer-card" style="padding: 20px 22px;">        <div>
-          <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 4px;">Running</div>
+          <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 4px;">Real Time Tracking</div>
           <div data-clock style="font-family: var(--font-heading); font-size: 46px; line-height: 1; font-variant-numeric: tabular-nums;">${v.clock}</div>
           ${v.timerSince ? `<div style="font-size: 11px; color: ${v.timerStale ? 'var(--color-text)' : 'var(--color-neutral-600)'}; margin-top: 5px;">${esc(v.timerSince)}${v.timerStale ? ' · still running — did you forget to stop it?' : ''}</div>` : ''}
         </div>
@@ -2103,13 +2126,6 @@ function addEntryCard(v) {
           <div class="field" style="flex: 0 1 100px; min-width: 92px;"><label>Time spent</label><div data-form-duration style="height: 36px; display: flex; align-items: center; font-size: 14px; font-variant-numeric: tabular-nums; color: var(--color-accent-700);">${esc(v.formDuration)}</div></div>
           <button class="btn btn-primary" data-act="add-entry" style="height: 36px;">Add entry</button>
         </div>
-        ${state.newCatOpen ? `
-          <div style="display: flex; gap: 8px; align-items: center; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--color-divider);">
-            <span style="font-size: 12px; color: var(--color-neutral-700);">Name your new category</span>
-            <input class="input" data-k="new-cat" data-sync="newCatName" data-enter="create-cat" style="width: 220px;" placeholder="e.g. Side hustle" value="${esc(state.newCatName)}">
-            <button class="btn btn-secondary" data-act="create-cat">Create</button>
-            <button class="btn btn-ghost" data-act="cancel-cat">Cancel</button>
-          </div>` : ''}
       </div>`;
 }
 
@@ -2765,8 +2781,8 @@ const ACTIONS = {
   'legal-close': () => { state.legalOpen = null; render(); },
   'entry-mode-timer': () => { state.entryMode = 'timer'; save(); render(); },
   'entry-mode-manual': () => { state.entryMode = 'manual'; save(); render(); },
-  // The category form lives in the manual card, so switch there to show it.
-  'open-new-cat': () => { state.entryMode = 'manual'; state.newCatOpen = true; save(); render(); },
+  // The form opens directly beneath the link, so neither entry mode is disturbed.
+  'open-new-cat': () => { state.newCatOpen = !state.newCatOpen; state.newCatName = ''; render(); },
 
   'set-weight': (el) => {
     const kg = Math.round(Number(el.value));
