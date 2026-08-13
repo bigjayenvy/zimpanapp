@@ -295,6 +295,15 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     font-size: 12px; color: var(--color-neutral-700);
   }
 
+  /* — financial insights —
+     Four figures across where there is room. Left to wrap on its own the
+     fourth tile drops to a line by itself on a phone, so the narrow case is
+     an explicit 2×2 rather than a 3+1. */
+  .fin-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 10px; }
+  @media (max-width: 560px) {
+    .fin-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px 12px; }
+  }
+
   /* — table cells — */
   .cell-input { width: 100%; border: 0; background: transparent; font: inherit; font-size: 14px; color: inherit; padding: 2px 0; }
   .cell-time { border: 0; background: transparent; font: inherit; font-size: 14px; color: inherit; }

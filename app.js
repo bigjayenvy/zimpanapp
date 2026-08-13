@@ -827,12 +827,25 @@ const purposeColor = (name) => {
   return MONEY_PALETTE[(i < 0 ? 7 : i) % MONEY_PALETTE.length];
 };
 
+/* Every window is trailing and inclusive — it counts back from the selected
+   date, so the day you are looking at is always the last one in it. Keeping the
+   lengths in one table is what lets a new range be added without hunting down
+   the arithmetic in four different places. */
+const RANGE_DAYS = { day: 1, week: 7, fortnight: 14, month: 30 };
+const rangeDays = () => RANGE_DAYS[state.range] || 1;
+
+// ISO dates sort lexically, so plain string comparison beats Date round-trips.
+function windowStart(endIso, days) {
+  const d = new Date(endIso + 'T00:00:00');
+  d.setDate(d.getDate() - (Math.max(1, days) - 1));
+  return iso(d);
+}
+
 function withinRange(list) {
   const { selectedDate, range } = state;
   if (range === 'day') return list.filter((e) => e.date === selectedDate);
-  const end = new Date(selectedDate + 'T00:00:00');
-  const start = new Date(end); start.setDate(end.getDate() - (range === 'week' ? 6 : 29));
-  return list.filter((e) => { const d = new Date(e.date + 'T00:00:00'); return d >= start && d <= end; });
+  const start = windowStart(selectedDate, RANGE_DAYS[range] || 1);
+  return list.filter((e) => e.date >= start && e.date <= selectedDate);
 }
 const rangeEntries = () => withinRange(state.entries);
 const moneyRangeEntries = () => withinRange(state.money);
@@ -857,11 +870,9 @@ function totalsByPurpose(list) {
 
 function reportRangeLabel() {
   const { range, selectedDate } = state;
-  const end = new Date(selectedDate + 'T00:00:00');
-  const f = (d) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-  if (range === 'day') return f(end);
-  const start = new Date(end); start.setDate(end.getDate() - (range === 'week' ? 6 : 29));
-  return `${f(start)} — ${f(end)}`;
+  const f = (d) => new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  if (range === 'day') return f(selectedDate);
+  return `${f(windowStart(selectedDate, RANGE_DAYS[range] || 1))} — ${f(selectedDate)}`;
 }
 
 /* ─────────────────────────── wellbeing ───────────────────────────
@@ -1208,6 +1219,162 @@ function adviceFor(wb, readings, days) {
   return kept;
 }
 
+/* ─────────────────────────── financial insights ───────────────────────────
+
+   Everything here is read from what was logged and nothing else: a money row
+   carries no budget and no merchant, so every figure comes from `in`, `out`,
+   the purpose and the activity text. The wording follows the wellbeing notes —
+   observations about your own spending, never a view on a product, a provider
+   or an investment.
+
+   Two weeks is the window this was built for: long enough that a single big
+   purchase stops dominating the picture, short enough to still describe the
+   habit you are in now. It renders at any range, and says so when the window is
+   too short to carry a trend. */
+
+/* Essentials are the hard-to-move ones; discretionary is where a suggestion can
+   actually land. Matched on purpose and activity together, so "Grab to office"
+   filed under a vague purpose still reads as commuting. First match wins, so
+   the essential list is deliberately first — "insurance premium" should count
+   as a bill, not as an investment. */
+const SPEND_KINDS = [
+  { kind: 'essential', re: /grocer|palengke|market|supermarket|utilit|electric|meralco|water bill|\bbills?\b|rent|tuition|school fee|medicine|pharmacy|drugstore|doctor|clinic|hospital|insurance|petrol|diesel|fuel|gasolin|commut|fare|jeep|tricycle|\bbus\b|train|\bmrt\b|\blrt\b|toll|parking|internet|load|electricity/ },
+  { kind: 'discretionary', re: /eat ?out|restaurant|dine|dining|takeout|take-out|food ?delivery|grab ?food|foodpanda|jollibee|mcdo|starbucks|coffee|milk ?tea|boba|snack|dessert|movie|cinema|netflix|spotify|subscription|gaming|shopping|shopee|lazada|clothes|apparel|shoes|\bbag\b|gadget|laptop|birthday|gift|party|night out|beer|alcohol|drinks|lotto|\bbet\b/ },
+  { kind: 'investment', re: /savings|invest|stock|mutual fund|uitf|time deposit|emergency fund|pag-?ibig|\bsss\b|house improvement|repair|renovat|appliance|tools|equipment|course|training|certification|books?/ }
+];
+
+const spendKind = (row) => {
+  const hay = `${row.activity} ${row.purpose}`.toLowerCase();
+  const hit = SPEND_KINDS.find((k) => k.re.test(hay));
+  return hit ? hit.kind : 'other';
+};
+
+const pct = (n) => `${Math.round(n * 100)}%`;
+
+/* `list` is the selected window, `prevList` the window of equal length directly
+   before it — the only source of a trend. `days` is the window length rather
+   than the number of days with entries: a day you spent nothing on is a real
+   zero, and averaging it away would flatter the per-day figure. Coverage is
+   reported separately so a thin log is visible rather than hidden. */
+function financialInsights(list, prevList, days) {
+  const spend = list.filter((e) => (Number(e.out) || 0) > 0);
+  const outSum = spend.reduce((a, e) => a + Number(e.out), 0);
+  const inSum = list.reduce((a, e) => a + (Number(e.in) || 0), 0);
+  if (!outSum && !inSum) return null;
+
+  const d = Math.max(1, days);
+  const perDay = outSum / d;
+  const net = inSum - outSum;
+  const rate = inSum > 0 ? net / inSum : null;
+
+  const byPurpose = totalsByPurpose(list);
+  const topPurpose = byPurpose[0] || null;
+  const topShare = outSum ? (topPurpose ? topPurpose.mins / outSum : 0) : 0;
+
+  const kinds = { essential: 0, discretionary: 0, investment: 0, other: 0 };
+  spend.forEach((e) => { kinds[spendKind(e)] += Number(e.out); });
+  const discShare = outSum ? kinds.discretionary / outSum : 0;
+
+  const biggest = spend.slice().sort((a, b) => b.out - a.out)[0] || null;
+  const bigShare = biggest && outSum ? biggest.out / outSum : 0;
+
+  const spendDates = new Set(spend.map((e) => e.date));
+  const coverage = spendDates.size;
+
+  // Most-repeated purpose — the drip that adds up without ever feeling like a
+  // decision. Only interesting once it happens more than a handful of times.
+  const repeat = byPurpose.slice().sort((a, b) => b.count - a.count)[0] || null;
+
+  const prevOut = prevList.reduce((a, e) => a + (Number(e.out) || 0), 0);
+  const trend = prevOut > 0 ? (outSum - prevOut) / prevOut : null;
+
+  /* ── observations: what the window says ── */
+  const obs = [];
+  if (outSum) {
+    obs.push(`${amount(outSum)} went out over ${d} ${d === 1 ? 'day' : 'days'} — about ${amount(perDay)} a day${topPurpose ? `, led by ${topPurpose.name.toLowerCase()}` : ''}.`);
+  }
+  if (inSum && outSum) {
+    obs.push(net >= 0
+      ? `${amount(inSum)} came in and you kept ${amount(net)} of it — a ${pct(rate)} margin.`
+      : `${amount(inSum)} came in against ${amount(outSum)} out, so you were ${amount(Math.abs(net))} short over the window.`);
+  } else if (outSum && !inSum) {
+    obs.push('No income logged in this window, so the figures below describe spending on its own rather than what it is measured against.');
+  } else if (inSum && !outSum) {
+    obs.push(`${amount(inSum)} came in and nothing went out. Either it was a genuinely quiet fortnight or the spending has not been logged — the difference matters, because only one of them is worth repeating.`);
+  }
+  if (topPurpose && topShare >= .3 && byPurpose.length > 1) {
+    obs.push(`${topPurpose.name} alone took ${pct(topShare)} of everything spent, across ${topPurpose.count} ${topPurpose.count === 1 ? 'entry' : 'entries'}.`);
+  }
+  if (kinds.discretionary > 0 && kinds.essential > 0) {
+    obs.push(`Roughly ${pct(discShare)} of it was discretionary against ${pct(kinds.essential / outSum)} on essentials.`);
+  }
+  if (trend !== null && Math.abs(trend) >= .1) {
+    obs.push(trend > 0
+      ? `Spending is up ${pct(trend)} on the ${d} days before this one (${amount(prevOut)} then, ${amount(outSum)} now).`
+      : `Spending is down ${pct(Math.abs(trend))} on the ${d} days before this one (${amount(prevOut)} then, ${amount(outSum)} now).`);
+  }
+  if (biggest && bigShare >= .2 && spend.length > 2) {
+    obs.push(`The single biggest was ${biggest.activity} at ${amount(biggest.out)} — ${pct(bigShare)} of the window on its own.`);
+  }
+
+  /* ── recommendations: only what is worth saying ── */
+  const rec = [];
+  if (inSum > 0 && net < 0) {
+    rec.push(`You spent ${amount(Math.abs(net))} more than came in. The fastest read is the largest purpose above — trimming one recurring item there moves more than cutting several small ones.`);
+  } else if (rate !== null && rate < .1 && net >= 0) {
+    rec.push(`Only ${pct(rate)} of what came in stayed. Setting aside a fixed amount the day income lands, rather than whatever survives to the end, is the one change that reliably holds.`);
+  }
+  if (discShare >= .35 && kinds.discretionary > 0) {
+    rec.push(`${amount(kinds.discretionary)} went to discretionary spending — ${pct(discShare)} of the window. That is the part you can actually move without rearranging your life.`);
+  }
+  if (repeat && repeat.count >= 5) {
+    rec.push(`${repeat.name} came up ${repeat.count} times, averaging ${amount(repeat.mins / repeat.count)}. Small repeats are easier to cut by frequency than by size — one fewer a week beats trying to spend less each time.`);
+  }
+  if (trend !== null && trend >= .2) {
+    rec.push(`Spending is climbing period on period. Worth checking whether that is one unusual purchase or a new baseline, because the two call for very different responses.`);
+  }
+  if (topShare >= .45 && byPurpose.length > 2) {
+    rec.push(`Nearly half of everything sits in one purpose. That concentration is fine if it is deliberate — worth a look if it is not.`);
+  }
+  if (!inSum && outSum) {
+    rec.push('Logging what comes in as well as what goes out is what turns this from a spending list into a picture of whether the month works.');
+  }
+  if (coverage && coverage < d / 2 && d > 1) {
+    rec.push(`Only ${coverage} of ${d} days ${coverage === 1 ? 'carries an entry' : 'carry entries'}. The averages above are diluted by the gaps — logging daily, even a zero, sharpens every figure here.`);
+  }
+
+  // Same block cap as the wellbeing advice: highest priority pushed first, so
+  // trimming from the end drops the least important line.
+  const kept = [];
+  let budget = 700;
+  for (const line of rec) {
+    if (line.length + 1 > budget) break;
+    kept.push(line);
+    budget -= line.length + 1;
+  }
+
+  return {
+    headline: outSum
+      ? `${amount(perDay)} a day across ${d} ${d === 1 ? 'day' : 'days'}`
+      : `${amount(inSum)} in, nothing spent`,
+    perDay: amount(perDay),
+    outLabel: amount(outSum),
+    inLabel: amount(inSum),
+    netLabel: signed(net),
+    netUp: net >= 0,
+    /* "Kept" only means anything when something was kept. Overspending is
+       already carried by Net in the alert colour, and a rate of −800% here
+       reads as a broken figure rather than a bad fortnight. */
+    rateLabel: rate === null || rate < 0 ? '—' : pct(rate),
+    trendLabel: trend === null ? '' : `${trend > 0 ? '+' : '−'}${pct(Math.abs(trend))}`,
+    trendUp: trend !== null && trend > 0,
+    coverageLabel: `${coverage} of ${d} ${d === 1 ? 'day' : 'days'} logged`,
+    days: d,
+    observations: obs,
+    advice: kept
+  };
+}
+
 /* Everything the templates read, computed once per render. */
 function compute() {
   const s = state;
@@ -1222,6 +1389,17 @@ function compute() {
 
   const inSum = mRangeList.reduce((a, e) => a + (Number(e.in) || 0), 0);
   const outSum = mRangeList.reduce((a, e) => a + (Number(e.out) || 0), 0);
+
+  /* The equal-length window sitting immediately before this one. It is the only
+     thing the insight block can read a trend against, and it is computed here
+     rather than inside the insight so the window arithmetic stays in one file
+     region with `withinRange`. */
+  const winDays = rangeDays();
+  const prevEndDate = new Date(windowStart(s.selectedDate, winDays) + 'T00:00:00');
+  prevEndDate.setDate(prevEndDate.getDate() - 1);
+  const prevEnd = iso(prevEndDate);
+  const prevStart = windowStart(prevEnd, winDays);
+  const mPrevList = s.money.filter((e) => e.date >= prevStart && e.date <= prevEnd);
 
   const totals = isMoney ? totalsByPurpose(mRangeList) : totalsByCategory(rangeEntries());
   const total = totals.reduce((a, b) => a + b.mins, 0);
@@ -1360,7 +1538,7 @@ function compute() {
 
     dayTotalLabel: dur(dayTracked),
     rangeTotal: fmtShort(total),
-    rangeLabel: s.range === 'day' ? 'this day' : s.range === 'week' ? 'last 7 days' : 'last 30 days',
+    rangeLabel: s.range === 'day' ? 'this day' : `last ${RANGE_DAYS[s.range] || 1} days`,
     leaderboard: totals.map((t) => ({ name: t.name, color: t.color, label: fmtShort(t.mins), width: `${Math.round((t.mins / top) * 100)}%` })),
 
     focusName: focusItem ? focusItem.name : null,
@@ -1409,6 +1587,10 @@ function compute() {
     moneyNet: signed(inSum - outSum),
     netColor: inSum - outSum < 0 ? 'var(--color-text)' : 'var(--color-accent-700)',
     netNote: inSum - outSum < 0 ? 'Spending outran what came in.' : 'You kept some of it. Good.',
+
+    moneyInsight: isMoney ? financialInsights(mRangeList, mPrevList, winDays) : null,
+    // The block is built for a fortnight; anything else gets a one-tap way there.
+    insightAtFortnight: s.range === 'fortnight',
 
     reportRange: reportRangeLabel(),
     reportTitle: isMoney ? 'MONEY REPORT' : 'TIME REPORT',
@@ -1922,7 +2104,7 @@ function paintToast() {
 
 function segRange(name, labels) {
   const opt = (val, label) => `<label class="seg-opt"><input type="radio" name="${name}" data-act="range-${val}"${state.range === val ? ' checked' : ''}><span>${label}</span></label>`;
-  return `<div class="seg">${opt('day', labels[0])}${opt('week', labels[1])}${opt('month', labels[2])}</div>`;
+  return `<div class="seg">${opt('day', labels[0])}${opt('week', labels[1])}${opt('fortnight', labels[2])}${opt('month', labels[3])}</div>`;
 }
 
 /* The centre overlay covers the whole ring, so it stays click-through and only
@@ -2063,6 +2245,72 @@ function adviceBlock(list) {
             </ul>
             <div style="margin-top: 10px; font-size: 11.5px; line-height: 1.5; color: var(--color-neutral-600);">${esc(DISCLAIMER)}</div>
           </div>`;
+}
+
+/* ── financial insights ──
+   Two lists rather than one: what the window says, then what might be done
+   about it. Keeping them apart is what stops a suggestion from reading as if it
+   were also a finding. `forPrint` drops the range switch, which is the only
+   interactive part and means nothing on paper. */
+function insightsBody(v, forPrint) {
+  const f = v.moneyInsight;
+
+  if (!f) {
+    return `
+          <div style="font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-700);">
+            Nothing logged in this window yet. Two weeks of entries is where the patterns start to show — until then there is nothing here worth reading into.
+          </div>`;
+  }
+
+  const tile = (label, value, tone) => `
+            <div style="min-width: 0;">
+              <div style="font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--color-neutral-600); margin-bottom: 4px;">${esc(label)}</div>
+              <div style="font-family: var(--font-heading); font-size: 17px; line-height: 1.15; overflow-wrap: anywhere;${tone ? ` color: ${tone};` : ''}">${esc(value)}</div>
+            </div>`;
+
+  const good = 'var(--color-accent-700)';
+
+  const list = (kicker, items) => !items.length ? '' : `
+          <div style="margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--color-divider);">
+            <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 8px;">${esc(kicker)}</div>
+            <ul style="margin: 0; padding-left: 17px; display: flex; flex-direction: column; gap: 7px; font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800);">
+              ${items.map((t) => `<li>${esc(t)}</li>`).join('')}
+            </ul>
+          </div>`;
+
+  return `
+          <div style="font-family: var(--font-heading); font-size: 21px; line-height: 1.25; margin-bottom: 3px;">${esc(f.headline)}</div>
+          <div style="font-size: 11.5px; color: var(--color-neutral-600); margin-bottom: 14px;">${esc(f.coverageLabel)}${f.trendLabel ? ` · ${esc(f.trendLabel)} on the previous ${f.days} days` : ''}</div>
+
+          <div class="fin-stats">
+            ${tile('Out', f.outLabel)}
+            ${tile('In', f.inLabel)}
+            ${tile('Net', f.netLabel, f.netUp ? good : 'var(--color-text)')}
+            ${tile('Kept', f.rateLabel, f.netUp ? good : 'var(--color-text)')}
+          </div>
+
+          ${list('What stands out', f.observations)}
+          ${list('What might help', f.advice)}
+          ${!f.advice.length && f.observations.length ? `
+          <div style="margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--color-divider); font-size: 12.5px; color: var(--color-neutral-700);">
+            Nothing worth flagging — this reads as a steady stretch.
+          </div>` : ''}
+          <div style="margin-top: 10px; font-size: 11.5px; line-height: 1.5; color: var(--color-neutral-600);">${esc(DISCLAIMER)}</div>`;
+}
+
+/* The on-page card. The range switch is here rather than in the body because a
+   fortnight is what the wording is calibrated for — at a single day most of the
+   rules cannot fire at all, so it is worth one tap to get there. */
+function insightsCard(v) {
+  return `
+      <div class="blueprint" style="padding: 20px 22px 24px;">        <div style="display: flex; align-items: baseline; gap: 8px 10px; margin-bottom: 14px; flex-wrap: wrap;">
+          <h4 style="margin: 0; margin-right: auto;">Financial Insights</h4>
+          ${v.insightAtFortnight
+            ? '<span style="font-size: 11px; color: var(--color-neutral-600);">Last 14 days</span>'
+            : '<button class="drawer-btn" data-act="range-fortnight" style="font-size: 11px; padding: 5px 13px;">Read 2 weeks</button>'}
+        </div>
+        ${insightsBody(v, false)}
+      </div>`;
 }
 
 /* The food block sits between the wellbeing rows and the advice — it is the
@@ -2318,7 +2566,7 @@ function timeDesktop(v) {
 
       <div class="blueprint" style="padding: 20px 22px 24px;">        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;">
           <h4 style="margin: 0; margin-right: auto;">Where the time went</h4>
-          ${segRange('range', ['Day', 'Week', 'Month'])}
+          ${segRange('range', ['Day', 'Week', '2 Weeks', 'Month'])}
         </div>
         <div class="chart-row" style="display: flex; gap: 24px; align-items: center; flex-wrap: wrap;">
           ${donut(v, 190, 34, 27)}
@@ -2425,7 +2673,7 @@ function moneyDesktop(v) {
     <div style="display: flex; flex-direction: column; gap: 22px; min-width: 0;">
       <div class="blueprint" style="padding: 20px 22px 24px;">        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;">
           <h4 style="margin: 0; margin-right: auto;">Where the money went</h4>
-          ${segRange('mrange2', ['Day', 'Week', 'Month'])}
+          ${segRange('mrange2', ['Day', 'Week', '2 Weeks', 'Month'])}
         </div>
         <div class="chart-row" style="display: flex; gap: 24px; align-items: center; flex-wrap: wrap;">
           ${donut(v, 190, 34, 24)}
@@ -2433,6 +2681,8 @@ function moneyDesktop(v) {
         </div>
         ${focusPanel(v)}
       </div>
+
+      ${insightsCard(v)}
 
       <div class="blueprint" style="padding: 18px 22px 22px;">        <h4 style="margin: 0 0 14px;">Biggest purposes</h4>
         <div style="display: flex; flex-direction: column; gap: 13px;">${bars(v)}</div>
@@ -2544,6 +2794,11 @@ function reportSheet(v) {
             </tbody>
           </table>
           </div>
+          ${v.isMoney ? `
+          <div style="margin-top: 34px; padding-top: 18px; border-top: 1px solid var(--color-divider); break-inside: avoid;">
+            <div style="font-family: var(--font-heading); font-size: 20px; margin-bottom: 12px;">Financial Insights</div>
+            ${insightsBody(v, true)}
+          </div>` : ''}
           ${reportActivities(v)}
           <div style="margin-top: 30px; font-size: 11px; color: var(--color-neutral-600); display: flex; justify-content: space-between;">
             <span>Generated by ZIMPAN · ${esc(v.geoLabel)}</span><span>${esc(v.nowLabel)}</span>
@@ -2867,6 +3122,7 @@ const ACTIONS = {
 
   'range-day': () => { state.range = 'day'; render(); },
   'range-week': () => { state.range = 'week'; render(); },
+  'range-fortnight': () => { state.range = 'fortnight'; render(); },
   'range-month': () => { state.range = 'month'; render(); },
 
   'prev-day': () => shiftDay(-1),
@@ -3087,12 +3343,39 @@ document.addEventListener('keydown', (ev) => {
    height always matches what actually gets drawn. */
 function measuringContext() {
   const noop = () => {};
-  return {
+  const ctx = {
     fillStyle: '', strokeStyle: '', font: '', textAlign: '', globalCompositeOperation: '',
     fillText: noop, fillRect: noop, beginPath: noop, moveTo: noop, lineTo: noop,
     stroke: noop, arc: noop, closePath: noop, fill: noop,
-    measureText: () => ({ width: 0 })
+    /* Estimated from the font size rather than reported as zero. Wrapped
+       paragraphs decide their line count from this, and a zero width would
+       measure every one of them as a single line — leaving the real canvas too
+       short to hold what then gets drawn. The ratio deliberately runs a little
+       wide of Barlow's true average: over-estimating costs some blank space at
+       the bottom, under-estimating clips the text. */
+    measureText: (t) => {
+      const m = /(\d+(?:\.\d+)?)px/.exec(ctx.font || '');
+      return { width: String(t).length * (m ? parseFloat(m[1]) : 14) * 0.55 };
+    }
   };
+  return ctx;
+}
+
+/* The sheet has only ever needed single-line clipping; the insight paragraphs
+   are the first thing on it that has to flow. Measures as it goes, so it wraps
+   to whatever font is currently set on the context. */
+function wrapText(x, s, max) {
+  const words = String(s).split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const lines = [];
+  let line = words[0];
+  for (let i = 1; i < words.length; i++) {
+    const next = `${line} ${words[i]}`;
+    if (x.measureText(next).width > max) { lines.push(line); line = words[i]; }
+    else line = next;
+  }
+  lines.push(line);
+  return lines;
 }
 
 function clipText(x, s, max) {
@@ -3151,6 +3434,63 @@ function paintReport(x, W, v, totals, total, isMoney) {
     ty += 16; x.strokeStyle = '#e2e2e5'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
     ty += 26;
   });
+
+  /* Financial insights. Drawn before the early return below, so a money sheet
+     still carries the reading even when there is nothing to itemise under it. */
+  if (isMoney && v.moneyInsight) {
+    const f = v.moneyInsight;
+
+    ty += 30;
+    x.fillStyle = '#1d1f20'; x.font = '600 22px "Barlow Condensed", sans-serif';
+    x.fillText('FINANCIAL INSIGHTS', 60, ty);
+    x.font = '400 12px Barlow, sans-serif'; x.fillStyle = '#5d5d60'; x.textAlign = 'right';
+    x.fillText(f.coverageLabel, W - 60, ty);
+    x.textAlign = 'left';
+    ty += 11;
+    x.strokeStyle = '#c9c9cc'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
+    ty += 34;
+
+    x.fillStyle = '#1d1f20'; x.font = '600 21px "Barlow Condensed", sans-serif';
+    x.fillText(f.headline, 60, ty);
+    ty += 30;
+
+    // The same four figures as the card, on one row.
+    [['OUT', f.outLabel, false], ['IN', f.inLabel, false], ['NET', f.netLabel, true], ['KEPT', f.rateLabel, true]]
+      .forEach((t, i) => {
+        const tx = 60 + i * 195;
+        x.fillStyle = '#5d5d60'; x.font = '400 11px Barlow, sans-serif';
+        x.fillText(t[0], tx, ty);
+        x.fillStyle = t[2] ? (f.netUp ? accent : '#1d1f20') : '#1d1f20';
+        x.font = '600 20px "Barlow Condensed", sans-serif';
+        x.fillText(t[1], tx, ty + 23);
+      });
+    ty += 52;
+
+    const para = (kicker, items) => {
+      if (!items.length) return;
+      ty += 14;
+      x.fillStyle = accent; x.font = '400 11px Barlow, sans-serif';
+      x.fillText(kicker, 60, ty);
+      ty += 20;
+      x.font = '400 13px Barlow, sans-serif';
+      items.forEach((t) => {
+        const lines = wrapText(x, t, W - 138);
+        x.fillStyle = '#5d5d60'; x.fillText('•', 60, ty);
+        x.fillStyle = '#1d1f20';
+        lines.forEach((ln, i) => x.fillText(ln, 78, ty + i * 19));
+        ty += lines.length * 19 + 9;
+      });
+    };
+
+    para('WHAT STANDS OUT', f.observations);
+    para('WHAT MIGHT HELP', f.advice);
+
+    ty += 12;
+    x.fillStyle = '#7a7a7d'; x.font = '400 11px Barlow, sans-serif';
+    const legal = wrapText(x, DISCLAIMER, W - 120);
+    legal.forEach((ln, i) => x.fillText(ln, 60, ty + i * 16));
+    ty += legal.length * 16 + 10;
+  }
 
   if (!v.reportEntryCount) return ty;
 
