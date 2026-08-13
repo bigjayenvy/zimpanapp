@@ -60,6 +60,59 @@ app.use((req, res, next) => {
 // Express 4 does not catch rejected promises from handlers.
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
+/* ── database readiness ──
+
+   The app used to refuse to listen until migrate() resolved, which meant a
+   database that was merely unreachable took the entire site down — including
+   index.html and app.js, which need no database at all. Since the client keeps
+   its data locally and syncs, a visitor could have carried on working through
+   an outage if only the page had loaded.
+
+   So the listener comes up first and the database is prepared behind it. Until
+   that succeeds the app is served normally and the endpoints that genuinely
+   need MySQL answer 503, which the client reads as "paused" rather than
+   "broken". Preparation retries for as long as it takes. */
+
+let dbReady = false;
+let dbAttempt = 0;
+const RETRY_MS = [2000, 5000, 10000, 20000, 30000];
+
+async function prepareDatabase() {
+  try {
+    await migrate();
+    dbReady = true;
+    dbAttempt = 0;
+    console.log('[zimpan] database ready');
+  } catch (err) {
+    dbReady = false;
+    const wait = RETRY_MS[Math.min(dbAttempt, RETRY_MS.length - 1)];
+    dbAttempt += 1;
+    console.error(`[zimpan] database not ready (attempt ${dbAttempt}): ${err.message} — retrying in ${wait / 1000}s`);
+    setTimeout(prepareDatabase, wait);
+  }
+}
+
+/* The endpoints that hold up without MySQL. Everything else under /api/ needs
+   it, so the guard below is a deny-list of one line rather than a decoration on
+   every route — a new route is protected by default. */
+const DB_FREE = new Set(['/api/config', '/api/currencies', '/api/health']);
+
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/') || DB_FREE.has(req.path) || dbReady) return next();
+  res.set('Retry-After', '30');
+  res.status(503).json({
+    error: 'The database is temporarily unavailable, so signing in and syncing are paused. Anything you log is kept on this device and goes up by itself once the connection is back.',
+    retry: true
+  });
+});
+
+/* Says whether the database is the problem without needing shell access — the
+   question that took a while to answer the last time this went down. The
+   underlying error stays in the log: it names the host and user. */
+app.get('/api/health', (req, res) => {
+  res.status(dbReady ? 200 : 503).json({ ok: dbReady, database: dbReady ? 'ready' : 'unavailable' });
+});
+
 const clientIp = (req) => req.ip || req.socket.remoteAddress || 'unknown';
 const currentUser = (req) => userForToken(parseCookies(req.get('Cookie'))[COOKIE]);
 
@@ -320,11 +373,16 @@ app.use((err, req, res, _next) => {
   res.status(status).json({ error: status >= 500 ? 'Something went wrong on our end.' : 'That request could not be handled.' });
 });
 
-migrate()
-  .then(() => app.listen(PORT, () => {
-    console.log(`ZIMPAN listening on http://localhost:${PORT}  (${PROD ? 'production' : 'development'})`);
-  }))
-  .catch((err) => {
-    console.error('[zimpan] could not prepare the database:', err.message);
-    process.exit(1);
-  });
+/* Listen first, prepare the database second. A failure to bind is still fatal —
+   nothing can be served without a socket — but a database that is away is not,
+   because the app and its assets do not need one. */
+const server = app.listen(PORT, () => {
+  console.log(`ZIMPAN listening on http://localhost:${PORT}  (${PROD ? 'production' : 'development'})`);
+});
+
+server.on('error', (err) => {
+  console.error('[zimpan] could not start the server:', err.message);
+  process.exit(1);
+});
+
+prepareDatabase();

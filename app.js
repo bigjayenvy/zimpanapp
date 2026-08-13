@@ -598,6 +598,7 @@ function netLabel() {
     const what = state.netErrorKind === 'server' ? 'Server error' : 'Sync blocked';
     return pending ? `${what} · ${pending} waiting` : what;
   }
+  if (state.netState === 'paused') return pending ? `Sync paused · ${pending} waiting` : 'Sync paused';
   if (state.netState === 'offline') return pending ? `Offline · ${pending} waiting` : 'Offline';
   if (state.netState === 'synced') return pending ? `${pending} waiting` : 'All changes saved';
   return pending ? `${pending} waiting` : '';
@@ -638,6 +639,19 @@ async function syncNow() {
        blaming the network and queueing silently. */
     /* A 5xx means the server was reached and broke. Calling that "offline"
        sends you looking at your connection when the answer is in stderr.log. */
+    /* 503 is the server saying its database is away but that it is otherwise
+       healthy. The changes are still good and will go up unaltered, so this is
+       a pause rather than a failure: the queue is kept, the loud banner stays
+       down, and it tries again shortly without being asked. */
+    if (err.status === 503) {
+      state.netErrorKind = 'paused';
+      state.netError = err.message || 'Sync is paused while the server’s database is unavailable.';
+      state.netErrorRow = null;
+      setNet('paused', '');
+      queueSync(60000);
+      render();
+      return;
+    }
     if (err.status >= 500) {
       state.netErrorKind = 'server';
       state.netError = `The server returned an error (${err.status}). Its log will say why — often a database column the code expects but the schema has not got yet.`;
@@ -808,10 +822,12 @@ async function boot() {
     if (err.status === 401) {
       state.auth = null;
     } else if (state.account) {
-      // Network down but this browser already belongs to an account: carry on
-      // from the local copy rather than locking the user out of their own data.
+      /* Network down but this browser already belongs to an account: carry on
+         from the local copy rather than locking the user out of their own data.
+         A 503 is the narrower case — the server answered, its database did
+         not — and saying "offline" there sends people to check their wifi. */
       state.auth = { email: state.account, currency: state.currency };
-      setNet('offline', '');
+      setNet(err.status === 503 ? 'paused' : 'offline', '');
     }
     render();
   }
