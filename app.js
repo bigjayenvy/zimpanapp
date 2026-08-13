@@ -408,6 +408,7 @@ const state = {
   timerActivity: stored.timerActivity || '',
   timerCategory: stored.timerCategory || (stored.categories[0] || {}).name || 'Chores',
   reportOpen: false,
+  donateOpen: false,
 
   // Slice drill-down: the category/purpose the donut is focused on, and
   // whether its entry list is expanded underneath.
@@ -1660,6 +1661,44 @@ function options(names, selected, extra) {
 
 /* ── drawers ── */
 
+/* The one breakpoint the script needs to know about. It matches the 720px the
+   stylesheet uses for the phone layout; keeping the number in both places is
+   the price of the app having no build step to share constants through. */
+const PHONE_QUERY = '(max-width: 720px)';
+const isPhone = () => window.matchMedia(PHONE_QUERY).matches;
+
+/* ── scrolling chrome ──
+
+   Passing null scrolls to the top. Honours the reduced-motion preference: a
+   long smooth scroll is exactly the kind of movement that setting exists for,
+   so it jumps instead. */
+function scrollToAnchor(name) {
+  const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const behavior = smooth ? 'smooth' : 'auto';
+  if (!name) { window.scrollTo({ top: 0, behavior }); return; }
+  const el = root.querySelector(`[data-anchor="${name}"]`);
+  if (el) el.scrollIntoView({ block: 'start', behavior });
+  else window.scrollTo({ top: 0, behavior });
+}
+
+/* The sticky bar and the back-to-top button are shown by scroll position
+   rather than by a re-render, so they are toggled straight on the DOM. Both
+   are looked up fresh because render() replaces the tree underneath them. */
+let scrollTicking = false;
+function paintScrollChrome() {
+  scrollTicking = false;
+  const y = window.scrollY;
+  const bar = root.querySelector('[data-stickybar]');
+  const top = root.querySelector('[data-backtotop]');
+  if (bar) bar.classList.toggle('is-on', y > 210);
+  if (top) top.classList.toggle('is-on', y > 380);
+}
+window.addEventListener('scroll', () => {
+  if (scrollTicking) return;
+  scrollTicking = true;
+  requestAnimationFrame(paintScrollChrome);
+}, { passive: true });
+
 /* The count goes in the default label so "Show more" never hides an unknown
    quantity. `labels` overrides it where a section reads better named — the
    wellbeing cards say "Read Full Report" rather than counting rows. */
@@ -1708,11 +1747,18 @@ const NAV_ICONS = {
   money: icon('<path d="M20 9.5V8a2 2 0 0 0-2-2H5.5A2.5 2.5 0 0 0 3 8.5v9A2.5 2.5 0 0 0 5.5 20H18a2 2 0 0 0 2-2v-1.5"/><path d="M21.5 9.5h-4a2.5 2.5 0 0 0 0 5h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 0-.5-.5Z"/>'),
   donate: icon('<path d="M19 13.5c1.4-1.35 3-3 3-5.2A4.8 4.8 0 0 0 17.2 3.5c-1.7 0-2.9.5-4.2 1.9-1.3-1.4-2.5-1.9-4.2-1.9A4.8 4.8 0 0 0 4 8.3c0 2.2 1.6 3.85 3 5.2l5 5Z"/>'),
   report: icon('<path d="M14 3H7.5A2.5 2.5 0 0 0 5 5.5v13A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V8Z"/><path d="M14 3v5h5"/><path d="M9 17.5v-2.8M12 17.5v-5M15 17.5v-1.8"/>'),
-  signout: icon('<path d="M9.5 21H6a2.5 2.5 0 0 1-2.5-2.5v-13A2.5 2.5 0 0 1 6 3h3.5"/><path d="M16 16.5 20.5 12 16 7.5"/><path d="M20.5 12H9.5"/>')
+  signout: icon('<path d="M9.5 21H6a2.5 2.5 0 0 1-2.5-2.5v-13A2.5 2.5 0 0 1 6 3h3.5"/><path d="M16 16.5 20.5 12 16 7.5"/><path d="M20.5 12H9.5"/>'),
+  // Climbing bars with the trend arrow over them — the reading, not the data.
+  insights: icon('<path d="M4 20V13.5M9 20v-9M14 20v-5.5M19 20V8"/><path d="m3.5 9 5.5-4 4 2.5 6.5-5"/><path d="M15.5 2.5h4v4"/>'),
+  up: icon('<path d="M12 19.5V5"/><path d="m5.5 11.5 6.5-6.5 6.5 6.5"/>')
 };
 
-// Five destinations, fixed where a thumb reaches. Hidden above 720px, where the
-// app bar keeps its own buttons.
+/* Five destinations, fixed where a thumb reaches. Hidden above 720px, where the
+   app bar keeps its own buttons.
+
+   Two of the five are actions rather than places — Report opens the sheet and
+   Insights scrolls to the reading — so only Time and Money ever carry
+   aria-current, and only they take the highlight. */
 function mobileNav(v) {
   const item = (act, key, label, current) => `
     <button data-act="${act}"${current ? ' aria-current="page"' : ''}>
@@ -1723,12 +1769,48 @@ function mobileNav(v) {
   <nav class="bottomnav no-print" aria-label="Main">
     ${item('app-time', 'time', 'Time', !v.isMoney)}
     ${item('app-money', 'money', 'Money', v.isMoney)}
-    <a href="${DONATE_URL}" target="_blank" rel="noopener noreferrer">
+    <a class="bn-donate" href="${DONATE_URL}" target="_blank" rel="noopener noreferrer">
       <span class="bn-icon">${NAV_ICONS.donate}</span><span class="bn-label">Donate</span>
     </a>
     ${item('open-report', 'report', 'Report', false)}
-    ${item('sign-out', 'signout', 'Sign out', false)}
+    ${item('scroll-insights', 'insights', 'Insights', false)}
   </nav>`;
+}
+
+/* The bar that takes over once the page has scrolled past the real header.
+   It carries whichever control is the one you reach back up for: on the time
+   tracker that is the entry mode, on money it is the tracker switch. */
+function stickyBar(v) {
+  const pill = (act, label, on, extra) => `<button data-act="${act}"${extra || ''} style="
+      border: 1px solid var(--color-accent-700);
+      background: ${on ? 'var(--color-accent-700)' : 'var(--color-bg)'};
+      color: ${on ? '#fff' : 'var(--color-accent-900)'};
+      font-family: var(--font-body); font-size: 12.5px; font-weight: 600;
+      padding: 7px 15px; border-radius: 999px; cursor: pointer; white-space: nowrap;">${esc(label)}</button>`;
+
+  const controls = v.isMoney
+    ? `${pill('app-time', 'Time Tracker', false)}${pill('app-money', 'Money Tracker', true)}`
+    : `${pill('entry-mode-timer', 'Track Real Time', state.entryMode === 'timer', ' data-jump="entry"')}
+       ${pill('entry-mode-manual', 'Manual Entry', state.entryMode === 'manual', ' data-jump="entry"')}`;
+
+  return `
+  <div class="stickybar no-print" data-stickybar>
+    <div class="stickybar-in">
+      <div class="stickybar-controls">${controls}</div>
+      <button class="stickybar-mark" data-act="scroll-top" aria-label="Back to top">
+        <span style="color: var(--color-accent-900);">${LOGO_MARK(19)}</span>
+        <span class="stickybar-name">ZIMPAN<span style="color: var(--color-accent-700);">.</span></span>
+      </button>
+    </div>
+  </div>`;
+}
+
+// Sits above the bottom bar rather than over it, so it never covers a destination.
+function backToTop() {
+  return `
+  <button class="backtotop no-print" data-backtotop data-act="scroll-top" aria-label="Back to top">
+    ${NAV_ICONS.up}
+  </button>`;
 }
 
 function header(v) {
@@ -1746,10 +1828,14 @@ function header(v) {
     </div>
     <div class="appbar-actions" style="display:flex;align-items:center;gap:10px;">
       ${state.auth ? `
-        <span style="font-size:12px;color:var(--color-neutral-700);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(state.auth.email)}</span>
-        <button class="btn btn-ghost" data-act="sign-out" style="font-size:12px;">Sign out</button>` : ''}
-      <a class="btn btn-donate" href="${DONATE_URL}" target="_blank" rel="noopener noreferrer">${NAV_ICONS.donate}<span>Donate</span></a>
-      <button class="btn btn-primary" data-act="open-report" style="position:relative">Export report</button>
+        <span class="appbar-account">
+          <span class="appbar-email">${esc(state.auth.email)}</span>
+          <button class="btn btn-ghost" data-act="sign-out" style="font-size:12px;">Sign out</button>
+        </span>` : ''}
+      <span class="appbar-cta" style="display:flex;align-items:center;gap:10px;">
+        <a class="btn btn-donate" href="${DONATE_URL}" target="_blank" rel="noopener noreferrer">${NAV_ICONS.donate}<span>Donate</span></a>
+        <button class="btn btn-primary" data-act="open-report" style="position:relative">Export report</button>
+      </span>
     </div>
   </div>`;
 }
@@ -2072,6 +2158,72 @@ function notePromptDialog() {
     </div>`;
 }
 
+/* ── the donation ask ──
+
+   Once a day, and only after twenty minutes of the app actually being used:
+   the tab in front, and either a timer running or something typed or pressed in
+   the last couple of minutes. A tab left open overnight earns no credit and is
+   not greeted with a fundraising sheet in the morning.
+
+   The "seen" date is its own localStorage key rather than a field on state,
+   because it describes this browser and has no business being synced to the
+   account and following the user onto their other devices. */
+
+const DONATE_SEEN_KEY = 'zimpan.donate.v1';
+const DONATE_AFTER_MS = 20 * 60 * 1000;
+const DONATE_IDLE_MS = 2 * 60 * 1000;
+const DONATE_TICK_MS = 15 * 1000;
+
+let activeMs = 0;
+let lastInteractionAt = Date.now();
+
+const donateSeenOn = () => { try { return localStorage.getItem(DONATE_SEEN_KEY) || ''; } catch (err) { return ''; } };
+const markDonateSeen = () => { try { localStorage.setItem(DONATE_SEEN_KEY, iso(new Date())); } catch (err) { /* private mode */ } };
+
+// Capturing, so it still counts inside the dialogs and the report sheet.
+['click', 'keydown', 'input', 'touchstart'].forEach((evt) => {
+  document.addEventListener(evt, () => { lastInteractionAt = Date.now(); }, { passive: true, capture: true });
+});
+
+function tickDonate() {
+  if (!state.auth || state.donateOpen) return;
+  if (document.visibilityState !== 'visible') return;
+  const engaged = !!state.timerStart || (Date.now() - lastInteractionAt) < DONATE_IDLE_MS;
+  if (!engaged) return;
+
+  activeMs += DONATE_TICK_MS;
+  if (activeMs < DONATE_AFTER_MS) return;
+  // Recomputed rather than read from todayIso, which was fixed at load and
+  // would be yesterday for anyone who left the app open past midnight.
+  if (donateSeenOn() === iso(new Date())) return;
+
+  markDonateSeen();
+  state.donateOpen = true;
+  render();
+}
+setInterval(tickDonate, DONATE_TICK_MS);
+
+function donateSheet() {
+  if (!state.donateOpen) return '';
+  return `
+  <div class="no-print donate-backdrop" data-donate-backdrop>
+    <div class="donate-sheet" role="dialog" aria-modal="true" aria-labelledby="donate-title">
+      <button class="donate-x" data-act="donate-close" aria-label="Close">×</button>
+      <div class="donate-kicker">A note from the maker</div>
+      <h2 id="donate-title" class="donate-title">
+        <span class="donate-l1">HELP US IMPROVE</span>
+        <span class="donate-l2">DONATE A DOLLAR</span>
+      </h2>
+      <p class="donate-copy">
+        ZIMPAN is free, carries no ads, and never sells what you log. A dollar covers
+        the server it runs on and the time that goes into the next feature.
+      </p>
+      <button class="donate-cta" data-act="donate-go">${NAV_ICONS.donate}<span>Donate Now</span></button>
+      <button class="donate-later" data-act="donate-close">Maybe later</button>
+    </div>
+  </div>`;
+}
+
 function splashScreen() {
   return `
   <div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);">
@@ -2298,6 +2450,18 @@ function insightsBody(v, forPrint) {
           <div style="margin-top: 10px; font-size: 11.5px; line-height: 1.5; color: var(--color-neutral-600);">${esc(DISCLAIMER)}</div>`;
 }
 
+/* Both trackers head their reading the same way, and the anchor the Insights
+   button scrolls to lives on it. */
+function insightsHeading() {
+  return `
+      <div data-anchor="insights" style="padding: 4px 2px 0; scroll-margin-top: 78px;">
+        <h4 style="margin: 0 0 5px; font-size: 24px; line-height: 1.2;">Your Insights, our recommendations</h4>
+        <div style="font-size: 12px; line-height: 1.5; color: var(--color-neutral-600);">
+          Read from what you logged. Estimates, not measurements — and never a substitute for professional advice.
+        </div>
+      </div>`;
+}
+
 /* The on-page card. The range switch is here rather than in the body because a
    fortnight is what the wording is calibrated for — at a single day most of the
    rules cannot fire at all, so it is worth one tap to get there. */
@@ -2431,7 +2595,7 @@ function entryModeBar() {
       transition: background-color .15s ease, color .15s ease;">${esc(label)}</button>`;
   };
   return `
-      <div>
+      <div data-anchor="entry" style="scroll-margin-top: 78px;">
         <div style="display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;">
           ${pill('timer', 'Track Real Time')}
           ${pill('manual', 'Manual Entry')}
@@ -2590,12 +2754,7 @@ function timeDesktop(v) {
         </div>
       </div>
 
-      <div style="padding: 4px 2px 0;">
-        <h4 style="margin: 0 0 5px; font-size: 24px; line-height: 1.2;">Your Insights, our recommendations</h4>
-        <div style="font-size: 12px; line-height: 1.5; color: var(--color-neutral-600);">
-          Read from what you logged. Estimates, not measurements — and never a substitute for professional advice.
-        </div>
-      </div>
+      ${insightsHeading()}
       ${todayCard(v)}
       ${pastCard(v)}
       ${weightCard(v)}
@@ -2682,6 +2841,7 @@ function moneyDesktop(v) {
         ${focusPanel(v)}
       </div>
 
+      ${insightsHeading()}
       ${insightsCard(v)}
 
       <div class="blueprint" style="padding: 18px 22px 22px;">        <h4 style="margin: 0 0 14px;">Biggest purposes</h4>
@@ -2689,6 +2849,52 @@ function moneyDesktop(v) {
       </div>
     </div>
   </div>`;
+}
+
+/* ── sharing ──
+
+   A report has no URL to send: the data belongs to one account and is never
+   published, so there is nothing for a recipient to open. What travels is a
+   text digest — the same figures the sheet leads with, written to be readable
+   in a chat window. The image stays a download, because neither wa.me nor
+   mailto can carry a file. */
+
+const SHARE_ICONS = {
+  whatsapp: `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true" focusable="false" style="display:block;flex:none;"><path d="M12 2a10 10 0 0 0-8.6 15L2 22l5.2-1.4A10 10 0 1 0 12 2Zm0 1.8a8.2 8.2 0 1 1-4.2 15.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 0 1 12 3.8Zm-2.6 4c-.2 0-.5.1-.7.4-.3.3-.9.9-.9 2s.9 2.3 1 2.5c.1.2 1.7 2.8 4.3 3.8 2.1.8 2.5.7 3 .6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.15-1.2-.05-.1-.2-.2-.45-.3l-1.6-.8c-.2-.1-.4-.15-.55.1l-.75 1c-.15.2-.3.2-.5.1a6.7 6.7 0 0 1-2-1.2 7.4 7.4 0 0 1-1.35-1.7c-.15-.25 0-.4.1-.5l.4-.5c.1-.15.15-.25.2-.4a.4.4 0 0 0 0-.4l-.8-1.9c-.2-.45-.4-.4-.55-.4Z"/></svg>`,
+  email: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="display:block;flex:none;"><rect x="2.5" y="4.5" width="19" height="15" rx="2.5"/><path d="m3 7 8.1 5.4a1.6 1.6 0 0 0 1.8 0L21 7"/></svg>`
+};
+
+function reportShareText(v) {
+  const isMoney = v.isMoney;
+  const lines = [];
+  lines.push(`ZIMPAN — ${isMoney ? 'Money' : 'Time'} report`);
+  lines.push(v.reportRange);
+  lines.push('');
+
+  if (isMoney) {
+    lines.push(`Spent: ${v.moneyOut} across ${v.moneyOutCount} entries`);
+    lines.push(`Received: ${v.moneyIn} · Net: ${v.moneyNet}`);
+  } else {
+    lines.push(`Tracked: ${v.rangeTotal} across ${v.reportEntryCount} entries`);
+  }
+
+  const top = v.reportRows.slice(0, 5);
+  if (top.length) {
+    lines.push('');
+    lines.push(isMoney ? 'Where it went:' : 'Where the time went:');
+    top.forEach((r, i) => lines.push(`${i + 1}. ${r.name} — ${r.time} (${r.pct})`));
+  }
+
+  /* One line of the reading, so the message says something the table does not.
+     The money side has the insight block; the time side has its advice list. */
+  const note = isMoney
+    ? (v.moneyInsight && v.moneyInsight.observations[0]) || ''
+    : (v.pastAdvice && v.pastAdvice[0]) || '';
+  if (note) { lines.push(''); lines.push(note); }
+
+  lines.push('');
+  lines.push('Tracked with ZIMPAN · https://zimpan.com');
+  return lines.join('\n');
 }
 
 /* Every entry in range, day by day. `break-inside: avoid` keeps a day's block
@@ -2753,10 +2959,12 @@ function reportSheet(v) {
   return `
     <div class="report-wrap" data-report-backdrop style="position: fixed; inset: 0; background: color-mix(in srgb, var(--color-neutral-900) 55%, transparent); display: flex; align-items: flex-start; justify-content: center; overflow: auto; z-index: 40;">
       <div style="width: 780px; max-width: 100%;">
-        <div class="no-print" style="display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap;">
+        <div class="no-print report-tools">
           <span class="report-hint" style="color: var(--color-bg); font-size: 13px; margin-right: auto;">Preview — chart, totals and every activity in range.</span>
           <button class="btn btn-secondary" data-act="export-pdf" style="background: var(--color-bg);">Download PDF</button>
           <button class="btn btn-secondary" data-act="export-jpg" style="background: var(--color-bg);">Download JPG</button>
+          <button class="btn btn-secondary" data-act="share-whatsapp" style="background: var(--color-bg);">${SHARE_ICONS.whatsapp}<span>WhatsApp</span></button>
+          <button class="btn btn-secondary" data-act="share-email" style="background: var(--color-bg);">${SHARE_ICONS.email}<span>Email</span></button>
           <button class="btn btn-secondary" data-act="close-report" style="background: var(--color-bg);">Close</button>
         </div>
         <div class="report-sheet" id="report-sheet" style="background: var(--color-bg); box-shadow: var(--shadow-lg);">
@@ -2853,17 +3061,22 @@ function render() {
 <div id="zimpan-progress" class="topbar" style="display:none"><i></i></div>
 <div data-app="${state.app}" style="min-height: 100vh; background: var(--color-bg); color: var(--color-text); font-family: var(--font-body); padding-bottom: 48px;">
   ${header(v)}
+  ${stickyBar(v)}
   ${syncErrorBanner()}
   ${body}
   <div class="no-print" style="padding: 26px 28px 10px;">${legalLinks('var(--color-neutral-600)')}</div>
   ${state.reportOpen ? reportSheet(v) : ''}
   ${notePromptDialog()}
+  ${donateSheet()}
   ${legalSheet()}
+  ${backToTop()}
   ${mobileNav(v)}
 </div>`;
 
   restoreFocus(f);
   paintBusy();
+  // The tree was just replaced, so the scroll-driven classes have to be put back.
+  paintScrollChrome();
   // The dialog exists to be typed in, so put the caret there straight away.
   const note = root.querySelector('[data-k="note-draft"]');
   if (note && document.activeElement !== note) note.focus();
@@ -3159,8 +3372,16 @@ const ACTIONS = {
   'legal-privacy': () => { state.legalOpen = 'privacy'; render(); },
   'legal-terms': () => { state.legalOpen = 'terms'; render(); },
   'legal-close': () => { state.legalOpen = null; render(); },
-  'entry-mode-timer': () => { state.entryMode = 'timer'; save(); render(); },
-  'entry-mode-manual': () => { state.entryMode = 'manual'; save(); render(); },
+  'donate-close': () => { state.donateOpen = false; render(); },
+  'donate-go': () => {
+    window.open(DONATE_URL, '_blank', 'noopener');
+    state.donateOpen = false; render();
+  },
+  /* `data-jump` is set only on the copies in the sticky bar. Pressed there the
+     button is a way back to the form as much as a mode switch, so it scrolls;
+     pressed on the form itself it must not move the page under you. */
+  'entry-mode-timer': (el) => { state.entryMode = 'timer'; save(); render(); if (el.dataset.jump) scrollToAnchor(el.dataset.jump); },
+  'entry-mode-manual': (el) => { state.entryMode = 'manual'; save(); render(); if (el.dataset.jump) scrollToAnchor(el.dataset.jump); },
   // The form opens directly beneath the link, so neither entry mode is disturbed.
   'open-new-cat': () => { state.newCatOpen = !state.newCatOpen; state.newCatName = ''; render(); },
 
@@ -3172,11 +3393,26 @@ const ACTIONS = {
     save(); queueSync(0); render();
   },
 
+  /* One drawer at a time on a phone. The page is a single column there, so a
+     second open drawer pushes the first a long way off screen; on a desktop the
+     columns sit side by side and closing one because another opened would be
+     arbitrary. Collapsing the others moves the page under the thumb, so the
+     button that was just pressed is scrolled back to where it was. */
   'toggle-drawer': (el) => {
     const key = el.dataset.drawer;
-    state.drawers[key] = !state.drawers[key];
+    const opening = !state.drawers[key];
+    const accordion = opening && isPhone();
+    if (accordion) Object.keys(state.drawers).forEach((k) => { state.drawers[k] = false; });
+    state.drawers[key] = opening;
     save(); render();
+    if (accordion) {
+      const btn = root.querySelector(`[data-act="toggle-drawer"][data-drawer="${key}"]`);
+      if (btn) btn.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
   },
+  'scroll-top': () => scrollToAnchor(null),
+  'scroll-insights': () => scrollToAnchor('insights'),
+
   'sync-now': () => { if (state.netState === 'error') setNet('idle', ''); syncNow(); },
 
   /* Last resort for a change the server will never accept: drop it from the
@@ -3258,7 +3494,18 @@ const ACTIONS = {
   'open-report': () => { state.reportOpen = true; render(); },
   'close-report': () => { state.reportOpen = false; render(); },
   'export-pdf': () => window.print(),
-  'export-jpg': () => exportJpg()
+  'export-jpg': () => exportJpg(),
+
+  /* Both hand the text to something else to send — nothing leaves the browser
+     until the person presses send in WhatsApp or their mail client. */
+  'share-whatsapp': () => {
+    window.open(`https://wa.me/?text=${encodeURIComponent(reportShareText(compute()))}`, '_blank', 'noopener');
+  },
+  'share-email': () => {
+    const v = compute();
+    const subject = `ZIMPAN ${v.isMoney ? 'money' : 'time'} report — ${v.reportRange}`;
+    window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(reportShareText(v))}`;
+  }
 };
 
 const CHANGES = {
@@ -3330,6 +3577,7 @@ document.addEventListener('keydown', (ev) => {
   }
   // Topmost first: the follow-up dialog sits above the report sheet.
   if (ev.key === 'Escape' && state.notePrompt) { closeFollowUp(false); return; }
+  if (ev.key === 'Escape' && state.donateOpen) { state.donateOpen = false; render(); return; }
   if (ev.key === 'Escape' && state.legalOpen) { state.legalOpen = null; render(); return; }
   if (ev.key === 'Escape' && state.authOpen && state.authMode !== 'reset') { state.authOpen = false; render(); return; }
   if (ev.key === 'Escape' && state.reportOpen) { state.reportOpen = false; render(); return; }
