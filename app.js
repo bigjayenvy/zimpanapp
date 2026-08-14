@@ -454,6 +454,11 @@ const state = {
   // whether its entry list is expanded underneath.
   focus: null, focusOpen: false,
 
+  /* Which copy of the calorie gauges has its weight field open — 'today',
+     'past', or nothing. Not persisted: it is a thing you opened, not a
+     preference, and it should not be waiting for you on the next load. */
+  weightEditOpen: null,
+
   /* ── sync bookkeeping (persisted) ── */
   currencyUpdatedAt: Number(stored.currencyUpdatedAt) || 0,
   tombstones: Object.assign(EMPTY_KEYED(), stored.tombstones),
@@ -2011,6 +2016,17 @@ const DIMENSION_ICONS = {
   spiritual: icon('<path d="M12 20.8c0-5.2 2.9-9.7 7.6-11.8.5 5.6-2.9 10.7-7.6 11.8Z"/><path d="M12 20.8C12 15.6 9.1 11.1 4.4 9 3.9 14.6 7.3 19.7 12 20.8Z"/><path d="M12 20.8V16"/>')
 };
 
+/* The calorie balance. Four readings that have to be told apart at a glance on
+   a phone, so each gets its own drawn glyph rather than sharing the heart. */
+const CAL_ICONS = {
+  workout: DIMENSION_ICONS.physical,
+  food: icon('<path d="M3.5 11h17a8.5 8.5 0 0 1-17 0Z"/><path d="M9 7.6c0-1 .9-1.4.9-2.4M12.5 7.6c0-1 .9-1.4.9-2.4M16 7.6c0-1 .9-1.4.9-2.4"/>'),
+  // A pulse rather than a moon: resting burn is the body ticking over all day,
+  // not sleep.
+  rest: icon('<path d="M2.5 12h4l2.2-5.2 3.6 10.4L14.6 12h6.9"/>'),
+  net: icon('<path d="M12 4.5v15.5"/><path d="M7.5 20h9"/><path d="M4 8.5h16"/><path d="M4 8.5 1.8 13.6a2.4 2.4 0 0 0 4.4 0Z"/><path d="M20 8.5l-2.2 5.1a2.4 2.4 0 0 0 4.4 0Z"/>')
+};
+
 const TIP_ICONS = {
   move: DIMENSION_ICONS.physical,
   still: icon('<rect x="2.6" y="4.5" width="18.8" height="12.5" rx="2"/><path d="M8.5 20.5h7"/><path d="M12 17v3.5"/>'),
@@ -2695,24 +2711,37 @@ function dimensionCards(readings) {
    middle — which is the number the pair exists to produce. Both are scaled to
    the larger of the two so the shorter arc is honestly shorter; scaling each to
    its own maximum would draw two full dials and say nothing. */
-function balanceGauges(food, burn) {
+/* Four readings, left to right: what exercise burned, what food brought in,
+   what the body spent doing nothing, and the three of them netted off.
+   `scope` names the card this pair of gauges belongs to — the same block is
+   drawn twice on the page, so the weight editor needs to know which copy was
+   asked for and the fields inside it need keys that do not collide. */
+function balanceGauges(food, burn, scope) {
   if (!food.kcal && !burn.kcal) return '';
 
   /* A thirty-day total on a dial scaled for one day reads as wildly over-eaten
-     every time, so a multi-day range is averaged and says so. Both sides are
-     divided by the same figure, which leaves the balance between them — the
-     number this pair exists to show — unchanged. */
+     every time, so a multi-day range is averaged and says so. Every figure is
+     divided by the same span, which leaves the balance between them — the
+     reading this row exists to show — unchanged. */
   const days = Math.max(1, burn.days || 1);
   const per = (n) => Math.round(n / days);
   const burned = per(burn.kcal);
   const eaten = per(food.kcal);
+  const rested = per(burn.restKcal);
 
-  const net = burned - eaten;
-  const top = Math.max(eaten, burned, 1);
+  /* Everything out, less everything in. Positive is a deficit — more spent
+     than eaten — which is the direction people are usually looking for, so it
+     takes the green. */
+  const net = burned + rested - eaten;
+  const deficit = net >= 0;
+
+  // One scale across all four, so the bars are comparable to each other rather
+  // than each being full of itself.
+  const top = Math.max(eaten, burned, rested, Math.abs(net), 1);
   const ARC = Math.PI * 42;
 
-  const dial = (value, tone, big, small) => {
-    const dash = (value / top) * ARC;
+  const dial = (value, tone, glyph, cap, sub) => {
+    const dash = (Math.abs(value) / top) * ARC;
     return `
           <div class="cal-dial">
             <svg viewBox="0 0 110 62" aria-hidden="true" focusable="false">
@@ -2720,24 +2749,39 @@ function balanceGauges(food, burn) {
               <path d="M13 55 A 42 42 0 0 1 97 55" fill="none" stroke="${tone}" stroke-width="9" stroke-linecap="round"
                     stroke-dasharray="${dash.toFixed(2)} ${ARC.toFixed(2)}"></path>
             </svg>
-            <span class="cal-glyph" style="color: ${tone};">${big}</span>
-            <div class="cal-value">~${value.toLocaleString('en-US')}</div>
-            <div class="cal-cap">${esc(small)}</div>
+            <span class="cal-glyph" style="color: ${tone};">${glyph}</span>
+            <div class="cal-value">~${Math.abs(value).toLocaleString('en-US')}</div>
+            <div class="cal-cap">${esc(cap)}</div>
+            ${sub ? `<div class="cal-sub">${sub}</div>` : ''}
           </div>`;
   };
+
+  const netTone = deficit ? 'var(--zg-strong)' : 'var(--zg-donate)';
+  const open = state.weightEditOpen === scope;
 
   return `
       <div class="cal-kicker">${days > 1 ? `Average day across ${days} days` : 'Daily calorie balance'}</div>
       <div class="cal-row">
-        ${dial(burned, 'var(--zg-strong)', DIMENSION_ICONS.physical, 'Calories burned (workout)')}
-        <div class="cal-mid">
-          <div class="cal-net">${Math.abs(net).toLocaleString('en-US')}<span> ${net >= 0 ? 'more burned' : 'more eaten'}</span></div>
-          <div class="cal-note">${net >= 0 ? 'than eaten in food' : 'than burned in exercise'}. ${burn.assumedWeight ? 'Estimated assuming an average build — add your weight below for closer figures.' : 'Estimated from your weight alone, so treat it as ballpark.'}</div>
-        </div>
-        ${dial(eaten, 'var(--zg-donate)', NAV_ICONS.donate, 'Calories consumed (food)')}
+        ${dial(burned, 'var(--zg-strong)', CAL_ICONS.workout, 'Calories burned (workout)', '')}
+        ${dial(eaten, 'var(--zg-donate)', CAL_ICONS.food, 'Calories consumed (food)', '')}
+        ${dial(rested, 'var(--color-accent-700)', CAL_ICONS.rest, 'Calories burned (at rest)',
+          `Roughly burned at rest based on ${burn.assumedWeight
+            ? `a default ${DEFAULT_WEIGHT_KG} kg`
+            : `your ${esc(state.weightKg)} kg`}. <button class="cal-link" data-act="weight-open" data-scope="${esc(scope)}" aria-expanded="${open}">Edit your weight here</button>.`)}
+        ${dial(net, netTone, CAL_ICONS.net, `Net calories (${deficit ? 'deficit' : 'surplus'})`,
+          `Your net calorie for ${days > 1 ? 'an average day' : (scope === 'past' ? 'that day' : 'today')}: workout burn + burn at rest − calories consumed.`)}
       </div>
-      ${burn.restKcal ? `
-      <div class="cal-rest">Plus roughly ${per(burn.restKcal).toLocaleString('en-US')} burned at rest ${days > 1 ? 'a day ' : ''}just keeping you running — kept out of the comparison above, or it would swamp both sides.</div>` : ''}`;
+      ${open ? `
+      <div class="cal-weight">
+        <label for="cal-weight-${esc(scope)}">Your weight</label>
+        <input class="input" id="cal-weight-${esc(scope)}" type="number" min="20" max="400" step="1" inputmode="numeric"
+          data-k="cal-weight-${esc(scope)}" data-act="set-weight" placeholder="${DEFAULT_WEIGHT_KG}"
+          value="${state.weightKg || ''}">
+        <span class="cal-weight-unit">kg</span>
+        <button class="btn btn-secondary" data-act="weight-close">Done</button>
+        <span class="cal-weight-note">Left blank, ${DEFAULT_WEIGHT_KG} kg is assumed.</span>
+      </div>` : ''}
+      <div class="cal-rest">Every calorie here is a rough estimate, worked out from what you logged and your weight — useful for spotting a direction, not for counting on.</div>`;
 }
 
 const DISCLAIMER = 'Suggestions only, drawn from what you logged. ZIMPAN is not a medical, nutritional or financial adviser — anything you act on, particularly with a health condition or medication involved, is worth putting to a qualified professional first.';
@@ -2919,7 +2963,7 @@ function todayCard(v) {
           <span data-today-kicker style="font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--color-accent-700); margin-left: auto;">${esc(v.todayKicker)}</span>
         </div>
         <div data-live-line style="font-size: 12px; color: var(--color-neutral-600);">${esc(v.todayLive)}</div>
-        ${balanceGauges(v.todayFood, v.todayBurn)}
+        ${balanceGauges(v.todayFood, v.todayBurn, 'today')}
         <div class="wb-status"><span class="wb-kicker">Daily log status</span>${esc(v.todayHeadline)}</div>
         ${v.todayEmpty || !state.drawers.today ? '' : `
           <div class="wb-grid">${dimensionCards(v.todayReadings)}</div>
@@ -2961,7 +3005,7 @@ function pastCard(v) {
         <div style="font-size: 12px; color: var(--color-neutral-600); margin-bottom: 12px;">${esc(v.pastLabel)}</div>
         <div style="font-size: 13.5px; line-height: 1.6;">${esc(v.pastHeadline)}</div>
         ${v.pastBusiest ? `<div style="font-size: 12.5px; line-height: 1.6; color: var(--color-neutral-700); margin-top: 4px;">${esc(v.pastBusiest)}</div>` : ''}
-        ${balanceGauges(v.pastFood, v.pastBurn)}
+        ${balanceGauges(v.pastFood, v.pastBurn, 'past')}
         ${v.pastEmpty || !state.drawers.lookback ? '' : `
         <div style="display: flex; flex-direction: column; gap: 8px; margin: 16px 0 18px;">
           ${v.pastTop.map((t) => `
@@ -3087,39 +3131,47 @@ function timeTableCard(v) {
   const visible = state.drawers.activities || v.dayList.length <= ROWS_COLLAPSED
     ? v.dayList
     : v.dayList.slice(0, ROWS_COLLAPSED);
-  /* A card per entry, with the category as a tab above the first of each run.
-     Entries stay in time order, so a run is simply consecutive rows sharing a
-     category — the tab labels the run and the select inside each card still
-     edits that one row, which is the only reading that stays honest when a tab
-     sits over three of them. */
-  let runCategory = null;
-  const rows = visible.map((e) => {
+  /* A card per entry, gathered under the category it belongs to and laid out
+     two columns wide at every width. Grouping rather than following the clock:
+     the list flows down one column and up the next, so a tab that labelled a
+     run of consecutive rows would be separated from most of its run. Each
+     category is one block instead, kept whole, and the select inside a card
+     still moves that one entry to another group. */
+  const groups = [];
+  const byCategory = new Map();
+  visible.forEach((e) => {
+    let g = byCategory.get(e.category);
+    if (!g) { g = { category: e.category, rows: [] }; byCategory.set(e.category, g); groups.push(g); }
+    g.rows.push(e);
+  });
+
+  const card = (e) => {
     const spent = Math.max(0, e.to - e.from);
     const tint = colorOf(e.category);
-    const tab = e.category === runCategory ? '' : `
-              <div class="entry-tab" style="background: ${esc(tint)};">${esc(withIcon(e.category))}</div>`;
-    runCategory = e.category;
+    return `
+                <div class="entry-card">
+                  <input class="entry-name" data-k="r-${esc(e.id)}-a" data-change="entry-activity" data-id="${esc(e.id)}" value="${esc(e.activity)}" title="${esc(e.activity)}${e.note ? ` — ${esc(e.note)}` : ''}">
+                  <div class="entry-controls">
+                    <button class="cell-note" data-act="note-edit" data-kind="entries" data-id="${esc(e.id)}" title="${e.note ? esc(e.note) : 'Add a note for this entry'}"${e.note ? ' data-has-note' : ''}>${e.note ? 'Note' : 'Add note'}</button>
+                    <select class="entry-select" data-change="entry-category" data-id="${esc(e.id)}" style="${rowChipStyle(tint)}">${options(state.categories.map((c) => c.name), e.category)}</select>
+                  </div>
+                  <div class="entry-times">
+                    <span class="entry-time"><span class="entry-leg">From</span><input class="cell-time" type="time" data-change="entry-from" data-id="${esc(e.id)}" value="${hm(e.from)}"></span>
+                    <span class="entry-rule"></span>
+                    <span class="entry-time"><span class="entry-leg">To</span><input class="cell-time" type="time" data-change="entry-to" data-id="${esc(e.id)}" value="${hm(e.to)}"></span>
+                  </div>
+                  <div class="entry-foot">
+                    <span class="entry-dur">${esc(dur(spent))}</span>
+                    <button class="cell-del" data-act="entry-remove" data-id="${esc(e.id)}" title="Delete entry" aria-label="Delete entry">×</button>
+                  </div>
+                </div>`;
+  };
 
-    return `${tab}
-              <div class="entry-card">
-                <input class="entry-name" data-k="r-${esc(e.id)}-a" data-change="entry-activity" data-id="${esc(e.id)}" value="${esc(e.activity)}"${e.note ? ` title="${esc(e.note)}"` : ''}>
-                <div class="entry-controls">
-                  <button class="cell-note" data-act="note-edit" data-kind="entries" data-id="${esc(e.id)}" title="${e.note ? esc(e.note) : 'Add a note for this entry'}"${e.note ? ' data-has-note' : ''}>${e.note ? 'Note' : 'Add note'}</button>
-                  <select class="entry-select" data-change="entry-category" data-id="${esc(e.id)}" style="${rowChipStyle(tint)}">${options(state.categories.map((c) => c.name), e.category)}</select>
-                </div>
-                <div class="entry-times">
-                  <span class="entry-leg">From</span>
-                  <input class="cell-time" type="time" data-change="entry-from" data-id="${esc(e.id)}" value="${hm(e.from)}">
-                  <span class="entry-rule"></span>
-                  <span class="entry-leg">To</span>
-                  <input class="cell-time" type="time" data-change="entry-to" data-id="${esc(e.id)}" value="${hm(e.to)}">
-                </div>
-                <div class="entry-foot">
-                  <span class="entry-dur">${esc(dur(spent))}</span>
-                  <button class="cell-del" data-act="entry-remove" data-id="${esc(e.id)}" title="Delete entry" aria-label="Delete entry">×</button>
-                </div>
-              </div>`;
-  }).join('');
+  const rows = groups.map((g) => `
+              <div class="entry-group">
+                <div class="entry-tab" style="background: ${esc(colorOf(g.category))};">${esc(withIcon(g.category))}</div>
+                ${g.rows.map(card).join('')}
+              </div>`).join('');
 
   return `
       <div class="blueprint card-w-head">
@@ -3872,6 +3924,15 @@ const ACTIONS = {
     state.dirty.weight = true;
     save(); queueSync(0); render();
   },
+
+  /* The same weight the card below the gauges sets, reachable from the reading
+     it actually changes. Only one copy opens at a time — the two would show the
+     same number and disagree the moment one of them was typed in. */
+  'weight-open': (el) => {
+    state.weightEditOpen = state.weightEditOpen === el.dataset.scope ? null : el.dataset.scope;
+    render();
+  },
+  'weight-close': () => { state.weightEditOpen = null; render(); },
 
   /* One drawer at a time on a phone. The page is a single column there, so a
      second open drawer pushes the first a long way off screen; on a desktop the
