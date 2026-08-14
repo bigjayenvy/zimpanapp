@@ -458,6 +458,112 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     .backtotop { transition: none; }
   }
 
+  /* — insights: calorie balance —
+     Two half-dials facing each other with the difference between them in the
+     middle. On a phone the middle drops below the pair rather than squeezing
+     between them, where it would be a two-word column. */
+  .cal-kicker {
+    font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--color-accent-700); margin: 16px 0 10px;
+  }
+  .cal-row { display: grid; grid-template-columns: 1fr minmax(0, 1.15fr) 1fr; gap: 8px; align-items: center; }
+  .cal-dial { position: relative; text-align: center; min-width: 0; }
+  .cal-dial svg { width: 100%; max-width: 132px; height: auto; display: block; margin: 0 auto; }
+  .cal-glyph {
+    position: absolute; left: 50%; top: 34%; transform: translate(-50%, -50%);
+    display: flex;
+  }
+  .cal-glyph svg { width: 21px; height: 21px; }
+  .cal-value {
+    font-family: var(--font-heading); font-size: 25px; line-height: 1;
+    margin-top: -14px;
+  }
+  .cal-cap {
+    font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--color-neutral-600); margin-top: 5px; line-height: 1.35;
+  }
+  .cal-mid { text-align: center; min-width: 0; padding: 0 4px; }
+  .cal-net { font-family: var(--font-heading); font-size: 27px; line-height: 1.05; }
+  .cal-net span { font-family: var(--font-body); font-size: 11.5px; font-weight: 600; display: block; margin-top: 3px; }
+  .cal-note { font-size: 11px; line-height: 1.5; color: var(--color-neutral-600); margin-top: 6px; }
+  .cal-rest {
+    font-size: 11.5px; line-height: 1.5; color: var(--zg-text);
+    font-style: italic; margin-top: 10px;
+  }
+
+  /* — insights: the four dimensions —
+     Two across, because four in a row makes each one a column of single words
+     at the width this section actually gets. */
+  .wb-kicker {
+    display: block; font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--color-accent-700); margin-bottom: 7px;
+  }
+  .wb-status { font-size: 13.5px; line-height: 1.6; margin: 16px 0 4px; }
+  .wb-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .wb-card {
+    border: 1px solid var(--color-divider); border-radius: 12px;
+    padding: 13px 14px 14px; background: var(--color-bg); min-width: 0;
+  }
+  .wb-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .wb-dial { position: relative; flex: none; width: 42px; height: 42px; }
+  .wb-dial svg { width: 42px; height: 42px; display: block; }
+  .wb-glyph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+  .wb-glyph svg { width: 18px; height: 18px; }
+  .wb-label {
+    font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--color-neutral-700); font-weight: 600; min-width: 0;
+  }
+  .wb-note { font-size: 12px; line-height: 1.55; color: var(--color-neutral-800); }
+
+  /* — insights: pro-tips —
+     auto-fit rather than a fixed three: between one and six rules can fire, and
+     the row should not leave gaps for cards that were never generated. */
+  .tip-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+  .tip-card {
+    border: 1px solid var(--color-divider); border-radius: 12px;
+    padding: 13px 14px 14px; background: var(--color-bg); min-width: 0;
+  }
+  .tip-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .tip-glyph {
+    flex: none; width: 34px; height: 34px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--color-accent-100); color: var(--color-accent-700);
+  }
+  .tip-glyph svg { width: 17px; height: 17px; }
+  .tip-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .tip-no {
+    font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--color-accent-700);
+  }
+  .tip-label {
+    font-family: var(--font-heading); font-size: 14px; line-height: 1.1;
+    overflow-wrap: anywhere;
+  }
+  .tip-body { font-size: 12px; line-height: 1.55; color: var(--color-neutral-800); }
+  .tip-body strong { color: var(--color-text); }
+
+  /* — refine with AI —
+     A quieter button than the solid drawer pill: it sits inside a reading
+     rather than under one, and should not compete with it. */
+  .btn-refine {
+    background: #fff; color: #416180; border-color: #416180;
+    font-size: 11px; padding: 5px 13px;
+  }
+  .btn-refine:hover:not(:disabled),
+  .btn-refine:focus-visible { background: #416180; color: #fff; border-color: #416180; }
+  .btn-refine:disabled { opacity: .6; cursor: default; }
+
+  @media (max-width: 560px) {
+    /* The middle reading goes under the pair — between them it would be a
+       column two words wide. */
+    .cal-row { grid-template-columns: 1fr 1fr; }
+    .cal-mid { grid-column: 1 / -1; order: 3; padding-top: 4px; }
+    .cal-net { font-size: 23px; }
+    .cal-value { font-size: 21px; }
+    .wb-grid { grid-template-columns: minmax(0, 1fr); }
+    .tip-grid { grid-template-columns: minmax(0, 1fr); }
+  }
+
   /* — financial insights —
      Four figures across where there is room. Left to wrap on its own the
      fourth tile drops to a line by itself on a phone, so the narrow case is

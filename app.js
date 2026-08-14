@@ -873,7 +873,16 @@ async function boot() {
   }
 
   try {
-    const cfg = await API.config();
+    /* Retried once: this single call decides whether the Google button and the
+       Refine button exist at all, and a request lost to a flaky first moment on
+       a phone would otherwise hide both for the whole session, silently and
+       with nothing on screen to suggest why. */
+    let cfg;
+    try { cfg = await API.config(); }
+    catch (first) {
+      await new Promise((r) => setTimeout(r, 1500));
+      cfg = await API.config();
+    }
     state.googleClientId = cfg.googleClientId || null;
     state.aiEstimates = !!cfg.aiEstimates;
     if (state.googleClientId) loadGoogle();
@@ -1423,28 +1432,38 @@ function dimensionReadings(wb, days) {
   });
 }
 
-// Only what is worth saying — an empty list renders as a clean bill.
+/* Each suggestion carries its own short label and opening line so it can be
+   read as a card rather than a bullet — the label is what makes a row of them
+   scannable, and keeping it beside the rule means a rule added later cannot
+   arrive without one. */
 function adviceFor(wb, readings, days) {
   const out = [];
   const r = (k) => readings.find((x) => x.key === k);
   const d = Math.max(1, days);
   const low = (k) => r(k).status === 'thin' || r(k).status === 'none';
+  const tip = (key, label, lead, text) => out.push({ key, label, lead, text });
 
-  if (low('physical')) out.push('Put 20–30 minutes of movement in most days — a brisk walk qualifies. It is the cheapest change here and the one that moves sleep, mood and energy together rather than one at a time.');
-  if (wb.tracked && wb.still > wb.tracked * .35 && wb.still / d > 90) out.push(`${durShort(Math.round(wb.still))} went to screens and sitting. Breaking that up matters as much as its total: standing every half hour or so counts for more than one long session later.`);
-  if (low('emotional')) out.push('Little time with other people. One call or shared meal does more for how a week is remembered than another evening alone with a screen, and it is easier to schedule than to feel like doing.');
-  if (r('mental').ratio > 3) out.push('That is a heavy concentration load. Breaks are not lost time — attention recovers in them, and work done past the point of recovery usually needs redoing.');
-  if (r('spiritual').status === 'none') out.push('Nothing quiet logged. Ten unhurried minutes — prayer, journalling, sitting without a screen — gives the rest of the day somewhere to settle before the next thing starts.');
-  if (wb.tracked && wb.vague > wb.tracked * .5) out.push('Much of what you logged does not describe itself. More specific activity names would sharpen every one of these notes.');
+  if (low('physical')) tip('move', 'Movement', 'Put movement in most days',
+    'Twenty to thirty minutes, and a brisk walk qualifies. It is the cheapest change here and the one that moves sleep, mood and energy together rather than one at a time.');
+  if (wb.tracked && wb.still > wb.tracked * .35 && wb.still / d > 90) tip('still', 'Stillness', 'Break up the sitting',
+    `${durShort(Math.round(wb.still))} went to screens and sitting. Breaking that up matters as much as its total: standing every half hour or so counts for more than one long session later.`);
+  if (low('emotional')) tip('people', 'People', 'Make time for others',
+    'One call or shared meal does more for how a week is remembered than another evening alone with a screen, and it is easier to schedule than to feel like doing.');
+  if (r('mental').ratio > 3) tip('breaks', 'Recovery', 'Take the breaks',
+    'That is a heavy concentration load. Breaks are not lost time — attention recovers in them, and work done past the point of recovery usually needs redoing.');
+  if (r('spiritual').status === 'none') tip('quiet', 'Quiet corner', 'Embrace stillness',
+    'Nothing quiet logged. Ten unhurried minutes — prayer, journalling, sitting without a screen — gives the rest of the day somewhere to settle before the next thing starts.');
+  if (wb.tracked && wb.vague > wb.tracked * .5) tip('notes', 'Detail', 'Sharpen your notes',
+    'Much of what you logged does not describe itself. More specific activity names would sharpen every one of these notes.');
 
   /* Capped as a block rather than per line: the highest-priority suggestions
      are pushed first, so trimming from the end drops the least important. */
   const kept = [];
   let budget = 600;
-  for (const line of out) {
-    if (line.length + 1 > budget) break;
-    kept.push(line);
-    budget -= line.length + 1;
+  for (const t of out) {
+    if (t.text.length + 1 > budget) break;
+    kept.push(t);
+    budget -= t.text.length + 1;
   }
   return kept;
 }
@@ -1980,6 +1999,25 @@ const NAV_ICONS = {
   // Climbing bars with the trend arrow over them — the reading, not the data.
   insights: icon('<path d="M4 20V13.5M9 20v-9M14 20v-5.5M19 20V8"/><path d="m3.5 9 5.5-4 4 2.5 6.5-5"/><path d="M15.5 2.5h4v4"/>'),
   up: icon('<path d="M12 19.5V5"/><path d="m5.5 11.5 6.5-6.5 6.5 6.5"/>')
+};
+
+/* One per wellbeing dimension, and one per advice rule. Kept here with the rest
+   of the drawn icons rather than beside the rules, because `icon` is defined in
+   this section and a map built earlier would evaluate before it exists. */
+const DIMENSION_ICONS = {
+  physical: icon('<circle cx="13.6" cy="4.4" r="1.7"/><path d="M6.5 20.6l2.8-4.7 2.7-2.1 1-4.3 3.5 2.8 3 .5"/><path d="M11.4 9.5 8 11 6.4 14.4"/>'),
+  emotional: icon('<path d="M19 13.5c1.4-1.35 3-3 3-5.2A4.8 4.8 0 0 0 17.2 3.5c-1.7 0-2.9.5-4.2 1.9-1.3-1.4-2.5-1.9-4.2-1.9A4.8 4.8 0 0 0 4 8.3c0 2.2 1.6 3.85 3 5.2l5 5Z"/>'),
+  mental: icon('<path d="M12 3.2a5.4 5.4 0 0 0-5.4 5.4c0 2 1 3.2 1.9 4.2.7.8 1.1 1.4 1.1 2.4v.6h4.8v-.6c0-1 .4-1.6 1.1-2.4.9-1 1.9-2.2 1.9-4.2A5.4 5.4 0 0 0 12 3.2Z"/><path d="M9.8 18.6h4.4M10.4 21h3.2"/>'),
+  spiritual: icon('<path d="M12 20.8c0-5.2 2.9-9.7 7.6-11.8.5 5.6-2.9 10.7-7.6 11.8Z"/><path d="M12 20.8C12 15.6 9.1 11.1 4.4 9 3.9 14.6 7.3 19.7 12 20.8Z"/><path d="M12 20.8V16"/>')
+};
+
+const TIP_ICONS = {
+  move: DIMENSION_ICONS.physical,
+  still: icon('<rect x="2.6" y="4.5" width="18.8" height="12.5" rx="2"/><path d="M8.5 20.5h7"/><path d="M12 17v3.5"/>'),
+  people: icon('<circle cx="9" cy="8.2" r="3.1"/><path d="M2.8 19.4a6.2 6.2 0 0 1 12.4 0"/><path d="M16.4 5.6a3.1 3.1 0 0 1 0 5.7"/><path d="M18.2 14.4a6.2 6.2 0 0 1 3 5"/>'),
+  breaks: icon('<path d="M4.5 8h11v6.5a4 4 0 0 1-4 4h-3a4 4 0 0 1-4-4Z"/><path d="M15.5 9.5h1.8a2.6 2.6 0 0 1 0 5.2h-1.8"/><path d="M7 4.6v1.6M11 3.8v2.4"/>'),
+  quiet: DIMENSION_ICONS.spiritual,
+  notes: icon('<path d="M16.5 3.6l3.9 3.9L9.2 18.7l-5.1 1.2 1.2-5.1Z"/><path d="M14.2 6l3.9 3.9"/>')
 };
 
 /* Five destinations, fixed where a thumb reaches. Hidden above 720px, where the
@@ -2626,21 +2664,87 @@ const METER_COLOR = {
   none: 'var(--color-neutral-300)'
 };
 
-function wellbeingRows(readings) {
-  return readings.map((r) => `
-          <div style="display: flex; gap: 11px; align-items: baseline;">
-            <span style="flex: 0 0 78px; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--color-neutral-600);">${esc(r.label)}</span>
-            <div style="flex: 1; min-width: 0;">
-              <div style="height: 5px; background: var(--color-neutral-200); margin-bottom: 6px;">
-                <div style="height: 100%; width: ${r.pct}%; background: ${METER_COLOR[r.status]};"></div>
-              </div>
-              <div style="font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800);">${esc(r.note)}</div>
-            </div>
-          </div>`).join('');
+/* A dial rather than a bar. The ring reads as a proportion of the day's target
+   at a glance where a flat meter reads as a row to be scanned, and it gives the
+   icon somewhere to sit. Drawn as a full circle rotated a quarter turn so the
+   fill starts at the top. */
+function dimensionCards(readings) {
+  const C = 2 * Math.PI * 26;
+  return readings.map((r) => {
+    const dash = (Math.max(0, Math.min(100, r.pct)) / 100) * C;
+    const tone = METER_COLOR[r.status];
+    return `
+        <div class="wb-card">
+          <div class="wb-head">
+            <span class="wb-dial">
+              <svg viewBox="0 0 60 60" aria-hidden="true" focusable="false">
+                <circle cx="30" cy="30" r="26" fill="none" stroke="var(--color-neutral-200)" stroke-width="5"></circle>
+                <circle cx="30" cy="30" r="26" fill="none" stroke="${tone}" stroke-width="5" stroke-linecap="round"
+                        stroke-dasharray="${dash.toFixed(2)} ${C.toFixed(2)}" transform="rotate(-90 30 30)"></circle>
+              </svg>
+              <span class="wb-glyph" style="color: ${tone};">${DIMENSION_ICONS[r.key] || ''}</span>
+            </span>
+            <span class="wb-label">${esc(r.label)}</span>
+          </div>
+          <div class="wb-note">${esc(r.note)}</div>
+        </div>`;
+  }).join('');
+}
+
+/* Two half-dials facing each other with the difference between them in the
+   middle — which is the number the pair exists to produce. Both are scaled to
+   the larger of the two so the shorter arc is honestly shorter; scaling each to
+   its own maximum would draw two full dials and say nothing. */
+function balanceGauges(food, burn) {
+  if (!food.kcal && !burn.kcal) return '';
+
+  /* A thirty-day total on a dial scaled for one day reads as wildly over-eaten
+     every time, so a multi-day range is averaged and says so. Both sides are
+     divided by the same figure, which leaves the balance between them — the
+     number this pair exists to show — unchanged. */
+  const days = Math.max(1, burn.days || 1);
+  const per = (n) => Math.round(n / days);
+  const burned = per(burn.kcal);
+  const eaten = per(food.kcal);
+
+  const net = burned - eaten;
+  const top = Math.max(eaten, burned, 1);
+  const ARC = Math.PI * 42;
+
+  const dial = (value, tone, big, small) => {
+    const dash = (value / top) * ARC;
+    return `
+          <div class="cal-dial">
+            <svg viewBox="0 0 110 62" aria-hidden="true" focusable="false">
+              <path d="M13 55 A 42 42 0 0 1 97 55" fill="none" stroke="var(--color-neutral-200)" stroke-width="9" stroke-linecap="round"></path>
+              <path d="M13 55 A 42 42 0 0 1 97 55" fill="none" stroke="${tone}" stroke-width="9" stroke-linecap="round"
+                    stroke-dasharray="${dash.toFixed(2)} ${ARC.toFixed(2)}"></path>
+            </svg>
+            <span class="cal-glyph" style="color: ${tone};">${big}</span>
+            <div class="cal-value">~${value.toLocaleString('en-US')}</div>
+            <div class="cal-cap">${esc(small)}</div>
+          </div>`;
+  };
+
+  return `
+      <div class="cal-kicker">${days > 1 ? `Average day across ${days} days` : 'Daily calorie balance'}</div>
+      <div class="cal-row">
+        ${dial(burned, 'var(--zg-strong)', DIMENSION_ICONS.physical, 'Calories burned (workout)')}
+        <div class="cal-mid">
+          <div class="cal-net">${Math.abs(net).toLocaleString('en-US')}<span> ${net >= 0 ? 'more burned' : 'more eaten'}</span></div>
+          <div class="cal-note">${net >= 0 ? 'than eaten in food' : 'than burned in exercise'}. ${burn.assumedWeight ? 'Estimated assuming an average build — add your weight below for closer figures.' : 'Estimated from your weight alone, so treat it as ballpark.'}</div>
+        </div>
+        ${dial(eaten, 'var(--zg-donate)', NAV_ICONS.donate, 'Calories consumed (food)')}
+      </div>
+      ${burn.restKcal ? `
+      <div class="cal-rest">Plus roughly ${per(burn.restKcal).toLocaleString('en-US')} burned at rest ${days > 1 ? 'a day ' : ''}just keeping you running — kept out of the comparison above, or it would swamp both sides.</div>` : ''}`;
 }
 
 const DISCLAIMER = 'Suggestions only, drawn from what you logged. ZIMPAN is not a medical, nutritional or financial adviser — anything you act on, particularly with a health condition or medication involved, is worth putting to a qualified professional first.';
 
+/* Cards rather than bullets. The grid takes whatever number of rules fired —
+   between none and six — rather than assuming three, so a quiet day shows one
+   card and a rough one shows six without the layout having an opinion. */
 function adviceBlock(list) {
   if (!list.length) {
     return `
@@ -2649,12 +2753,22 @@ function adviceBlock(list) {
           </div>`;
   }
   return `
-          <div style="margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--color-divider);">
-            <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 8px;">What might help</div>
-            <ul style="margin: 0; padding-left: 17px; display: flex; flex-direction: column; gap: 7px; font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800);">
-              ${list.map((a) => `<li>${esc(a)}</li>`).join('')}
-            </ul>
-            <div style="margin-top: 10px; font-size: 11.5px; line-height: 1.5; color: var(--color-neutral-600);">${esc(DISCLAIMER)}</div>
+          <div style="margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--color-divider);">
+            <div class="wb-kicker">What might help</div>
+            <div class="tip-grid">
+              ${list.map((t, i) => `
+                <div class="tip-card">
+                  <div class="tip-head">
+                    <span class="tip-glyph">${TIP_ICONS[t.key] || ''}</span>
+                    <span class="tip-meta">
+                      <span class="tip-no">Pro-tip ${i + 1}</span>
+                      <span class="tip-label">${esc(t.label)}</span>
+                    </span>
+                  </div>
+                  <div class="tip-body"><strong>${esc(t.lead)}.</strong> ${esc(t.text)}</div>
+                </div>`).join('')}
+            </div>
+            <div style="margin-top: 12px; font-size: 11.5px; line-height: 1.5; color: var(--color-neutral-600);">${esc(DISCLAIMER)}</div>
           </div>`;
 }
 
@@ -2753,7 +2867,7 @@ function foodBlock(food, scope) {
 
   const refine = !state.aiEstimates || !food.detail ? '' : `
             <div style="margin-top: 9px; display: flex; align-items: center; gap: 9px; flex-wrap: wrap;">
-              <button class="drawer-btn" data-act="refine-food" data-scope="${esc(scope)}" style="font-size: 11px; padding: 5px 13px;"${busy ? ' disabled' : ''}>
+              <button class="drawer-btn btn-refine" data-act="refine-food" data-scope="${esc(scope)}"${busy ? ' disabled' : ''}>
                 ${busy ? '<span class="spinner"></span> Checking…' : (ai ? 'Check again' : 'Refine with AI')}
               </button>
               ${ai ? `<span style="font-size: 11px; color: var(--color-neutral-600);">Local reading was ${food.local.kcal.toLocaleString('en-US')} kcal</span>` : ''}
@@ -2801,25 +2915,6 @@ function aiConsentDialog() {
   </div>`;
 }
 
-/* The headline number pair. Deliberately blunt about being an estimate — the
-   food side is read from free text and the burn side leans on a MET table. */
-function energyLine(food, burn) {
-  if (!food.kcal && !burn.kcal) return '';
-  const net = burn.kcal - food.kcal;
-  return `
-        <div style="margin-top: 10px; font-size: 19px; line-height: 1.35; font-weight: 700; color: var(--zg-strong);">
-          Calories burned from workout ~${burn.kcal.toLocaleString('en-US')} versus calories consumed with food eaten ~${food.kcal.toLocaleString('en-US')}
-        </div>
-        ${burn.restKcal ? `
-        <div style="font-size: 12.5px; line-height: 1.5; color: var(--zg-text); font-weight: 600; font-style: italic; margin-top: 5px;">
-          Plus roughly ${burn.restKcal.toLocaleString('en-US')} burned at rest${burn.days > 1 ? ` over ${burn.days} days` : ''} just keeping you running.
-        </div>` : ''}
-        <div style="font-size: 11.5px; line-height: 1.5; color: var(--color-neutral-600); margin-top: 3px;">
-          All estimated${burn.assumedWeight ? ', assuming an average build — add your weight below for closer figures' : ' from your weight alone, so treat them as ballpark'}.
-          ${burn.restKcal ? 'Resting burn is deliberately kept out of the comparison above, or it would swamp both sides. ' : ''}${net === 0 ? '' : net > 0 ? `Around ${Math.abs(net).toLocaleString('en-US')} more burned in exercise than eaten.` : `Around ${Math.abs(net).toLocaleString('en-US')} more eaten than burned in exercise.`}
-        </div>`;
-}
-
 function todayCard(v) {
   return `
       <div class="blueprint" style="padding: 20px 22px 22px;">
@@ -2828,10 +2923,10 @@ function todayCard(v) {
           <span data-today-kicker style="font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--color-accent-700); margin-left: auto;">${esc(v.todayKicker)}</span>
         </div>
         <div data-live-line style="font-size: 12px; color: var(--color-neutral-600);">${esc(v.todayLive)}</div>
-        ${energyLine(v.todayFood, v.todayBurn)}
-        <div style="font-size: 13.5px; line-height: 1.6; margin: 14px 0 16px;">${esc(v.todayHeadline)}</div>
+        ${balanceGauges(v.todayFood, v.todayBurn)}
+        <div class="wb-status"><span class="wb-kicker">Daily log status</span>${esc(v.todayHeadline)}</div>
         ${v.todayEmpty || !state.drawers.today ? '' : `
-          <div style="display: flex; flex-direction: column; gap: 13px;">${wellbeingRows(v.todayReadings)}</div>
+          <div class="wb-grid">${dimensionCards(v.todayReadings)}</div>
           ${foodBlock(v.todayFood, 'today')}
           ${adviceBlock(v.todayAdvice)}`}
         ${v.todayEmpty ? '' : drawerToggle('today', 0, '', REPORT_LABELS)}
@@ -2870,7 +2965,7 @@ function pastCard(v) {
         <div style="font-size: 12px; color: var(--color-neutral-600); margin-bottom: 12px;">${esc(v.pastLabel)}</div>
         <div style="font-size: 13.5px; line-height: 1.6;">${esc(v.pastHeadline)}</div>
         ${v.pastBusiest ? `<div style="font-size: 12.5px; line-height: 1.6; color: var(--color-neutral-700); margin-top: 4px;">${esc(v.pastBusiest)}</div>` : ''}
-        ${energyLine(v.pastFood, v.pastBurn)}
+        ${balanceGauges(v.pastFood, v.pastBurn)}
         ${v.pastEmpty || !state.drawers.lookback ? '' : `
         <div style="display: flex; flex-direction: column; gap: 8px; margin: 16px 0 18px;">
           ${v.pastTop.map((t) => `
@@ -2884,7 +2979,7 @@ function pastCard(v) {
               </div>
             </div>`).join('')}
         </div>
-        <div style="display: flex; flex-direction: column; gap: 13px;">${wellbeingRows(v.pastReadings)}</div>
+        <div class="wb-grid">${dimensionCards(v.pastReadings)}</div>
         ${foodBlock(v.pastFood, 'past')}
         ${adviceBlock(v.pastAdvice)}`}
         ${v.pastEmpty ? '' : drawerToggle('lookback', 0, '', REPORT_LABELS)}
@@ -3034,7 +3129,10 @@ function timeDesktop(v) {
       ${entryModeBar()}
       ${state.entryMode === 'manual' ? addEntryCard(v) : timerCard(v)}
       ${timeTableCard(v)}
-      ${timelineCard(v)}
+      ${insightsHeading()}
+      ${todayCard(v)}
+      ${pastCard(v)}
+      ${weightCard(v)}
     </div>
 
     <div style="display: flex; flex-direction: column; gap: 22px; min-width: 0;">
@@ -3065,10 +3163,7 @@ function timeDesktop(v) {
         </div>
       </div>
 
-      ${insightsHeading()}
-      ${todayCard(v)}
-      ${pastCard(v)}
-      ${weightCard(v)}
+      ${timelineCard(v)}
     </div>
   </div>`;
 }
@@ -3198,9 +3293,11 @@ function reportShareText(v) {
 
   /* One line of the reading, so the message says something the table does not.
      The money side has the insight block; the time side has its advice list. */
+  /* Advice on the time side is an object now, not a string — reading it as one
+     would send "[object Object]" to whoever the report was shared with. */
   const note = isMoney
     ? (v.moneyInsight && v.moneyInsight.observations[0]) || ''
-    : (v.pastAdvice && v.pastAdvice[0]) || '';
+    : (v.pastAdvice && v.pastAdvice[0] && `${v.pastAdvice[0].lead}. ${v.pastAdvice[0].text}`) || '';
   if (note) { lines.push(''); lines.push(note); }
 
   lines.push('');
@@ -3757,12 +3854,25 @@ const ACTIONS = {
     const key = el.dataset.drawer;
     const opening = !state.drawers[key];
     const accordion = opening && isPhone();
+
+    /* Pin the top of the card, not the button. A drawer's content renders above
+       its own button, so holding the button still would scroll the page down
+       past everything that just appeared — which is the complaint, not the fix.
+       Holding the card's top edge means revealed content flows downward into
+       view, while a collapse higher up the page cannot jerk the card out from
+       under the thumb. */
+    const anchor = el.closest('.blueprint') || el;
+    const before = anchor.getBoundingClientRect().top;
+
     if (accordion) Object.keys(state.drawers).forEach((k) => { state.drawers[k] = false; });
     state.drawers[key] = opening;
     save(); render();
-    if (accordion) {
-      const btn = root.querySelector(`[data-act="toggle-drawer"][data-drawer="${key}"]`);
-      if (btn) btn.scrollIntoView({ block: 'center', behavior: 'smooth' });
+
+    const moved = root.querySelector(`[data-act="toggle-drawer"][data-drawer="${key}"]`);
+    const movedCard = moved && (moved.closest('.blueprint') || moved);
+    if (movedCard) {
+      const delta = movedCard.getBoundingClientRect().top - before;
+      if (delta) window.scrollBy(0, delta);
     }
   },
   'scroll-top': () => scrollToAnchor(null),
