@@ -18,6 +18,19 @@ import Anthropic from '@anthropic-ai/sdk';
 
 // Overridable because model names change faster than this file will.
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-opus-5';
+
+/* Not every model accepts an effort level — the cheaper tiers reject it with a
+   400 rather than ignoring it, which would turn "switch the model to save
+   money" into "every estimate fails". Omitted for those, so the env var really
+   is the only thing that has to change. ANTHROPIC_EFFORT=off forces it off for
+   a model this doesn't know about yet. */
+const REJECTS_EFFORT = /haiku|sonnet-4-5/i;
+const effortLevel = () => {
+  const set = (process.env.ANTHROPIC_EFFORT || '').trim().toLowerCase();
+  if (set === 'off') return null;
+  if (REJECTS_EFFORT.test(MODEL)) return null;
+  return set || 'low';
+};
 const TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) || 25000;
 const MAX_TEXT = 1200;
 
@@ -102,9 +115,13 @@ export async function estimateNutrition(text) {
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
       system: SYSTEM,
-      /* Low effort: this is arithmetic over a short list, not a problem that
-         rewards deliberation, and it keeps latency and cost down. */
-      output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
+      /* Low effort where the model takes it: this is arithmetic over a short
+         list, not a problem that rewards deliberation, and it keeps both
+         latency and the bill down. */
+      output_config: Object.assign(
+        { format: { type: 'json_schema', schema: SCHEMA } },
+        effortLevel() ? { effort: effortLevel() } : {}
+      ),
       messages: [{ role: 'user', content: clean }]
     }, { timeout: TIMEOUT_MS });
   } catch (err) {
