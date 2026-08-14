@@ -4126,17 +4126,26 @@ function clipText(x, s, max) {
   return t + '…';
 }
 
-/* Draws the whole sheet and returns the y it finished at. */
-function paintReport(x, W, v, totals, total, isMoney) {
-  const fmtLong = isMoney ? amount : dur;
-  const fmtShort = isMoney ? amount : durShort;
+/* The sheet's ground. It has to be painted rather than left transparent: the
+   export is a JPEG, and anything unpainted arrives as black. */
+const SHEET_BG = '#f2f2f3';
+
+/* Draws the whole sheet and returns the y it finished at.
+   Everything it prints comes off `v`, the same object reportSheet() renders
+   from — the two layouts are drawn by different machinery, so shared wording is
+   the only thing keeping the exported image and the preview saying the same
+   thing. Re-deriving a label here is how they drift apart. */
+function paintReport(x, W, v) {
+  const isMoney = v.isMoney;
+  const totals = v.totals;
+  const total = v.total || 1;
   const accent = isMoney ? '#3a6b4b' : '#416180';
 
-  x.fillStyle = '#f2f2f3'; x.fillRect(0, 0, W, 200000);
+  x.fillStyle = SHEET_BG; x.fillRect(0, 0, W, 200000);
   x.fillStyle = '#1d1f20';
-  x.font = '600 34px "Barlow Condensed", sans-serif'; x.fillText(isMoney ? 'MONEY REPORT' : 'TIME REPORT', 60, 84);
+  x.font = '600 34px "Barlow Condensed", sans-serif'; x.fillText(v.reportTitle, 60, 84);
   x.font = '400 14px Barlow, sans-serif'; x.fillStyle = '#5d5d60';
-  x.fillText(reportRangeLabel(), 60, 110);
+  x.fillText(v.reportRange, 60, 110);
   x.strokeStyle = '#c9c9cc'; x.beginPath(); x.moveTo(60, 132); x.lineTo(W - 60, 132); x.stroke();
 
   const cx = 210, cy = 350, r = 120;
@@ -4146,18 +4155,33 @@ function paintReport(x, W, v, totals, total, isMoney) {
     x.beginPath(); x.moveTo(cx, cy); x.arc(cx, cy, r, a0, a1); x.closePath();
     x.fillStyle = t.color; x.fill(); a0 = a1;
   });
-  x.globalCompositeOperation = 'destination-out';
+  /* A disc in the page colour rather than a destination-out punch. That cut
+     through the background fill as well as the ring, and JPEG carries no alpha
+     to hold the hole — so the middle of the donut exported as a black circle
+     with the total unreadable in dark navy on top of it. */
+  x.fillStyle = SHEET_BG;
   x.beginPath(); x.arc(cx, cy, 62, 0, Math.PI * 2); x.fill();
-  x.globalCompositeOperation = 'source-over';
   x.fillStyle = '#1d1f20'; x.textAlign = 'center';
-  x.font = '600 26px "Barlow Condensed", sans-serif'; x.fillText(fmtShort(total), cx, cy + 8);
+  x.font = '600 26px "Barlow Condensed", sans-serif'; x.fillText(v.rangeTotal, cx, cy + 2);
+  x.fillStyle = '#7a7a7d'; x.font = '400 10px Barlow, sans-serif';
+  x.fillText('TRACKED', cx, cy + 20);
   x.textAlign = 'left';
 
-  let ly = 275;
+  /* The reading that sits beside the donut on screen. It went missing from the
+     export entirely, which left the image showing the shape of the range
+     without the sentence that says what the shape means. */
+  let ly = 268;
+  x.fillStyle = '#1d1f20'; x.font = '600 21px "Barlow Condensed", sans-serif';
+  wrapText(x, v.reportHeadline, W - 460).forEach((ln) => { x.fillText(ln, 400, ly); ly += 24; });
+  ly += 4;
+  x.fillStyle = '#5d5d60'; x.font = '400 13px Barlow, sans-serif';
+  wrapText(x, v.reportNote, W - 460).forEach((ln) => { x.fillText(ln, 400, ly); ly += 19; });
+  ly += 24;
+
   totals.forEach((t) => {
     x.fillStyle = t.color; x.fillRect(400, ly - 10, 12, 12);
     x.fillStyle = '#1d1f20'; x.font = '400 16px Barlow, sans-serif'; x.fillText(clipText(x, withIcon(t.name), 250), 424, ly);
-    x.fillStyle = '#5d5d60'; x.fillText(`${Math.round((t.mins / total) * 100)}%  ·  ${fmtShort(t.mins)}`, 690, ly);
+    x.fillStyle = '#5d5d60'; x.fillText(`${Math.round((t.mins / total) * 100)}%  ·  ${v.fmtShort(t.mins)}`, 690, ly);
     ly += 34;
   });
 
@@ -4165,16 +4189,28 @@ function paintReport(x, W, v, totals, total, isMoney) {
   // more categories than the original fixed 560 allowed for.
   let ty = Math.max(560, ly + 26);
   x.fillStyle = '#5d5d60'; x.font = '400 12px Barlow, sans-serif';
-  x.fillText(isMoney ? 'PURPOSE' : 'CATEGORY', 60, ty); x.fillText('ENTRIES', 520, ty); x.fillText(isMoney ? 'AMOUNT' : 'TIME SPENT', 640, ty); x.fillText('SHARE', 800, ty);
+  x.fillText(v.reportColLabel.toUpperCase(), 60, ty); x.fillText('ENTRIES', 520, ty); x.fillText(v.reportAmountLabel.toUpperCase(), 640, ty); x.fillText('SHARE', 800, ty);
   ty += 12; x.strokeStyle = '#c9c9cc'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
   ty += 30;
-  totals.forEach((t) => {
+  v.reportRows.forEach((r) => {
     x.fillStyle = '#1d1f20'; x.font = '400 16px Barlow, sans-serif';
-    x.fillText(clipText(x, withIcon(t.name), 430), 60, ty); x.fillText(String(t.count), 520, ty);
-    x.fillText(fmtLong(t.mins), 640, ty); x.fillText(`${Math.round((t.mins / total) * 100)}%`, 800, ty);
+    x.fillText(clipText(x, withIcon(r.name), 430), 60, ty); x.fillText(String(r.count), 520, ty);
+    x.fillText(r.time, 640, ty); x.fillText(r.pct, 800, ty);
     ty += 16; x.strokeStyle = '#e2e2e5'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
     ty += 26;
   });
+
+  /* The table's last row: untracked time, or money in. It is the one figure on
+     the sheet that is not a share of the total, which is why it sits under the
+     rule rather than among them — and why leaving it out of the export made the
+     numbers look like they should add up to the whole day, and fail to. */
+  x.fillStyle = '#1d1f20'; x.font = '600 18px "Barlow Condensed", sans-serif';
+  x.fillText(v.reportFooterRowLabel, 60, ty);
+  x.font = '400 16px Barlow, sans-serif'; x.fillStyle = '#5d5d60';
+  x.fillText('—', 520, ty); x.fillText('—', 800, ty);
+  x.fillStyle = '#1d1f20'; x.fillText(v.reportFooterRowValue, 640, ty);
+  ty += 16; x.strokeStyle = '#c9c9cc'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
+  ty += 26;
 
   /* Financial insights. Drawn before the early return below, so a money sheet
      still carries the reading even when there is nothing to itemise under it. */
@@ -4255,6 +4291,10 @@ function paintReport(x, W, v, totals, total, isMoney) {
     x.strokeStyle = '#e2e2e5'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
     ty += 22;
 
+    /* Notes indent to the activity column, as they do on screen: a day should
+       still scan as a list of entries rather than a wall of prose. */
+    const noteX = isMoney ? 60 : 200;
+
     d.rows.forEach((rw) => {
       x.font = '400 13px Barlow, sans-serif';
       if (isMoney) {
@@ -4275,6 +4315,14 @@ function paintReport(x, W, v, totals, total, isMoney) {
         x.textAlign = 'left';
       }
       ty += 24;
+
+      // What the entry said about itself. The preview has carried these since
+      // notes were added; the export never has.
+      if (rw.note) {
+        x.font = '400 12px Barlow, sans-serif'; x.fillStyle = '#5d5d60';
+        wrapText(x, rw.note, W - 60 - noteX).forEach((ln) => { x.fillText(ln, noteX, ty); ty += 17; });
+        ty += 7;
+      }
     });
     ty += 18;
   });
@@ -4283,21 +4331,24 @@ function paintReport(x, W, v, totals, total, isMoney) {
 }
 
 function exportJpg() {
-  const isMoney = state.app === 'money';
+  // compute() already holds the totals the sheet is drawn from; deriving a
+  // second set here was another way for the image to disagree with the preview.
   const v = compute();
-  const totals = isMoney ? totalsByPurpose(moneyRangeEntries()) : totalsByCategory(rangeEntries());
-  const total = totals.reduce((a, b) => a + b.mins, 0) || 1;
 
   const W = 900;
-  const H = Math.max(1160, Math.ceil(paintReport(measuringContext(), W, v, totals, total, isMoney)) + 84);
+  const H = Math.max(1160, Math.ceil(paintReport(measuringContext(), W, v)) + 84);
 
   const cv = document.createElement('canvas');
   cv.width = W * 2; cv.height = H * 2;
   const x = cv.getContext('2d'); x.scale(2, 2);
-  paintReport(x, W, v, totals, total, isMoney);
+  paintReport(x, W, v);
 
+  // The same two-ended footer the sheet prints.
   x.fillStyle = '#7a7a7d'; x.font = '400 12px Barlow, sans-serif';
-  x.fillText(`Generated by ZIMPAN · ${state.geo || 'Local time'}`, 60, H - 40);
+  x.fillText(`Generated by ZIMPAN · ${v.geoLabel}`, 60, H - 40);
+  x.textAlign = 'right';
+  x.fillText(v.nowLabel, W - 60, H - 40);
+  x.textAlign = 'left';
 
   const a = document.createElement('a');
   a.href = cv.toDataURL('image/jpeg', 0.92);
