@@ -458,6 +458,80 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     .backtotop { transition: none; }
   }
 
+  /* — section headers —
+     A solid bar rather than a line of text: on a phone every section is a white
+     card on a white page, and a heading that is only bigger type does not read
+     as a division. Drawn from the accent tokens, so the money tracker takes it
+     into green without a second rule. */
+  .card-w-head { padding: 0 !important; overflow: hidden; }
+  .card-body { padding: 18px 22px 20px; }
+  .card-head {
+    background: var(--color-accent-900); color: #fff;
+    padding: 14px 22px; display: flex; align-items: center;
+    gap: 10px 14px; flex-wrap: wrap;
+  }
+  .card-head-main { min-width: 0; margin-right: auto; }
+  .card-head h4 { margin: 0; color: #fff; font-size: 17px; line-height: 1.25; }
+  .card-head-meta {
+    display: block; margin-top: 3px; font-size: 11.5px; line-height: 1.45;
+    color: color-mix(in srgb, #fff 74%, transparent);
+  }
+  .card-head-right { display: flex; align-items: center; gap: 8px; flex: none; }
+  /* The range switch sits on a dark ground here, so its own light styling
+     would vanish into it. */
+  .card-head .seg { border-color: color-mix(in srgb, #fff 34%, transparent); }
+  .card-head .seg-opt span { color: color-mix(in srgb, #fff 82%, transparent); }
+  .card-head .seg-opt input:checked + span { color: var(--color-accent-900); }
+  .head-btn {
+    width: 34px; height: 34px; border-radius: 10px; cursor: pointer;
+    border: 1px solid color-mix(in srgb, #fff 32%, transparent);
+    background: color-mix(in srgb, #fff 12%, transparent); color: #fff;
+    font-size: 17px; line-height: 1; display: flex; align-items: center; justify-content: center;
+  }
+  .head-btn:hover { background: color-mix(in srgb, #fff 24%, transparent); }
+  .head-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  /* The insights heading is a bar and nothing else — no body to pad. */
+  .insights-head .card-head { padding-block: 16px; }
+  .insights-head .card-head h4 { font-size: 21px; }
+
+  /* — logged entries —
+     A card each, with the category as a tab over the first of a run. The tab
+     labels the run; the select inside each card still edits its own row. */
+  .entry-list { display: flex; flex-direction: column; gap: 0; }
+  .entry-tab {
+    align-self: flex-start; margin: 16px 0 -8px; padding: 6px 15px;
+    border-radius: 10px 10px 0 0; color: #fff; font-weight: 600;
+    font-size: 12px; letter-spacing: .01em; position: relative; z-index: 1;
+  }
+  .entry-list > .entry-tab:first-child { margin-top: 2px; }
+  .entry-card {
+    background: var(--color-bg); border: 1px solid var(--color-divider);
+    border-radius: 12px; padding: 14px 16px 12px; margin-top: 10px;
+    box-shadow: 0 1px 3px color-mix(in srgb, #2b2b2d 8%, transparent);
+  }
+  .entry-tab + .entry-card { margin-top: 0; border-top-left-radius: 4px; }
+  .entry-name {
+    width: 100%; border: 0; background: transparent; font: inherit;
+    font-size: 15px; font-weight: 600; color: var(--color-text); padding: 0 0 2px;
+  }
+  .entry-name:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+  .entry-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 7px 0 11px; }
+  .entry-controls .cell-note { margin-left: 0; }
+  .entry-select { max-width: 100%; }
+  .entry-times { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .entry-leg {
+    font-size: 10px; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--color-neutral-600); flex: none;
+  }
+  .entry-times .cell-time { font-size: 14px !important; font-variant-numeric: tabular-nums; }
+  .entry-rule { flex: 1 1 20px; height: 1px; background: var(--color-divider); min-width: 14px; }
+  .entry-foot {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; margin-top: 9px; padding-top: 9px;
+    border-top: 1px solid var(--color-divider);
+  }
+  .entry-dur { font-size: 12.5px; color: var(--color-neutral-700); font-variant-numeric: tabular-nums; }
+
   /* — insights: calorie balance —
      Two half-dials facing each other with the difference between them in the
      middle. On a phone the middle drops below the pair rather than squeezing
@@ -553,7 +627,56 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .btn-refine:focus-visible { background: #416180; color: #fff; border-color: #416180; }
   .btn-refine:disabled { opacity: .6; cursor: default; }
 
+  .food-text { font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800); }
+  .food-items { margin-top: 6px; font-size: 11.5px; line-height: 1.6; color: var(--color-neutral-700); }
+
+  /* — desktop reading size —
+     The insights type was set for a 463px column and stayed put when the
+     section moved to the 718px one, where it reads as small print. Only the
+     prose grows; labels and kickers are already at their size. */
+  @media (min-width: 1241px) {
+    .wb-note, .tip-body, .food-text { font-size: 14px; line-height: 1.6; }
+    .wb-status { font-size: 15px; }
+    .food-items { font-size: 12.5px; }
+    .cal-note { font-size: 12px; }
+    .tip-label { font-size: 15px; }
+    .wb-label { font-size: 10.5px; }
+    .cal-value { font-size: 28px; }
+    .cal-net { font-size: 30px; }
+  }
+
+  /* — mobile section order —
+     `display: contents` dissolves the two layout columns on a phone so every
+     section becomes a direct child of the page grid and `order` can interleave
+     them. Reordering across two separate containers is otherwise impossible,
+     and re-rendering a different DOM order on resize would mean the order was
+     wrong until something happened to trigger a render. */
+  /* Declared here rather than inline on the element, because an inline
+     `display: flex` outranks any stylesheet rule and the phone breakpoint below
+     has to be able to dissolve it. */
+  .col { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+
+  @media (max-width: 1240px) {
+    [data-page-grid] > .col { display: contents; }
+    [data-page-grid] [data-sec] { min-width: 0; }
+    [data-sec="entry"]      { order: 1; }
+    [data-sec="entrycard"]  { order: 2; }
+    [data-sec="log"]        { order: 3; }
+    [data-sec="chart"]      { order: 4; }
+    [data-sec="board"]      { order: 5; }
+    [data-sec="stats"]      { order: 6; }
+    [data-sec="timeline"]   { order: 7; }
+    [data-sec="ins-head"]   { order: 8; }
+    [data-sec="ins-today"]  { order: 9; }
+    [data-sec="ins-past"]   { order: 10; }
+    [data-sec="ins-weight"] { order: 11; }
+  }
+
   @media (max-width: 560px) {
+    .card-head { padding: 13px 16px; }
+    .card-head h4 { font-size: 16px; }
+    .insights-head .card-head h4 { font-size: 18px; }
+    .card-body { padding: 16px 16px 18px; }
     /* The middle reading goes under the pair — between them it would be a
        column two words wide. */
     .cal-row { grid-template-columns: 1fr 1fr; }

@@ -2039,8 +2039,8 @@ function mobileNav(v) {
     <a class="bn-donate" href="${DONATE_URL}" target="_blank" rel="noopener noreferrer">
       <span class="bn-icon">${NAV_ICONS.donate}</span><span class="bn-label">Donate</span>
     </a>
-    ${item('open-report', 'report', 'Report', false)}
     ${item('scroll-insights', 'insights', 'Insights', false)}
+    ${item('open-report', 'report', 'Report', false)}
   </nav>`;
 }
 
@@ -2827,11 +2827,9 @@ function insightsBody(v, forPrint) {
    button scrolls to lives on it. */
 function insightsHeading() {
   return `
-      <div data-anchor="insights" style="padding: 4px 2px 0; scroll-margin-top: 78px;">
-        <h4 style="margin: 0 0 5px; font-size: 24px; line-height: 1.2;">Your Insights, our recommendations</h4>
-        <div style="font-size: 12px; line-height: 1.5; color: var(--color-neutral-600);">
-          Read from what you logged. Estimates, not measurements — and never a substitute for professional advice.
-        </div>
+      <div class="blueprint card-w-head insights-head" data-anchor="insights" style="scroll-margin-top: 78px;">
+        ${cardHead('Your Insights, our recommendations',
+          'Read from what you logged. Estimates, not measurements — and never a substitute for professional advice.')}
       </div>`;
 }
 
@@ -2876,14 +2874,12 @@ function foodBlock(food, scope) {
 
   return `
           <div style="margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--color-divider);">
-            <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 8px;">What you ate</div>
-            <div style="font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800);">${esc(food.observation)}</div>
-            ${line ? `<div style="font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800); margin-top: 7px;">${esc(line)}${ai ? ' <span style="color: var(--color-neutral-600);">Estimated by AI from what you wrote.</span>' : ''}</div>` : ''}
+            <div class="wb-kicker">What you ate</div>
+            <div class="food-text">${esc(food.observation)}</div>
+            ${line ? `<div class="food-text" style="margin-top: 7px;">${esc(line)}${ai ? ' <span style="color: var(--color-neutral-600);">Estimated by AI from what you wrote.</span>' : ''}</div>` : ''}
             ${ai && ai.items && ai.items.length ? `
-            <div style="margin-top: 6px; font-size: 11.5px; line-height: 1.6; color: var(--color-neutral-700);">
-              ${ai.items.map((i) => `${esc(i.name)} ~${i.kcal}`).join(' · ')}
-            </div>` : ''}
-            <div style="font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800); margin-top: 7px;">${esc(food.advice)}</div>
+            <div class="food-items">${ai.items.map((i) => `${esc(i.name)} ~${i.kcal}`).join(' · ')}</div>` : ''}
+            <div class="food-text" style="margin-top: 7px;">${esc(food.advice)}</div>
             ${refine}
           </div>`;
 }
@@ -3062,16 +3058,27 @@ function addEntryCard(v) {
       </div>`;
 }
 
-function dayNav(v, countLabel) {
+/* A solid bar rather than a line of text, so a section announces itself on a
+   phone where everything else is a white card on a white page. Declared as a
+   function so call order does not matter, and drawn from the accent tokens so
+   it follows the money tracker into green without a second rule.
+
+   `meta` and `right` are inserted as markup — callers escape their own text. */
+function cardHead(title, meta, right) {
   return `
-        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 6px; flex-wrap: wrap;">
-          <h4 style="margin: 0;">${esc(v.dayHeading)}</h4>
-          <span style="font-size: 12px; color: var(--color-neutral-600); margin-right: auto;">${countLabel}</span>
-          <div style="display: flex; gap: 8px; flex: none;">
-            <button class="btn btn-secondary" data-act="prev-day" title="Previous day">‹</button>
-            <button class="btn btn-secondary" data-act="next-day" title="Next day">›</button>
+        <div class="card-head">
+          <div class="card-head-main">
+            <h4>${esc(title)}</h4>
+            ${meta ? `<span class="card-head-meta">${meta}</span>` : ''}
           </div>
+          ${right ? `<div class="card-head-right">${right}</div>` : ''}
         </div>`;
+}
+
+function dayNav(v, countLabel) {
+  return cardHead(v.dayHeading, countLabel, `
+            <button class="head-btn" data-act="prev-day" title="Previous day" aria-label="Previous day">‹</button>
+            <button class="head-btn" data-act="next-day" title="Next day" aria-label="Next day">›</button>`);
 }
 
 const ROWS_COLLAPSED = 5;
@@ -3080,43 +3087,62 @@ function timeTableCard(v) {
   const visible = state.drawers.activities || v.dayList.length <= ROWS_COLLAPSED
     ? v.dayList
     : v.dayList.slice(0, ROWS_COLLAPSED);
+  /* A card per entry, with the category as a tab above the first of each run.
+     Entries stay in time order, so a run is simply consecutive rows sharing a
+     category — the tab labels the run and the select inside each card still
+     edits that one row, which is the only reading that stays honest when a tab
+     sits over three of them. */
+  let runCategory = null;
   const rows = visible.map((e) => {
     const spent = Math.max(0, e.to - e.from);
-    return `
-              <tr>
-                <td data-col="activity"><input class="cell-input" data-k="r-${esc(e.id)}-a" data-change="entry-activity" data-id="${esc(e.id)}" value="${esc(e.activity)}"${e.note ? ` title="${esc(e.note)}"` : ''}><button class="cell-note" data-act="note-edit" data-kind="entries" data-id="${esc(e.id)}" title="${e.note ? esc(e.note) : 'Add a note for this entry'}"${e.note ? ' data-has-note' : ''}>${e.note ? 'Note' : 'Add note'}</button></td>
-                <td data-col="category"><select data-change="entry-category" data-id="${esc(e.id)}" style="${rowChipStyle(colorOf(e.category))}">${options(state.categories.map((c) => c.name), e.category)}</select></td>
-                <td data-col="from" data-label="From"><input class="cell-time" type="time" data-change="entry-from" data-id="${esc(e.id)}" value="${hm(e.from)}"></td>
-                <td data-col="to" data-label="To"><input class="cell-time" type="time" data-change="entry-to" data-id="${esc(e.id)}" value="${hm(e.to)}"></td>
-                <td class="cell-spent" data-col="spent">${esc(dur(spent))}</td>
-                <td data-col="remove" style="text-align: right;"><button class="cell-del" data-act="entry-remove" data-id="${esc(e.id)}" title="Delete entry">×</button></td>
-              </tr>`;
+    const tint = colorOf(e.category);
+    const tab = e.category === runCategory ? '' : `
+              <div class="entry-tab" style="background: ${esc(tint)};">${esc(withIcon(e.category))}</div>`;
+    runCategory = e.category;
+
+    return `${tab}
+              <div class="entry-card">
+                <input class="entry-name" data-k="r-${esc(e.id)}-a" data-change="entry-activity" data-id="${esc(e.id)}" value="${esc(e.activity)}"${e.note ? ` title="${esc(e.note)}"` : ''}>
+                <div class="entry-controls">
+                  <button class="cell-note" data-act="note-edit" data-kind="entries" data-id="${esc(e.id)}" title="${e.note ? esc(e.note) : 'Add a note for this entry'}"${e.note ? ' data-has-note' : ''}>${e.note ? 'Note' : 'Add note'}</button>
+                  <select class="entry-select" data-change="entry-category" data-id="${esc(e.id)}" style="${rowChipStyle(tint)}">${options(state.categories.map((c) => c.name), e.category)}</select>
+                </div>
+                <div class="entry-times">
+                  <span class="entry-leg">From</span>
+                  <input class="cell-time" type="time" data-change="entry-from" data-id="${esc(e.id)}" value="${hm(e.from)}">
+                  <span class="entry-rule"></span>
+                  <span class="entry-leg">To</span>
+                  <input class="cell-time" type="time" data-change="entry-to" data-id="${esc(e.id)}" value="${hm(e.to)}">
+                </div>
+                <div class="entry-foot">
+                  <span class="entry-dur">${esc(dur(spent))}</span>
+                  <button class="cell-del" data-act="entry-remove" data-id="${esc(e.id)}" title="Delete entry" aria-label="Delete entry">×</button>
+                </div>
+              </div>`;
   }).join('');
 
   return `
-      <div class="blueprint" style="padding: 18px 22px 8px;">        ${dayNav(v, `${esc(v.dayTotalLabel)} logged across ${v.dayList.length} entries`)}
-        <div class="rows-scroll">
-        <table class="table rows">
-          <thead><tr><th style="width: 30%">Activity</th><th style="width: 20%">Category</th><th style="width: 15%">From</th><th style="width: 15%">To</th><th style="width: 14%">Time spent</th><th></th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
+      <div class="blueprint card-w-head">
+        ${dayNav(v, `${esc(v.dayTotalLabel)} logged across ${v.dayList.length} entries`)}
+        <div class="card-body">
+          <div class="entry-list">${rows}</div>
+          ${v.dayList.length > ROWS_COLLAPSED ? drawerToggle('activities', v.dayList.length - ROWS_COLLAPSED, 'entries') : ''}
+          ${v.dayList.length === 0 ? '<div style="padding: 22px 0 24px; text-align: center; font-size: 13px; color: var(--color-neutral-600);">Nothing logged yet — start the timer, or add a row above.</div>' : ''}
         </div>
-        ${v.dayList.length > ROWS_COLLAPSED ? drawerToggle('activities', v.dayList.length - ROWS_COLLAPSED, 'entries') : ''}
-        ${v.dayList.length === 0 ? '<div style="padding: 26px 0 30px; text-align: center; font-size: 13px; color: var(--color-neutral-600);">Nothing logged yet — start the timer, or add a row above.</div>' : ''}
       </div>`;
 }
 
 function timelineCard(v) {
   return `
-      <div class="blueprint" style="padding: 18px 22px 22px;">        <div style="display: flex; align-items: baseline; gap: 4px 10px; margin-bottom: 16px; flex-wrap: wrap;">
-          <h4 style="margin: 0;">Your day, end to end</h4>
-          <span style="font-size: 12px; color: var(--color-neutral-600);">6 AM to 10 PM · gaps are time you didn't log</span>
-        </div>
+      <div class="blueprint card-w-head">
+        ${cardHead('Your day, end to end', '6 AM to 10 PM · gaps are time you didn\'t log')}
+        <div class="card-body">
         <div style="position: relative; height: 34px; background: repeating-linear-gradient(90deg, var(--color-neutral-200) 0 1px, transparent 1px 100%); border: 1px solid var(--color-divider);">
           ${v.timeline.map((s) => `<div title="${esc(s.title)}" style="position: absolute; top: 0; bottom: 0; left: ${s.left}; width: ${s.width}; background: ${esc(s.color)};"></div>`).join('')}
         </div>
         <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--color-neutral-600); margin-top: 6px; font-variant-numeric: tabular-nums;">
           <span>6 AM</span><span>10 AM</span><span>2 PM</span><span>6 PM</span><span>10 PM</span>
+        </div>
         </div>
       </div>`;
 }
@@ -3125,34 +3151,37 @@ function timeDesktop(v) {
   return `
   <div data-page-grid style="display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 28px; padding: 28px; max-width: 1560px; margin: 0 auto; align-items: start;">
 
-    <div style="display: flex; flex-direction: column; gap: 22px; min-width: 0;">
-      ${entryModeBar()}
-      ${state.entryMode === 'manual' ? addEntryCard(v) : timerCard(v)}
-      ${timeTableCard(v)}
-      ${insightsHeading()}
-      ${todayCard(v)}
-      ${pastCard(v)}
-      ${weightCard(v)}
+    <div class="col">
+      <div data-sec="entry">${entryModeBar()}</div>
+      <div data-sec="entrycard">${state.entryMode === 'manual' ? addEntryCard(v) : timerCard(v)}</div>
+      <div data-sec="log">${timeTableCard(v)}</div>
+      <div data-sec="ins-head">${insightsHeading()}</div>
+      <div data-sec="ins-today">${todayCard(v)}</div>
+      <div data-sec="ins-past">${pastCard(v)}</div>
+      <div data-sec="ins-weight">${weightCard(v)}</div>
     </div>
 
-    <div style="display: flex; flex-direction: column; gap: 22px; min-width: 0;">
+    <div class="col">
 
-      <div class="blueprint" style="padding: 20px 22px 24px;">        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;">
-          <h4 style="margin: 0; margin-right: auto;">Where the time went</h4>
-          ${segRange('range', ['Day', 'Week', '2 Weeks', 'Month'])}
-        </div>
+      <div class="blueprint card-w-head" data-sec="chart">
+        ${cardHead('Where the time went', '', segRange('range', ['Day', 'Week', '2 Weeks', 'Month']))}
+        <div class="card-body">
         <div class="chart-row" style="display: flex; gap: 24px; align-items: center; flex-wrap: wrap;">
           ${donut(v, 190, 34, 27)}
           <div style="display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0;">${legend(v)}</div>
         </div>
         ${focusPanel(v)}
+        </div>
       </div>
 
-      <div class="blueprint" style="padding: 18px 22px 22px;">        <h4 style="margin: 0 0 14px;">Leaderboard</h4>
-        <div style="display: flex; flex-direction: column; gap: 13px;">${bars(v)}</div>
+      <div class="blueprint card-w-head" data-sec="board">
+        ${cardHead('Leaderboard', 'Where the hours actually go')}
+        <div class="card-body">
+          <div style="display: flex; flex-direction: column; gap: 13px;">${bars(v)}</div>
+        </div>
       </div>
 
-      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 22px;">
+      <div data-sec="stats" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 22px;">
         <div class="blueprint" style="padding: 18px 20px 20px;">          <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 8px;">Untracked</div>
           <div style="font-family: var(--font-heading); font-size: 32px; line-height: 1;">${esc(v.untracked)}</div>
           <div style="font-size: 12px; color: var(--color-neutral-600); margin-top: 8px;">${esc(v.untrackedNote)}</div>
@@ -3163,7 +3192,7 @@ function timeDesktop(v) {
         </div>
       </div>
 
-      ${timelineCard(v)}
+      <div data-sec="timeline">${timelineCard(v)}</div>
     </div>
   </div>`;
 }
@@ -3478,7 +3507,6 @@ function render() {
   ${body}
   <div class="no-print" style="padding: 26px 28px 10px; display: flex; align-items: center; gap: 10px 18px; flex-wrap: wrap;">
     ${legalLinks('var(--color-neutral-600)')}
-    ${resyncControl()}
   </div>
   ${state.reportOpen ? reportSheet(v) : ''}
   ${notePromptDialog()}
