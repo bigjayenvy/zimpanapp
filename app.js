@@ -1041,6 +1041,9 @@ const SERVINGS = [
   // Drinks and supplements first: they are the ones most often written
   // alongside a meal, and several of them are close to free.
   { g: 'water', re: /\bwater\b|tubig/, kcal: 0, p: 0, c: 0, f: 0 },
+  /* Condiments, so "fish with soy sauce" does not bill the sauce as an
+     unrecognised side dish worth a hundred and seventy calories. */
+  { g: 'condiment', re: /soy sauce|toyo|vinegar|suka|ketchup|patis|fish sauce|\bsauce\b|mustard|sriracha|hot sauce|\bsalt\b|pepper\b|spices/, kcal: 15, p: 0, c: 2, f: 0.5, serve: 20 },
   { g: 'supplement', re: /creatine|multivitamin|vitamins?\b|electrolyte|\bbcaa\b|pre-?workout/, kcal: 5, p: 0, c: 1, f: 0 },
   { g: 'supplement', re: /whey|protein powder|protein shake|mass gainer/, kcal: 120, p: 24, c: 3, f: 1.5 },
   { g: 'coffee', re: /black coffee|americano|espresso|brewed coffee|kapeng barako|black kape/, kcal: 5, p: 0, c: 1, f: 0 },
@@ -1054,11 +1057,14 @@ const SERVINGS = [
   { g: 'baked', re: /muffin|scone|banana bread/, kcal: 380, p: 6, c: 52, f: 17 },
   { g: 'baked', re: /pancake|waffle|hotcake/, kcal: 250, p: 6, c: 35, f: 9 },
   { g: 'sandwich', re: /sandwich|sanwich|sandwhich|\bwrap\b|\bsub\b|baguette/, kcal: 330, p: 14, c: 38, f: 13 },
-  { g: 'spread', re: /peanut butter|\bnutella\b|almond butter/, kcal: 190, p: 7, c: 6, f: 16 },
-  { g: 'nuts', re: /\bnuts?\b|almond|cashew|peanuts/, kcal: 170, p: 6, c: 6, f: 15 },
+  { g: 'spread', re: /peanut butter|\bnutella\b|almond butter/, kcal: 190, p: 7, c: 6, f: 16, serve: 32 },
+  /* A cup of nuts is nothing like a handful, and people write both. `cup`
+     carries its own multiplier here because 30g is the serving this is priced
+     for and a cup is closer to 145g. */
+  { g: 'nuts', re: /\bnuts?\b|almond|cashew|peanuts/, kcal: 170, p: 6, c: 6, f: 15, serve: 30, cup: 4.8 },
 
-  { g: 'grain', re: /brown rice|quinoa|barley|wholemeal/, kcal: 215, p: 5, c: 45, f: 1.8 },
-  { g: 'grain', re: /\brice\b|kanin/, kcal: 205, p: 4, c: 45, f: 0.4 },
+  { g: 'grain', re: /brown rice|quinoa|barley|wholemeal/, kcal: 215, p: 5, c: 45, f: 1.8, serve: 160 },
+  { g: 'grain', re: /\brice\b|kanin/, kcal: 205, p: 4, c: 45, f: 0.4, serve: 160 },
   { g: 'bread', re: /bread|pandesal|toast/, kcal: 160, p: 6, c: 30, f: 2 },
   { g: 'pasta', re: /pasta|noodle|spaghetti|pancit/, kcal: 300, p: 11, c: 56, f: 3 },
   { g: 'oats', re: /oats|oatmeal|cereal/, kcal: 160, p: 6, c: 27, f: 3 },
@@ -1068,19 +1074,19 @@ const SERVINGS = [
   { g: 'soup', re: /sinigang|tinola|nilaga|bulalo|\bsoup\b|batchoy|mami/, kcal: 180, p: 14, c: 12, f: 8 },
   { g: 'chicken', re: /fried chicken|chicken inasal|lechon manok/, kcal: 420, p: 32, c: 12, f: 26 },
   { g: 'chicken', re: /chicken|manok/, kcal: 240, p: 34, c: 0, f: 11 },
-  { g: 'fish', re: /fish|isda|bangus|tilapia|tuna|salmon/, kcal: 210, p: 30, c: 0, f: 9 },
-  { g: 'beef', re: /beef|steak|baka/, kcal: 290, p: 30, c: 0, f: 18 },
-  { g: 'pork', re: /\bpork\b|baboy|liempo|lechon kawali|lechon baboy/, kcal: 320, p: 27, c: 0, f: 23 },
+  { g: 'fish', re: /fish|isda|bangus|tilapia|tuna|salmon/, kcal: 210, p: 30, c: 0, f: 9, serve: 150 },
+  { g: 'beef', re: /beef|steak|baka/, kcal: 290, p: 30, c: 0, f: 18, serve: 140 },
+  { g: 'pork', re: /\bpork\b|baboy|liempo|lechon kawali|lechon baboy/, kcal: 320, p: 27, c: 0, f: 23, serve: 140 },
   // One large egg, so a written count multiplies cleanly.
-  { g: 'egg', re: /\begg|itlog/, kcal: 78, p: 6.5, c: 0.5, f: 5.5 },
-  { g: 'plant', re: /tofu|tokwa|beans|monggo|lentil/, kcal: 150, p: 12, c: 12, f: 6 },
-  { g: 'seafood', re: /shrimp|hipon|seafood/, kcal: 140, p: 26, c: 1, f: 2 },
+  { g: 'egg', re: /\begg|itlog/, kcal: 78, p: 6.5, c: 0.5, f: 5.5, serve: 50 },
+  { g: 'plant', re: /tofu|tokwa|beans|monggo|lentil/, kcal: 150, p: 12, c: 12, f: 6, serve: 120 },
+  { g: 'seafood', re: /shrimp|hipon|seafood/, kcal: 140, p: 26, c: 1, f: 2, serve: 100 },
   { g: 'veg', re: /salad|gulay|kangkong|pechay|vegetable|broccoli|spinach|malunggay/, kcal: 70, p: 3, c: 10, f: 2 },
   { g: 'fruit', re: /banana|saging|apple|mango|orange|papaya|pineapple|melon|berries|fruit/, kcal: 95, p: 1, c: 24, f: 0.3 },
   { g: 'curedmeat', re: /bacon|chicharon|tocino|longganisa|sausage|hotdog/, kcal: 300, p: 14, c: 3, f: 26 },
   { g: 'fastfood', re: /burger|pizza|fries|lumpia|tempura|siomai/, kcal: 400, p: 15, c: 40, f: 20 },
   { g: 'instant', re: /instant noodle|canned|spam|corned beef/, kcal: 380, p: 13, c: 45, f: 16 },
-  { g: 'dessert', re: /cake|donut|pastry|leche flan|ice cream|halo-halo|dessert|chocolate/, kcal: 330, p: 4, c: 45, f: 15 },
+  { g: 'dessert', re: /cake|donut|pastry|leche flan|ice cream|halo-halo|dessert|chocolate/, kcal: 330, p: 4, c: 45, f: 15, serve: 100 },
   { g: 'drink', re: /milk tea|boba/, kcal: 250, p: 3, c: 45, f: 6 },
   { g: 'drink', re: /soda|coke|sprite|softdrink|iced tea|juice/, kcal: 180, p: 0, c: 44, f: 0 },
   { g: 'dairy', re: /yogurt|cheese|\bmilk\b(?! ?tea)/, kcal: 130, p: 8, c: 10, f: 6 },
@@ -1112,13 +1118,34 @@ const SIZE_WORDS = [
   { re: /\b(?:half|1\/2)\b/, mult: 0.5 }
 ];
 
-/* How many of it, and how big. Counts are capped because a stray year or price
-   in the text would otherwise multiply a meal into the tens of thousands. */
-function portionOf(item) {
+/* A number followed by a unit of mass is a weight, not a count. Reading "250
+   grams of fish" as two hundred and fifty fish is how a day's food reached
+   seventeen thousand calories. */
+const MASS_RE = /(\d+(?:\.\d+)?)\s*(kgs?|kilos?|kilograms?|gs?\b|gr\b|grams?|oz|ounces?|lbs?|pounds?)\b/i;
+const TO_GRAMS = { kg: 1000, kilo: 1000, kilogram: 1000, g: 1, gr: 1, gram: 1, oz: 28.35, ounce: 28.35, lb: 453.6, pound: 453.6 };
+
+// Typical serving weight where a rule does not name its own.
+const DEFAULT_SERVE_G = 120;
+
+/* How much of it. A weight is scaled against the serving the rule is priced
+   for; otherwise a count is read, capped because a stray year or price in the
+   text would otherwise multiply a meal into the tens of thousands. Both ends
+   are clamped: no single written item is a fifth of a serving or five of them. */
+function portionOf(item, hit) {
+  const mass = MASS_RE.exec(item);
+  if (mass) {
+    const unit = mass[2].toLowerCase().replace(/s$/, '');
+    const grams = Number(mass[1]) * (TO_GRAMS[unit] || TO_GRAMS[unit.replace(/s$/, '')] || 1);
+    const serve = (hit && hit.serve) || DEFAULT_SERVE_G;
+    return Math.max(0.2, Math.min(5, grams / serve));
+  }
+
   let qty = 1;
-  const digits = /^\s*(\d+(?:\.\d+)?)\s*(?:x\b|pcs?\b|pieces?\b|servings?\b|slices?\b|cups?\b)?\s*/i.exec(item);
+  const digits = /^\s*(\d+(?:\.\d+)?)\s*(?:x\b|pcs?\b|pieces?\b|servings?\b|slices?\b|cups?\b|scoops?\b)?\s*/i.exec(item);
   if (digits) {
     qty = Number(digits[1]);
+    // A cup of something dense is several servings of it; a cup of rice is one.
+    if (hit && hit.cup && /\bcups?\b/i.test(item)) qty *= hit.cup;
   } else {
     const word = /^\s*(one|two|three|four|five|six|seven|eight|dozen)\b/i.exec(item);
     if (word) qty = NUMBER_WORDS[word[1].toLowerCase()];
@@ -1154,7 +1181,7 @@ function nutritionFor(rows) {
     const missed = [];
     parts.forEach((part) => {
       const hit = SERVINGS.find((s) => s.re.test(part));
-      if (hit) found.push({ hit, portion: portionOf(part) });
+      if (hit) found.push({ hit, portion: portionOf(part, hit) });
       else missed.push(part);
     });
 
