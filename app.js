@@ -409,6 +409,7 @@ const state = {
   timerCategory: stored.timerCategory || (stored.categories[0] || {}).name || 'Chores',
   reportOpen: false,
   donateOpen: false,
+  resyncArmed: false,
 
   // Slice drill-down: the category/purpose the donut is focused on, and
   // whether its entry list is expanded underneath.
@@ -1935,6 +1936,36 @@ function legalSheet() {
     </div>`;
 }
 
+/* ── re-upload ──
+
+   Sync only ever sends rows marked dirty, and clearPushed() clears that mark as
+   soon as a row has gone up. That is right in normal running and wrong after a
+   server-side restore: the account can come back missing rows this device still
+   holds, and because those rows are not dirty any more, nothing sends them
+   again. They would sit here looking fine and be invisible everywhere else.
+
+   adoptLocalData() already does the work — it was written for the first sign-in
+   on a device with pre-account data — but the only path to it is that migration
+   screen, which a signed-in browser can never reach. This is that path.
+
+   Two-step on purpose. On a device whose local copy is the thin one, this is
+   the wrong button, and it does not announce which device is which. */
+function resyncControl() {
+  if (!state.auth) return '';
+  const n = state.entries.length + state.money.length;
+  const link = 'border:0;background:transparent;padding:0;font:inherit;font-size:12px;cursor:pointer;text-decoration:underline;color:var(--color-neutral-600);';
+
+  if (!state.resyncArmed) {
+    return `<button data-act="resync-all" style="${link}" title="Send everything stored on this device to the server again">Re-upload this device's data</button>`;
+  }
+  return `
+    <span style="display:inline-flex;align-items:center;gap:9px;flex-wrap:wrap;font-size:12px;color:var(--color-neutral-700);">
+      Send all ${n} ${n === 1 ? 'record' : 'records'} on this device up again?
+      <button class="btn btn-secondary" data-act="resync-all" style="font-size:12px;">Yes, re-upload</button>
+      <button data-act="resync-cancel" style="${link}">Cancel</button>
+    </span>`;
+}
+
 const legalLinks = (color) => `
   <div style="display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; font-size: 12px;">
     <button data-act="legal-privacy" style="border:0;background:transparent;padding:0;font:inherit;font-size:12px;color:${color};cursor:pointer;text-decoration:underline;text-underline-offset:2px;">Privacy Policy</button>
@@ -3080,7 +3111,10 @@ function render() {
   ${stickyBar(v)}
   ${syncErrorBanner()}
   ${body}
-  <div class="no-print" style="padding: 26px 28px 10px;">${legalLinks('var(--color-neutral-600)')}</div>
+  <div class="no-print" style="padding: 26px 28px 10px; display: flex; align-items: center; gap: 10px 18px; flex-wrap: wrap;">
+    ${legalLinks('var(--color-neutral-600)')}
+    ${resyncControl()}
+  </div>
   ${state.reportOpen ? reportSheet(v) : ''}
   ${notePromptDialog()}
   ${donateSheet()}
@@ -3388,6 +3422,24 @@ const ACTIONS = {
   'legal-privacy': () => { state.legalOpen = 'privacy'; render(); },
   'legal-terms': () => { state.legalOpen = 'terms'; render(); },
   'legal-close': () => { state.legalOpen = null; render(); },
+  /* First press arms, second press sends. adoptLocalData() stamps every row on
+     the device and marks it dirty, so the next sync carries the lot. */
+  'resync-all': () => {
+    if (!state.auth) return;
+    if (!state.resyncArmed) { state.resyncArmed = true; render(); return; }
+    state.resyncArmed = false;
+    adoptLocalData();
+    save();
+    /* Deliberately not a count. The confirm quotes entries and money — what a
+       person thinks of as their records — while the queue also carries the
+       category and purpose lists, so any number here would contradict the one
+       they just agreed to. */
+    flash('Re-uploading everything on this device');
+    render();
+    syncNow();
+  },
+  'resync-cancel': () => { state.resyncArmed = false; render(); },
+
   'donate-close': () => { state.donateOpen = false; render(); },
   'donate-go': () => {
     window.open(DONATE_URL, '_blank', 'noopener');
