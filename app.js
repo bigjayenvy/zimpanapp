@@ -2786,7 +2786,7 @@ function aiConsentDialog() {
       <div class="donate-kicker">Before we do this</div>
       <h2 id="ai-consent-title" style="margin: 0 0 12px; font-family: var(--font-heading); font-size: 24px; line-height: 1.2;">Send this meal to be estimated?</h2>
       <p style="margin: 0 0 12px; font-size: 13px; line-height: 1.6; color: var(--color-neutral-800);">
-        To get a closer figure, the text of what you ate is sent to Google's Gemini API, which returns an estimate.
+        To get a closer figure, the text of what you ate is sent to Anthropic's Claude API, which returns an estimate.
         Only the food description goes — not your name, your account, your dates or anything else you track.
       </p>
       <p style="margin: 0 0 18px; font-size: 13px; line-height: 1.6; color: var(--color-neutral-800);">

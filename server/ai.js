@@ -1,41 +1,67 @@
-/* Nutrition estimates from a language model.
+/* Nutrition estimates from Claude.
 
    The local table in app.js is a regex list. It cannot know that a McDonald's
    cheeseburger is 300 rather than a generic burger's 400, and it reads portions
    from whatever the person happened to type. This is the fallback for when that
    is not good enough — asked for explicitly, one meal at a time.
 
-   Nothing here is trusted. The model is asked for strict JSON and every number
-   that comes back is checked and clamped before it reaches a caller: a reply
-   that is missing, malformed, negative or absurd is treated as a failure rather
-   than as data. A calorie count is something people may act on, so a confidently
-   wrong figure is worse than an honest error.
+   The reply is constrained by a JSON schema rather than requested in prose, so
+   "reply with JSON only" is enforced by the API instead of hoped for. Every
+   number is still checked here afterwards: a schema guarantees shape, not sense,
+   and 999,999 kcal is perfectly well-formed. A calorie count is something people
+   may act on, so a confidently wrong figure is worse than an honest error.
 
    The key lives only in the environment. It is never returned, logged, or sent
    to the browser — the client is told whether the feature is on, nothing more. */
 
-const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
+import Anthropic from '@anthropic-ai/sdk';
 
 // Overridable because model names change faster than this file will.
-const MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
-const TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) || 15000;
+const MODEL = process.env.ANTHROPIC_MODEL || 'claude-opus-5';
+const TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) || 25000;
 const MAX_TEXT = 1200;
 
-export const aiConfigured = () => !!(process.env.GEMINI_API_KEY || '').trim();
+export const aiConfigured = () => !!(process.env.ANTHROPIC_API_KEY || '').trim();
+
+/* Built once, lazily — constructing it at import time would throw on a server
+   with no key, which is the configuration the app is meant to run fine under. */
+let client = null;
+const anthropic = () => (client = client || new Anthropic({ maxRetries: 1 }));
 
 /* Deliberately narrow. The model is not asked for advice, only for arithmetic
    it is better at than a regex — naming the foods it found is what lets a
    person see whether it read them correctly. */
 const SYSTEM = `You estimate the nutrition of food described in free text.
 
-Rules:
 - Read every item, including quantities and weights ("250g", "2 large", "1 cup").
 - Use typical published values for the named brand or dish where you know it.
 - Items that are not food (supplements with no calories, water, plain black coffee) count as near zero.
 - If an item is too vague to price, include it with your best typical estimate.
-- Reply with JSON only, no prose, in exactly this shape:
-{"kcal":number,"protein":number,"carbs":number,"fat":number,"items":[{"name":string,"kcal":number}]}
-- All numbers are for the whole text combined, in kilocalories and grams.`;
+- All figures are for the whole text combined, in kilocalories and grams.`;
+
+/* Structured outputs. Every object needs additionalProperties:false and a
+   complete `required` list; numeric bounds are not part of the supported subset,
+   which is why the sanity check below is a separate step rather than a schema. */
+const SCHEMA = {
+  type: 'object',
+  properties: {
+    kcal: { type: 'number' },
+    protein: { type: 'number' },
+    carbs: { type: 'number' },
+    fat: { type: 'number' },
+    items: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { name: { type: 'string' }, kcal: { type: 'number' } },
+        required: ['name', 'kcal'],
+        additionalProperties: false
+      }
+    }
+  },
+  required: ['kcal', 'protein', 'carbs', 'fat', 'items'],
+  additionalProperties: false
+};
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
@@ -65,63 +91,69 @@ export async function estimateNutrition(text) {
   const clean = String(text || '').trim().slice(0, MAX_TEXT);
   if (!clean) throw new Error('Nothing to estimate.');
 
-  // Node's fetch has no timeout of its own; without this a hung upstream would
-  // hold the request open until the browser gave up.
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), TIMEOUT_MS);
-
   let res;
   try {
-    res = await fetch(`${ENDPOINT}/${encodeURIComponent(MODEL)}:generateContent`, {
-      method: 'POST',
-      signal: abort.signal,
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY.trim() },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: SYSTEM }] },
-        contents: [{ role: 'user', parts: [{ text: clean }] }],
-        generationConfig: { temperature: 0.2, responseMimeType: 'application/json', maxOutputTokens: 900 }
-      })
-    });
+    res = await anthropic().beta.messages.create({
+      model: MODEL,
+      max_tokens: 8192,
+      /* Refusal is vanishingly unlikely for a list of food, but a declined
+         request otherwise just stops. This re-runs it on Anthropic's
+         recommended substitute inside the same call. */
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      system: SYSTEM,
+      /* Low effort: this is arithmetic over a short list, not a problem that
+         rewards deliberation, and it keeps latency and cost down. */
+      output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
+      messages: [{ role: 'user', content: clean }]
+    }, { timeout: TIMEOUT_MS });
   } catch (err) {
-    throw new Error(err.name === 'AbortError' ? 'The estimate timed out.' : 'Could not reach the estimate service.');
-  } finally {
-    clearTimeout(timer);
+    /* Typed, most specific first: the three a user can actually hit are worth
+       distinguishing, and the rest is a configuration problem worth logging
+       verbatim — a wrong model name or a rejected key both arrive here and are
+       invisible otherwise. The message shown to the browser never carries it. */
+    if (err instanceof Anthropic.RateLimitError) {
+      console.error('[zimpan] estimate rate limited');
+      throw new Error('The estimate service is busy. Try again shortly.');
+    }
+    if (err instanceof Anthropic.AuthenticationError) {
+      console.error('[zimpan] estimate rejected the API key');
+      throw new Error('The estimate service refused our credentials.');
+    }
+    if (err instanceof Anthropic.APIConnectionError) {
+      console.error(`[zimpan] estimate could not connect: ${err.message}`);
+      throw new Error('Could not reach the estimate service.');
+    }
+    console.error(`[zimpan] estimate failed${err.status ? ` (${err.status})` : ''}: ${err.message}`);
+    throw new Error('The estimate service refused the request.');
   }
 
-  if (!res.ok) {
-    /* Surfaced rather than swallowed: a wrong model name or a rejected key both
-       arrive here, and both are configuration problems that are invisible
-       otherwise. The body can carry the key back in an error echo, so only the
-       status and the upstream message are kept. */
-    let detail = '';
-    try {
-      const body = await res.json();
-      detail = (body && body.error && body.error.message) || '';
-    } catch { /* non-JSON error body */ }
-    console.error(`[zimpan] estimate upstream ${res.status}${detail ? `: ${detail}` : ''}`);
-    throw new Error(res.status === 429
-      ? 'The estimate service is rate limiting us. Try again shortly.'
-      : 'The estimate service refused the request.');
+  /* Checked before the content is read: a refusal is a successful response with
+     nothing useful in it, so indexing into content first would throw. */
+  if (res.stop_reason === 'refusal') {
+    console.error(`[zimpan] estimate refused${res.stop_details ? `: ${res.stop_details.category}` : ''}`);
+    throw new Error('The estimate service declined that request.');
+  }
+  if (res.stop_reason === 'max_tokens') {
+    console.error('[zimpan] estimate hit the output cap');
+    throw new Error('That was too much to estimate in one go.');
   }
 
-  const body = await res.json();
-  const raw = body && body.candidates && body.candidates[0]
-    && body.candidates[0].content && body.candidates[0].content.parts
-    && body.candidates[0].content.parts[0] && body.candidates[0].content.parts[0].text;
+  /* Not content[0]: thinking blocks come first, and carry no text by default. */
+  const block = (res.content || []).find((b) => b.type === 'text');
 
   let parsed = null;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(block.text);
   } catch {
-    // Some replies fence the JSON despite being asked not to.
-    const fenced = /\{[\s\S]*\}/.exec(String(raw || ''));
-    if (fenced) { try { parsed = JSON.parse(fenced[0]); } catch { /* give up below */ } }
-  }
-
-  const clean2 = validate(parsed);
-  if (!clean2) {
     console.error('[zimpan] estimate returned something unusable');
     throw new Error('The estimate came back in a form we could not read.');
   }
-  return clean2;
+
+  const checked = validate(parsed);
+  if (!checked) {
+    console.error('[zimpan] estimate returned values outside sane bounds');
+    throw new Error('The estimate came back in a form we could not read.');
+  }
+  return checked;
 }
