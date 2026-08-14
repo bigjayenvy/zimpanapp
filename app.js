@@ -3004,7 +3004,11 @@ function reportSheet(v) {
                 </tr>`).join('');
 
   return `
-    <div class="report-wrap" data-report-backdrop style="position: fixed; inset: 0; background: color-mix(in srgb, var(--color-neutral-900) 55%, transparent); display: flex; align-items: flex-start; justify-content: center; overflow: auto; z-index: 40;">
+    <!-- 50 puts this with the app's other overlays (auth, the note prompt) and,
+         crucially, above the fixed chrome: the bottom bar at 45 and the sticky
+         header and back-to-top at 46. At its old 40 all three drew on top of
+         the sheet, which on a phone meant the header covering its toolbar. -->
+    <div class="report-wrap" data-report-backdrop style="position: fixed; inset: 0; background: color-mix(in srgb, var(--color-neutral-900) 55%, transparent); display: flex; align-items: flex-start; justify-content: center; overflow: auto; z-index: 50;">
       <div style="width: 780px; max-width: 100%;">
         <div class="no-print report-tools">
           <span class="report-hint" style="color: var(--color-bg); font-size: 13px; margin-right: auto;">Preview — chart, totals and every activity in range.</span>
