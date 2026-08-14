@@ -365,8 +365,39 @@ const API = {
   logout: () => api('/api/logout', { method: 'POST' }),
   forgot: (email) => api('/api/forgot', { method: 'POST', body: { email } }),
   reset: (token, password) => api('/api/reset', { method: 'POST', body: { token, password } }),
-  push: (since, changes) => api('/api/sync', { method: 'POST', body: { since: since || 0, changes } })
+  push: (since, changes) => api('/api/sync', { method: 'POST', body: { since: since || 0, changes } }),
+  estimate: (text) => api('/api/estimate', { method: 'POST', body: { text } })
 };
+
+/* ── AI nutrition estimates ──
+
+   Opt-in, one meal at a time, and cached by the text itself rather than by the
+   entry: the same breakfast logged on Tuesday and Thursday is one estimate, not
+   two, which is the difference between a few cents a month and a bill.
+
+   Both of these are device-local on purpose. Consent is a decision about this
+   browser sending text to a third party, and the cache is a saving, not data —
+   neither belongs in the account, and neither should follow the user onto a
+   device where they have not been asked. */
+
+const AI_CACHE_KEY = 'zimpan.ai.v1';
+const AI_CONSENT_KEY = 'zimpan.ai.consent.v1';
+
+const readJson = (key, fallback) => {
+  try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch (err) { return fallback; }
+};
+const writeJson = (key, value) => {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch (err) { /* private mode or full */ }
+};
+
+// Normalised so spacing and case do not split the cache, and length-suffixed
+// so two different meals cannot collide on a short hash alone.
+function textKey(s) {
+  const t = String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  let h = 5381;
+  for (let i = 0; i < t.length; i++) h = (((h << 5) + h + t.charCodeAt(i)) >>> 0);
+  return `${h.toString(36)}-${t.length}`;
+}
 
 /* ─────────────────────────── state ─────────────────────────── */
 
@@ -410,6 +441,14 @@ const state = {
   reportOpen: false,
   donateOpen: false,
   resyncArmed: false,
+
+  // Whether the server has a key at all; the button is not drawn without one.
+  aiEstimates: false,
+  aiConsent: readJson(AI_CONSENT_KEY, false) === true,
+  aiCache: readJson(AI_CACHE_KEY, {}),
+  aiAsking: null,   // scope awaiting consent
+  aiBusy: null,     // scope with a request in flight
+  aiError: '',
 
   // Slice drill-down: the category/purpose the donut is focused on, and
   // whether its entry list is expanded underneath.
@@ -612,6 +651,34 @@ function queueSync(delay) {
   syncTimer = setTimeout(() => { syncNow(); }, delay == null ? 800 : delay);
 }
 
+/* Asks the server for a closer figure. A cached answer for the same text is
+   used without a request, which is what keeps this affordable — a repeated
+   breakfast costs nothing after the first time. */
+async function refineFood(scope) {
+  const v = compute();
+  const food = scope === 'today' ? v.todayFood : v.pastFood;
+  if (!food || !food.detail) return;
+
+  if (state.aiCache[food.key]) { render(); return; }
+
+  state.aiBusy = scope;
+  state.aiError = '';
+  render();
+  try {
+    const res = await API.estimate(food.detail);
+    state.aiCache[food.key] = res.estimate;
+    writeJson(AI_CACHE_KEY, state.aiCache);
+    flash(`Estimated · ${res.estimate.kcal.toLocaleString('en-US')} kcal`);
+  } catch (err) {
+    // Shown next to the button rather than as a toast: it belongs to that
+    // reading, and the local estimate is still sitting there and still valid.
+    state.aiError = err.message || 'Could not get an estimate just now.';
+  } finally {
+    state.aiBusy = null;
+    render();
+  }
+}
+
 async function syncNow() {
   if (!state.auth || state.syncing) return;
   state.syncing = true;
@@ -808,6 +875,7 @@ async function boot() {
   try {
     const cfg = await API.config();
     state.googleClientId = cfg.googleClientId || null;
+    state.aiEstimates = !!cfg.aiEstimates;
     if (state.googleClientId) loadGoogle();
   } catch (e) { /* offline, or not configured — email sign-in is unaffected */ }
 
@@ -1313,6 +1381,9 @@ function foodReport(entries, money, days) {
     : `Keep the pattern and keep logging it. General guidance only — for anything specific to you, your doctor is the right person to ask.`;
 
   const n = nutritionFor(rows);
+  /* What would be sent for an AI estimate, and what the cache is keyed on. Only
+     the food itself — no dates, no amounts, nothing identifying. */
+  const detail = withNotes.map((r) => `${r.activity || ''}: ${r.note || ''}`.trim()).join('\n');
   const perDay = days > 1 ? ` (about ${Math.round(n.kcal / days)} a day)` : '';
   /* Both kinds of gap are named: a meal that said nothing at all, and an item
      inside a readable meal that is not in the table. Saying so is what stops
@@ -1328,6 +1399,9 @@ function foodReport(entries, money, days) {
     advice: clamp(advice, 300),
     nutrition: clamp(nutrition, 300),
     kcal: n.kcal,
+    local: { kcal: n.kcal, protein: n.protein, carbs: n.carbs, fat: n.fat },
+    detail,
+    key: detail ? textKey(detail) : '',
     hasFindings: true
   };
 }
@@ -2664,15 +2738,67 @@ function insightsCard(v) {
 
 /* The food block sits between the wellbeing rows and the advice — it is the
    one part built from what you wrote rather than from the clock. */
-function foodBlock(food) {
+function foodBlock(food, scope) {
   if (!food) return '';
+  const ai = food.key ? state.aiCache[food.key] : null;
+  const busy = state.aiBusy === scope;
+
+  /* The AI figure replaces the local one rather than sitting beside it. Two
+     different totals for the same meal is not a second opinion, it is a
+     question the reader cannot answer — so the better one wins and says where
+     it came from. The local reading stays available underneath. */
+  const line = ai
+    ? `Roughly ${ai.kcal.toLocaleString('en-US')} kcal — around ${ai.protein}g protein, ${ai.carbs}g carbs, ${ai.fat}g fat.`
+    : food.nutrition;
+
+  const refine = !state.aiEstimates || !food.detail ? '' : `
+            <div style="margin-top: 9px; display: flex; align-items: center; gap: 9px; flex-wrap: wrap;">
+              <button class="drawer-btn" data-act="refine-food" data-scope="${esc(scope)}" style="font-size: 11px; padding: 5px 13px;"${busy ? ' disabled' : ''}>
+                ${busy ? '<span class="spinner"></span> Checking…' : (ai ? 'Check again' : 'Refine with AI')}
+              </button>
+              ${ai ? `<span style="font-size: 11px; color: var(--color-neutral-600);">Local reading was ${food.local.kcal.toLocaleString('en-US')} kcal</span>` : ''}
+              ${state.aiError && state.aiBusy === null ? `<span style="font-size: 11px; color: var(--color-text);">${esc(state.aiError)}</span>` : ''}
+            </div>`;
+
   return `
           <div style="margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--color-divider);">
             <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 8px;">What you ate</div>
             <div style="font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800);">${esc(food.observation)}</div>
-            ${food.nutrition ? `<div style="font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800); margin-top: 7px;">${esc(food.nutrition)}</div>` : ''}
+            ${line ? `<div style="font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800); margin-top: 7px;">${esc(line)}${ai ? ' <span style="color: var(--color-neutral-600);">Estimated by AI from what you wrote.</span>' : ''}</div>` : ''}
+            ${ai && ai.items && ai.items.length ? `
+            <div style="margin-top: 6px; font-size: 11.5px; line-height: 1.6; color: var(--color-neutral-700);">
+              ${ai.items.map((i) => `${esc(i.name)} ~${i.kcal}`).join(' · ')}
+            </div>` : ''}
             <div style="font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800); margin-top: 7px;">${esc(food.advice)}</div>
+            ${refine}
           </div>`;
+}
+
+/* Asked once, then remembered on this device. The wording is plain about what
+   leaves the browser, because "your data stays yours" is on the landing page
+   and this is the one place that stops being strictly true. */
+function aiConsentDialog() {
+  if (!state.aiAsking) return '';
+  return `
+  <div class="no-print donate-backdrop">
+    <div class="donate-sheet" role="dialog" aria-modal="true" aria-labelledby="ai-consent-title" style="text-align: left;">
+      <button class="donate-x" data-act="ai-decline" aria-label="Close">×</button>
+      <div class="donate-kicker">Before we do this</div>
+      <h2 id="ai-consent-title" style="margin: 0 0 12px; font-family: var(--font-heading); font-size: 24px; line-height: 1.2;">Send this meal to be estimated?</h2>
+      <p style="margin: 0 0 12px; font-size: 13px; line-height: 1.6; color: var(--color-neutral-800);">
+        To get a closer figure, the text of what you ate is sent to Google's Gemini API, which returns an estimate.
+        Only the food description goes — not your name, your account, your dates or anything else you track.
+      </p>
+      <p style="margin: 0 0 18px; font-size: 13px; line-height: 1.6; color: var(--color-neutral-800);">
+        Everything else in ZIMPAN stays as it is: nothing is sent unless you press this button, and the answer is
+        kept on this device so the same meal is never sent twice. You can carry on using the built-in estimate instead.
+      </p>
+      <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+        <button class="btn btn-primary" data-act="ai-accept">Yes, estimate it</button>
+        <button class="btn btn-ghost" data-act="ai-decline">No thanks</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 /* The headline number pair. Deliberately blunt about being an estimate — the
@@ -2706,7 +2832,7 @@ function todayCard(v) {
         <div style="font-size: 13.5px; line-height: 1.6; margin: 14px 0 16px;">${esc(v.todayHeadline)}</div>
         ${v.todayEmpty || !state.drawers.today ? '' : `
           <div style="display: flex; flex-direction: column; gap: 13px;">${wellbeingRows(v.todayReadings)}</div>
-          ${foodBlock(v.todayFood)}
+          ${foodBlock(v.todayFood, 'today')}
           ${adviceBlock(v.todayAdvice)}`}
         ${v.todayEmpty ? '' : drawerToggle('today', 0, '', REPORT_LABELS)}
       </div>`;
@@ -2759,7 +2885,7 @@ function pastCard(v) {
             </div>`).join('')}
         </div>
         <div style="display: flex; flex-direction: column; gap: 13px;">${wellbeingRows(v.pastReadings)}</div>
-        ${foodBlock(v.pastFood)}
+        ${foodBlock(v.pastFood, 'past')}
         ${adviceBlock(v.pastAdvice)}`}
         ${v.pastEmpty ? '' : drawerToggle('lookback', 0, '', REPORT_LABELS)}
       </div>`;
@@ -3260,6 +3386,7 @@ function render() {
   ${state.reportOpen ? reportSheet(v) : ''}
   ${notePromptDialog()}
   ${donateSheet()}
+  ${aiConsentDialog()}
   ${legalSheet()}
   ${backToTop()}
   ${mobileNav(v)}
@@ -3581,6 +3708,24 @@ const ACTIONS = {
     syncNow();
   },
   'resync-cancel': () => { state.resyncArmed = false; render(); },
+
+  /* Consent first, then the call. The scope is held across the dialog so
+     accepting continues what was asked for rather than dropping it. */
+  'refine-food': (el) => {
+    const scope = el.dataset.scope;
+    state.aiError = '';
+    if (!state.aiConsent) { state.aiAsking = scope; render(); return; }
+    refineFood(scope);
+  },
+  'ai-accept': () => {
+    const scope = state.aiAsking;
+    state.aiConsent = true;
+    state.aiAsking = null;
+    writeJson(AI_CONSENT_KEY, true);
+    render();
+    if (scope) refineFood(scope);
+  },
+  'ai-decline': () => { state.aiAsking = null; render(); },
 
   'donate-close': () => { state.donateOpen = false; render(); },
   'donate-go': () => {

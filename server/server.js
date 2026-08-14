@@ -15,6 +15,7 @@ import {
 import { changesSince, applyChanges, Invalid, CURRENCIES } from './sync.js';
 import { verifyGoogleIdToken } from './google.js';
 import { sendResetEmail } from './mail.js';
+import { estimateNutrition, aiConfigured } from './ai.js';
 
 const ROOT = join(HERE, '..');
 const PORT = Number(process.env.PORT) || 3000;
@@ -343,8 +344,36 @@ app.post('/api/auth/google', wrap(async (req, res) => {
   res.json({ user: { email: user.email, currency: user.currency }, fresh });
 }));
 
-// Lets the client decide whether to draw the Google button at all.
-app.get('/api/config', (req, res) => res.json({ googleClientId: GOOGLE_CLIENT_ID || null }));
+/* ── nutrition estimates ──
+
+   Behind a session and a rate limit: the key is ours to pay for, so it is not
+   left open to anyone who can reach the domain. The cap is per user rather
+   than per IP, since a household behind one address is not one person. */
+
+app.post('/api/estimate', requireUser, wrap(async (req, res) => {
+  if (!aiConfigured()) return res.status(503).json({ error: 'AI estimates are not configured on this server.' });
+
+  const limited = rateLimit({ key: `estimate:${req.user.id}`, limit: 60, windowMs: 60 * 60 * 1000 });
+  if (!limited.ok) return res.status(429).json({ error: `That is a lot of estimates. Try again ${retryLabel(limited.retryAfterMs)}.` });
+
+  const text = String((req.body || {}).text || '').trim();
+  if (!text) return res.status(400).json({ error: 'Nothing to estimate.' });
+  if (text.length > 1200) return res.status(400).json({ error: 'That is too much text to estimate in one go.' });
+
+  try {
+    res.json({ estimate: await estimateNutrition(text) });
+  } catch (err) {
+    // The reason is already in the log; the message here is safe to show.
+    res.status(502).json({ error: err.message });
+  }
+}));
+
+// Lets the client decide whether to draw the Google button and the refine
+// button at all. Says only whether the feature exists, never the key.
+app.get('/api/config', (req, res) => res.json({
+  googleClientId: GOOGLE_CLIENT_ID || null,
+  aiEstimates: aiConfigured()
+}));
 
 app.get('/api/currencies', (req, res) => res.json({ currencies: CURRENCIES }));
 
