@@ -1032,21 +1032,47 @@ const isFoodRow = (row) => {
    Sources are the usual public nutrition tables, rounded hard — precision
    here would be false confidence. */
 
-/* `g` groups rules describing the same food. Only the first match within a
-   group counts, so "fried chicken" is not also billed as plain chicken.
-   Specific patterns therefore have to precede general ones. */
+/* Rules are tried in order and the first to match an item wins, so "fried
+   chicken" is never also billed as plain chicken and "black coffee" never as a
+   latte. Specific patterns therefore have to precede general ones. `g` is kept
+   for readability; matching is per item now, so it no longer has to suppress
+   anything. */
 const SERVINGS = [
+  // Drinks and supplements first: they are the ones most often written
+  // alongside a meal, and several of them are close to free.
+  { g: 'water', re: /\bwater\b|tubig/, kcal: 0, p: 0, c: 0, f: 0 },
+  { g: 'supplement', re: /creatine|multivitamin|vitamins?\b|electrolyte|\bbcaa\b|pre-?workout/, kcal: 5, p: 0, c: 1, f: 0 },
+  { g: 'supplement', re: /whey|protein powder|protein shake|mass gainer/, kcal: 120, p: 24, c: 3, f: 1.5 },
+  { g: 'coffee', re: /black coffee|americano|espresso|brewed coffee|kapeng barako|black kape/, kcal: 5, p: 0, c: 1, f: 0 },
+  { g: 'coffee', re: /latte|cappuccino|mocha|frappe|white coffee|3-?in-?1/, kcal: 150, p: 6, c: 18, f: 6 },
+  { g: 'coffee', re: /coffee|kape/, kcal: 60, p: 2, c: 8, f: 2 },
+  { g: 'tea', re: /green tea|black tea|\btea\b(?! ?(?:milk|boba))/, kcal: 2, p: 0, c: 0, f: 0 },
+
+  // Baked goods — the gap that started this. A croissant is mostly butter.
+  { g: 'baked', re: /croissant|croisant|crossaint|crosaint/, kcal: 250, p: 5, c: 26, f: 14 },
+  { g: 'baked', re: /bagel/, kcal: 250, p: 10, c: 48, f: 1.5 },
+  { g: 'baked', re: /muffin|scone|banana bread/, kcal: 380, p: 6, c: 52, f: 17 },
+  { g: 'baked', re: /pancake|waffle|hotcake/, kcal: 250, p: 6, c: 35, f: 9 },
+  { g: 'sandwich', re: /sandwich|sanwich|sandwhich|\bwrap\b|\bsub\b|baguette/, kcal: 330, p: 14, c: 38, f: 13 },
+  { g: 'spread', re: /peanut butter|\bnutella\b|almond butter/, kcal: 190, p: 7, c: 6, f: 16 },
+  { g: 'nuts', re: /\bnuts?\b|almond|cashew|peanuts/, kcal: 170, p: 6, c: 6, f: 15 },
+
   { g: 'grain', re: /brown rice|quinoa|barley|wholemeal/, kcal: 215, p: 5, c: 45, f: 1.8 },
   { g: 'grain', re: /\brice\b|kanin/, kcal: 205, p: 4, c: 45, f: 0.4 },
   { g: 'bread', re: /bread|pandesal|toast/, kcal: 160, p: 6, c: 30, f: 2 },
   { g: 'pasta', re: /pasta|noodle|spaghetti|pancit/, kcal: 300, p: 11, c: 56, f: 3 },
   { g: 'oats', re: /oats|oatmeal|cereal/, kcal: 160, p: 6, c: 27, f: 3 },
+  /* Named dishes before their headline ingredient, or "chicken adobo" is billed
+     as plain chicken and loses the oil and sugar it was cooked in. */
+  { g: 'stew', re: /adobo|caldereta|kaldereta|menudo|curry|afritada|mechado|kare-?kare|bicol express/, kcal: 350, p: 25, c: 12, f: 22 },
+  { g: 'soup', re: /sinigang|tinola|nilaga|bulalo|\bsoup\b|batchoy|mami/, kcal: 180, p: 14, c: 12, f: 8 },
   { g: 'chicken', re: /fried chicken|chicken inasal|lechon manok/, kcal: 420, p: 32, c: 12, f: 26 },
   { g: 'chicken', re: /chicken|manok/, kcal: 240, p: 34, c: 0, f: 11 },
   { g: 'fish', re: /fish|isda|bangus|tilapia|tuna|salmon/, kcal: 210, p: 30, c: 0, f: 9 },
   { g: 'beef', re: /beef|steak|baka/, kcal: 290, p: 30, c: 0, f: 18 },
   { g: 'pork', re: /\bpork\b|baboy|liempo|lechon kawali|lechon baboy/, kcal: 320, p: 27, c: 0, f: 23 },
-  { g: 'egg', re: /\begg|itlog/, kcal: 90, p: 7, c: 0.5, f: 6.5 },
+  // One large egg, so a written count multiplies cleanly.
+  { g: 'egg', re: /\begg|itlog/, kcal: 78, p: 6.5, c: 0.5, f: 5.5 },
   { g: 'plant', re: /tofu|tokwa|beans|monggo|lentil/, kcal: 150, p: 12, c: 12, f: 6 },
   { g: 'seafood', re: /shrimp|hipon|seafood/, kcal: 140, p: 26, c: 1, f: 2 },
   { g: 'veg', re: /salad|gulay|kangkong|pechay|vegetable|broccoli|spinach|malunggay/, kcal: 70, p: 3, c: 10, f: 2 },
@@ -1057,53 +1083,132 @@ const SERVINGS = [
   { g: 'dessert', re: /cake|donut|pastry|leche flan|ice cream|halo-halo|dessert|chocolate/, kcal: 330, p: 4, c: 45, f: 15 },
   { g: 'drink', re: /milk tea|boba/, kcal: 250, p: 3, c: 45, f: 6 },
   { g: 'drink', re: /soda|coke|sprite|softdrink|iced tea|juice/, kcal: 180, p: 0, c: 44, f: 0 },
-  { g: 'coffee', re: /coffee|kape|latte|espresso/, kcal: 60, p: 2, c: 8, f: 2 },
   { g: 'dairy', re: /yogurt|cheese|\bmilk\b(?! ?tea)/, kcal: 130, p: 8, c: 10, f: 6 },
-  { g: 'soup', re: /soup|sinigang|tinola|nilaga/, kcal: 180, p: 14, c: 12, f: 8 },
-  { g: 'stew', re: /adobo|caldereta|menudo|curry|afritada/, kcal: 350, p: 25, c: 12, f: 22 }
 ];
 
 // A meal we cannot read at all still happened; ignoring it would understate
 // the day more than a rough placeholder does.
 const UNKNOWN_MEAL = { kcal: 450, p: 20, c: 50, f: 16 };
 
+/* One unreadable item inside an otherwise readable meal is not a whole meal,
+   so it is charged far less than UNKNOWN_MEAL. Undercounting here is the
+   failure that matters: it is invisible, where an overcount looks wrong and
+   gets corrected. */
+const UNKNOWN_ITEM = { kcal: 170, p: 7, c: 18, f: 7 };
+
+/* A written line is a list, not a single food. Splitting on the punctuation
+   people actually use is what lets "2 eggs, a sandwich and coffee" be three
+   things rather than whichever one happened to match first. */
+const ITEM_SPLIT = /\s*(?:,|;|\/|\+|\band\b|\bwith\b|\bw\/|\bplus\b|\n)\s*/i;
+
+const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, dozen: 12 };
+
+/* Portion words, deliberately mild: "large" on a menu is not double, and an
+   over-eager multiplier here would be as wrong as the undercount it replaces. */
+const SIZE_WORDS = [
+  { re: /\b(?:extra large|x-?large|jumbo|huge|giant)\b/, mult: 1.4 },
+  { re: /\b(?:large|big|grande|venti|foot-?long)\b/, mult: 1.2 },
+  { re: /\b(?:small|mini|petite|kiddie|tall)\b/, mult: 0.7 },
+  { re: /\b(?:half|1\/2)\b/, mult: 0.5 }
+];
+
+/* How many of it, and how big. Counts are capped because a stray year or price
+   in the text would otherwise multiply a meal into the tens of thousands. */
+function portionOf(item) {
+  let qty = 1;
+  const digits = /^\s*(\d+(?:\.\d+)?)\s*(?:x\b|pcs?\b|pieces?\b|servings?\b|slices?\b|cups?\b)?\s*/i.exec(item);
+  if (digits) {
+    qty = Number(digits[1]);
+  } else {
+    const word = /^\s*(one|two|three|four|five|six|seven|eight|dozen)\b/i.exec(item);
+    if (word) qty = NUMBER_WORDS[word[1].toLowerCase()];
+  }
+  if (!Number.isFinite(qty) || qty <= 0) qty = 1;
+  qty = Math.min(qty, 20);
+
+  const size = SIZE_WORDS.find((s) => s.re.test(item));
+  return qty * (size ? size.mult : 1);
+}
+
+// Anything too short or without a letter in it is punctuation, not food.
+const isItemish = (s) => s.trim().length >= 3 && /[a-z]/i.test(s);
+
+/* The activity is a label — "Breakfast", "Lunch out" — and the note is the
+   answer to what was in it. Stripping the label matters for more than tidiness:
+   glued to the front of the note it stops the first item starting with its own
+   count, and "Breakfast 2 eggs" quietly becomes one egg. */
+const MEAL_LABEL = /^\s*(?:breakfast|brunch|lunch|dinner|supper|snack|merienda|meal|food|ate|eating|almusal|tanghalian|hapunan)\b[\s:–-]*/i;
+
 function nutritionFor(rows) {
-  let kcal = 0, p = 0, c = 0, f = 0, read = 0, guessed = 0;
+  let kcal = 0, p = 0, c = 0, f = 0, read = 0, guessed = 0, items = 0, unread = 0;
+
   rows.forEach((row) => {
-    const text = `${row.activity || ''} ${row.note || ''}`.toLowerCase();
-    // One serving per food group: the first (most specific) rule that matches.
-    const claimed = new Set();
-    const hits = SERVINGS.filter((s) => {
-      if (claimed.has(s.g) || !s.re.test(text)) return false;
-      claimed.add(s.g);
-      return true;
+    /* Split each source on its own rather than joining them first, so a note
+       beginning "2 eggs" still begins with its count. */
+    const parts = [row.activity || '', row.note || '']
+      .map((s) => s.toLowerCase().replace(MEAL_LABEL, ''))
+      .flatMap((s) => s.split(ITEM_SPLIT))
+      .filter(isItemish);
+
+    const found = [];
+    const missed = [];
+    parts.forEach((part) => {
+      const hit = SERVINGS.find((s) => s.re.test(part));
+      if (hit) found.push({ hit, portion: portionOf(part) });
+      else missed.push(part);
     });
-    if (hits.length) {
-      read += 1;
-      hits.forEach((h) => { kcal += h.kcal; p += h.p; c += h.c; f += h.f; });
-    } else {
+
+    /* Nothing recognised at all means the line describes a meal we cannot read
+       — "lunch out" — and that is worth a meal, not a handful of items. Charging
+       UNKNOWN_ITEM per word there would badly understate it. */
+    if (!found.length) {
       guessed += 1;
       kcal += UNKNOWN_MEAL.kcal; p += UNKNOWN_MEAL.p; c += UNKNOWN_MEAL.c; f += UNKNOWN_MEAL.f;
+      return;
     }
+
+    read += 1;
+    found.forEach(({ hit, portion }) => {
+      items += 1;
+      kcal += hit.kcal * portion; p += hit.p * portion;
+      c += hit.c * portion; f += hit.f * portion;
+    });
+    // Recognised company makes an unread neighbour a side, not a mystery meal.
+    missed.forEach(() => {
+      unread += 1; items += 1;
+      kcal += UNKNOWN_ITEM.kcal; p += UNKNOWN_ITEM.p; c += UNKNOWN_ITEM.c; f += UNKNOWN_ITEM.f;
+    });
   });
-  return { kcal: Math.round(kcal), protein: Math.round(p), carbs: Math.round(c), fat: Math.round(f), read, guessed };
+
+  return {
+    kcal: Math.round(kcal), protein: Math.round(p), carbs: Math.round(c), fat: Math.round(f),
+    read, guessed, items, unread
+  };
 }
 
 /* MET values — energy cost relative to sitting still. Burn is
    MET × kilograms × hours, the standard approximation. */
 const METS = [
+  { re: /jump ?rope|skipping rope/, met: 12.0 },
+  { re: /boxing|muay thai|martial art|karate|taekwondo|\bmma\b|jiu-?jitsu/, met: 10.0 },
   { re: /run|jog|sprint/, met: 9.8 },
+  { re: /climb|bouldering/, met: 8.0 },
+  { re: /crossfit|hiit|zumba|circuit/, met: 8.0 },
   { re: /treadmill/, met: 7.0 },
   { re: /swim/, met: 7.0 },
+  { re: /row(?:ing|er)?\b/, met: 7.0 },
   { re: /bike|cycl|spin/, met: 7.5 },
+  { re: /basketball|football|soccer|badminton|tennis|padel|pickleball|volleyball|sport/, met: 6.5 },
   { re: /hike/, met: 6.0 },
-  { re: /basketball|football|badminton|tennis|sport/, met: 6.5 },
-  { re: /crossfit|hiit|zumba/, met: 8.0 },
+  { re: /dance|dancing|aerobics/, met: 5.5 },
+  { re: /elliptical|cross ?trainer|stair|calisthenic|push-?ups?|sit-?ups?|planks?/, met: 5.0 },
   { re: /gym|weights|lift|strength/, met: 5.0 },
   { re: /pilates|stretch/, met: 3.0 },
   { re: /yoga/, met: 2.5 },
   { re: /walk|lakad|stroll/, met: 3.5 },
-  { re: /workout|exercise|cardio/, met: 5.0 }
+  // Floor for anything filed as exercise but not named: the category is in the
+  // text being matched, so a Workout entry is never worth nothing.
+  { re: /workout|exercise|cardio|training/, met: 5.0 }
 ];
 
 const DEFAULT_WEIGHT_KG = 70;
@@ -1182,7 +1287,13 @@ function foodReport(entries, money, days) {
 
   const n = nutritionFor(rows);
   const perDay = days > 1 ? ` (about ${Math.round(n.kcal / days)} a day)` : '';
-  const nutrition = `Roughly ${n.kcal.toLocaleString('en-US')} kcal${perDay} — around ${n.protein}g protein, ${n.carbs}g carbs, ${n.fat}g fat. Estimated from what you wrote${n.guessed ? `, with ${n.guessed} ${n.guessed === 1 ? 'entry' : 'entries'} too vague to read` : ''}.`;
+  /* Both kinds of gap are named: a meal that said nothing at all, and an item
+     inside a readable meal that is not in the table. Saying so is what stops
+     the figure being trusted more than it deserves. */
+  const gaps = [];
+  if (n.guessed) gaps.push(`${n.guessed} ${n.guessed === 1 ? 'entry' : 'entries'} too vague to read`);
+  if (n.unread) gaps.push(`${n.unread} ${n.unread === 1 ? 'item' : 'items'} not in the table`);
+  const nutrition = `Roughly ${n.kcal.toLocaleString('en-US')} kcal${perDay} — around ${n.protein}g protein, ${n.carbs}g carbs, ${n.fat}g fat. Estimated from what you wrote${gaps.length ? `, with ${gaps.join(' and ')}` : ''}.`;
 
   return {
     meals: rows.length,
