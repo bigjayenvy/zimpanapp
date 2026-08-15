@@ -1,48 +1,56 @@
 /* Industry — design-system tokens and component classes. This file is the source of truth for the system's look; retune it here and see readme.md. */
-@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;700&family=Barlow+Condensed:wght@400;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700;800&display=swap');
 
 :root {
-  --color-bg: #f2f2f3;
-  --color-surface: #e9e9ea;
-  --color-text: #1d1f20;
-  --color-accent: #5980a6;
-  --color-accent-2: #728fab;
-  --color-divider: color-mix(in srgb, #1d1f20 16%, transparent);
+  /* Ground and ink both carry a little of the violet, so the neutrals sit with
+     the accent rather than beside it. */
+  --color-bg: #f8f7fb;
+  --color-surface: #efedf6;
+  --color-text: #16131f;
+  --color-accent: #7856f5;
+  --color-accent-2: #4f46e5;
+  --color-divider: color-mix(in srgb, #16131f 14%, transparent);
+
+  /* The brand gradient. One declaration, used by every primary surface —
+     buttons, the mark, the timer block — so the angle and the stops can be
+     retuned in one place. */
+  --grad-brand: linear-gradient(115deg, #8b5cf6 0%, #6d54f0 45%, #4f46e5 100%);
+  --grad-brand-hover: linear-gradient(115deg, #7c4df4 0%, #5f45e8 45%, #4038d4 100%);
 
   /* Tonal ramps — generated in OKLCH on one shared lightness scale, so the
      same step of any role matches the others in visual value. */
-  --color-neutral-100: #f5f5f8;
-  --color-neutral-200: #e7e7ea;
-  --color-neutral-300: #d4d4d7;
-  --color-neutral-400: #b7b7ba;
-  --color-neutral-500: #98989b;
-  --color-neutral-600: #7a7a7d;
-  --color-neutral-700: #5d5d60;
-  --color-neutral-800: #424244;
-  --color-neutral-900: #2b2b2d;
+  --color-neutral-100: #f6f5f9;
+  --color-neutral-200: #e8e6ef;
+  --color-neutral-300: #d5d2df;
+  --color-neutral-400: #b8b4c6;
+  --color-neutral-500: #9995ab;
+  --color-neutral-600: #756f88;
+  --color-neutral-700: #575168;
+  --color-neutral-800: #3b3648;
+  --color-neutral-900: #241f30;
 
-  --color-accent-100: #eef6ff;
-  --color-accent-200: #d6ebff;
-  --color-accent-300: #b5d9fd;
-  --color-accent-400: #94bce3;
-  --color-accent-500: #749dc4;
-  --color-accent-600: #597ea3;
-  --color-accent-700: #416180;
-  --color-accent-800: #2c455d;
-  --color-accent-900: #1d2d3d;
+  --color-accent-100: #f2eefe;
+  --color-accent-200: #e4dcfd;
+  --color-accent-300: #cbbcfa;
+  --color-accent-400: #ab93f6;
+  --color-accent-500: #8b6bf0;
+  --color-accent-600: #7450e4;
+  --color-accent-700: #5f3ac9;
+  --color-accent-800: #472b97;
+  --color-accent-900: #2f1c66;
 
-  --color-accent-2-100: #eef6ff;
-  --color-accent-2-200: #d6ebff;
-  --color-accent-2-300: #bdd8f2;
-  --color-accent-2-400: #9ebbd8;
-  --color-accent-2-500: #7e9cb8;
-  --color-accent-2-600: #627d98;
-  --color-accent-2-700: #486077;
-  --color-accent-2-800: #314457;
-  --color-accent-2-900: #1f2d3a;
+  --color-accent-2-100: #eceefe;
+  --color-accent-2-200: #d8ddfd;
+  --color-accent-2-300: #b8c1fa;
+  --color-accent-2-400: #909df5;
+  --color-accent-2-500: #6b7bef;
+  --color-accent-2-600: #5261e3;
+  --color-accent-2-700: #3f4bc4;
+  --color-accent-2-800: #2f3893;
+  --color-accent-2-900: #1f2563;
 
-  --font-heading: "Barlow Condensed", system-ui, sans-serif;
-  --font-heading-weight: 600;
+  --font-heading: "Playfair Display", Georgia, "Times New Roman", serif;
+  --font-heading-weight: 700;
   --font-body: "Barlow", system-ui, sans-serif;
 
   --space-1: 3.4px;
@@ -52,15 +60,15 @@
   --space-6: 20.4px;
   --space-8: 27.2px;
 
-  --radius-sm: 2px;
-  --radius-md: 4px;
-  --radius-lg: 7px;
+  --radius-sm: 7px;
+  --radius-md: 11px;
+  --radius-lg: 18px;
 
-  /* Elevation — derived from the ground: soft ink-tinted shadows on a
-     light theme, a hairline edge + ambient darkness on a dark one. */
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #2b2b2d 14%, transparent);
-  --shadow-md: 0 3px 10px color-mix(in srgb, #2b2b2d 16%, transparent);
-  --shadow-lg: 0 12px 32px color-mix(in srgb, #2b2b2d 22%, transparent);
+  /* Elevation — tinted with the accent rather than with black, so a raised
+     surface warms towards the brand instead of going grey. */
+  --shadow-sm: 0 1px 2px color-mix(in srgb, #2f1c66 12%, transparent);
+  --shadow-md: 0 4px 14px color-mix(in srgb, #2f1c66 13%, transparent);
+  --shadow-lg: 0 18px 44px color-mix(in srgb, #2f1c66 20%, transparent);
 }
 
 body {
@@ -70,10 +78,14 @@ body {
 }
 h1, h2, h3, h4 { font-family: var(--font-heading); font-weight: var(--font-heading-weight); }
 
+/* The app's card. Was a square hairline wireframe; it is a raised, rounded
+   white panel now, which is what the rest of the brand is built on. */
 .blueprint {
   position: relative;
-  border: 1px solid var(--color-divider);
-  border-radius: 0;
+  background: #fff;
+  border: 1px solid color-mix(in srgb, var(--color-accent-900) 8%, transparent);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 /* The overlay image treatments (halftone, duotone) clip their overlay
    (overflow:hidden); a blueprint wrapper draws its registration marks
@@ -276,10 +288,41 @@ textarea.input { min-height: 90px; resize: vertical; }
 .dialog-body { font-size: 14px; opacity: 0.85; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
 
-/* — blueprint frame: components are wireframe objects (see .blueprint
-     and .corner above) — square, transparent, hairline-bordered — */
-.card, .btn, .input, .tag, .seg, .dialog { border-radius: 0; }
-.card, .dialog { background: transparent; border: 1px solid var(--color-divider); }
-.btn { border: 1px solid var(--color-divider); }
-.btn-primary { border-color: var(--color-accent); }
+/* — the brand's shapes —
+     Everything that can be a pill is a pill, and every panel is rounded. This
+     block used to square the same components off for the wireframe look; it
+     sets the opposite now, and still sits last so it wins. */
+.btn, .tag, .seg { border-radius: 999px; }
+.card, .input, .dialog { border-radius: var(--radius-md); }
+.card, .dialog { background: #fff; border: 1px solid color-mix(in srgb, var(--color-accent-900) 8%, transparent); }
+.btn { border: 1px solid transparent; }
 .btn-ghost { border-color: transparent; }
+
+/* The primary action carries the gradient wherever it appears. */
+.btn-primary {
+  background: var(--grad-brand); color: #fff; border-color: transparent;
+  box-shadow: 0 2px 10px color-mix(in srgb, #4f46e5 32%, transparent);
+}
+.btn-primary:hover { background: var(--grad-brand-hover); }
+.btn-primary:active { background: var(--grad-brand-hover); }
+.btn-secondary {
+  background: #fff; color: var(--color-accent-700);
+  border-color: color-mix(in srgb, var(--color-accent) 42%, transparent);
+}
+.btn-secondary:hover { background: var(--color-accent-100); border-color: var(--color-accent); }
+.btn-secondary:active { background: var(--color-accent-200); }
+
+.input { background: #fff; border-color: color-mix(in srgb, var(--color-accent-900) 15%, transparent); }
+.input:focus-visible {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 22%, transparent);
+}
+
+.seg { background: #fff; border-color: color-mix(in srgb, var(--color-accent-900) 12%, transparent); }
+.seg-opt:has(input:checked) { background: var(--grad-brand); color: #fff; }
+.seg-opt + .seg-opt { border-left-color: color-mix(in srgb, var(--color-accent-900) 10%, transparent); }
+
+/* A serif at display sizes wants its tracking opened rather than tightened —
+     the ds default of -0.015em is set for the condensed sans it replaced. */
+h1, h2, h3, h4, h5, h6 { letter-spacing: -0.005em; }
+h6 { letter-spacing: 0.08em; }

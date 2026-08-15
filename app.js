@@ -12,9 +12,9 @@
 // Mirrors the component's authored props.
 const CONFIG = { defaultRange: 'day', roundToMinutes: 1 };
 
-const PALETTE = ['#416180', '#749dc4', '#1d2d3d', '#94bce3', '#597ea3', '#b5d9fd', '#2c455d', '#8aa7bf'];
+const PALETTE = ['#7856f5', '#a78bfa', '#2f1c66', '#c4b5fd', '#5f3ac9', '#ddd0fe', '#472b97', '#8b7bd8'];
 // Money runs on green. Same light/dark rhythm as PALETTE so slices stay apart.
-const MONEY_PALETTE = ['#3a6b4b', '#6ba982', '#163123', '#a8d4b6', '#4f8a63', '#cde8d5', '#274c35', '#8dc3a0'];
+const MONEY_PALETTE = ['#10756c', '#35ae9f', '#073b36', '#97ddd2', '#199184', '#c7ede7', '#0b5750', '#63c8ba'];
 const PURPOSES = ['Shopping', 'Projects', 'Movies', 'Petrol', 'Groceries', 'Eat Out', 'House Improvements', 'Birthdays', 'Commute', 'Gadgets', 'Utilities', 'Appliances'];
 const STORE_KEY = 'zimpan.v1';
 
@@ -31,6 +31,26 @@ const LOGO_MARK = (size) => `
   <circle cx="58" cy="41" r="8" fill="currentColor"></circle>
   <circle cx="44" cy="56" r="8" fill="currentColor"></circle>
   <circle cx="78" cy="80" r="9" fill="currentColor"></circle>
+</svg>`;
+
+/* The mark on a gradient disc, for the places that carry the brand rather than
+   just wearing the current text colour — the landing header, the sign-in
+   lockup. The gradient id repeats wherever this is used more than once on a
+   page; every copy defines it identically, so a duplicate resolves the same. */
+const LOGO_BADGE = (size) => `
+<svg viewBox="0 0 100 100" width="${size}" height="${size}" aria-hidden="true" focusable="false" style="display:block;flex:none;">
+  <defs>
+    <linearGradient id="zg-mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a78bfa"></stop>
+      <stop offset="50%" stop-color="#7856f5"></stop>
+      <stop offset="100%" stop-color="#4f46e5"></stop>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="96" height="96" rx="28" fill="url(#zg-mark)"></rect>
+  <path d="M28 27 H72 L28 73 H72" fill="none" stroke="#fff" stroke-width="10"
+        stroke-linecap="round" stroke-linejoin="round"></path>
+  <circle cx="28" cy="27" r="7.5" fill="#fff"></circle>
+  <circle cx="72" cy="73" r="7.5" fill="#fff"></circle>
 </svg>`;
 
 const DONATE_URL = 'https://www.paypal.com/ncp/payment/CJ6PTT55VQWX6';
@@ -1908,9 +1928,9 @@ const tabStyle = (active) => `padding:7px 16px;border-radius:999px;font-size:13p
 /* Running is a deeper shade of the same green, so the two states stay
    distinguishable without resorting to red — stopping saves the entry rather
    than discarding it, and red would say otherwise. */
-const TIMER_GREEN = '#15816e';
-const TIMER_GREEN_RUNNING = '#0e5f51';
-const timerBtnStyle = (running) => `border:1px solid #b3b3b3;background:${running ? TIMER_GREEN_RUNNING : TIMER_GREEN};`;
+const timerBtnStyle = (running) => `border:0;color:#fff;background:${running
+  ? 'linear-gradient(115deg,#5f3ac9 0%,#472b97 55%,#2f3893 100%)'
+  : 'var(--grad-brand)'};box-shadow:0 6px 20px color-mix(in srgb,#4f46e5 34%,transparent);`;
 const rowChipStyle = (color) => `border:0;background:${color}1f;color:var(--color-accent-900);font:inherit;font-size:12px;padding:3px 10px;border-radius:999px;cursor:pointer;`;
 
 // The value stays the bare name — only the label carries the icon — so every
@@ -2286,6 +2306,96 @@ const LANDING_FEATURES = [
   ['sleep', 'Sleep', 'Improve Your Sleep', 'Log sleep duration and quality to build better rest habits.']
 ];
 
+/* ── hero art ──
+   The app's own surfaces, floating over the brand's ribbons. Drawn rather than
+   photographed: it stays sharp at any size, needs no asset, and re-colours
+   itself from the palette if the palette moves again. Everything in it is a
+   real thing the app shows — the donut, a calorie dial, an entry card. */
+const HERO_ART = () => `
+  <svg viewBox="0 0 620 520" class="hero-svg" role="img"
+       aria-label="Zimpan showing a day's time split, a calorie dial and logged entries">
+    <defs>
+      <linearGradient id="hg-ribbon" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#a78bfa"></stop>
+        <stop offset="55%" stop-color="#7856f5"></stop>
+        <stop offset="100%" stop-color="#4f46e5"></stop>
+      </linearGradient>
+      <linearGradient id="hg-teal" x1="0" y1="1" x2="1" y2="0">
+        <stop offset="0" stop-color="#0f766e"></stop>
+        <stop offset="100%" stop-color="#35ae9f"></stop>
+      </linearGradient>
+      <linearGradient id="hg-blush" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#f0abfc"></stop>
+        <stop offset="100%" stop-color="#c084fc"></stop>
+      </linearGradient>
+      <filter id="hg-lift" x="-25%" y="-25%" width="150%" height="150%">
+        <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#2f1c66" flood-opacity=".22"></feDropShadow>
+      </filter>
+    </defs>
+
+    <!-- the ribbons -->
+    <path d="M96 12C258 -22 386 78 470 168c86 92 150 190 128 300-138 44-286 24-386-46C104 346 22 262 30 168 36 96 58 40 96 12Z"
+          fill="url(#hg-ribbon)" opacity=".16"></path>
+    <path d="M470 60c74 44 122 128 128 214 6 88-38 170-110 216-44-104-30-186-70-260-38-72-92-104-92-158 0-40 42-56 144-12Z"
+          fill="url(#hg-teal)" opacity=".18"></path>
+    <path d="M150 300c92-58 168-24 232 34 62 56 88 130 56 168-108 26-224-2-292-64-42-38-42-108 4-138Z"
+          fill="url(#hg-blush)" opacity=".2"></path>
+
+    <!-- where the time went -->
+    <g filter="url(#hg-lift)">
+      <rect x="36" y="96" width="250" height="196" rx="20" fill="#fff"></rect>
+      <text x="60" y="130" font-family="Playfair Display, Georgia, serif" font-size="17" font-weight="700" fill="#16131f">Where the time went</text>
+      <g transform="translate(112 210)">
+        <circle r="52" fill="none" stroke="#e8e6ef" stroke-width="19"></circle>
+        <circle r="52" fill="none" stroke="#7856f5" stroke-width="19" stroke-dasharray="118 209" transform="rotate(-90)"></circle>
+        <circle r="52" fill="none" stroke="#a78bfa" stroke-width="19" stroke-dasharray="68 259" transform="rotate(45)"></circle>
+        <circle r="52" fill="none" stroke="#2f1c66" stroke-width="19" stroke-dasharray="42 285" transform="rotate(128)"></circle>
+        <text text-anchor="middle" y="4" font-family="Playfair Display, Georgia, serif" font-size="21" font-weight="700" fill="#16131f">6h 20m</text>
+      </g>
+      <g font-family="Barlow, system-ui, sans-serif" font-size="12" fill="#575168">
+        <rect x="188" y="164" width="9" height="9" rx="2" fill="#7856f5"></rect><text x="204" y="173">Focus Work</text>
+        <rect x="188" y="192" width="9" height="9" rx="2" fill="#a78bfa"></rect><text x="204" y="201">Family Time</text>
+        <rect x="188" y="220" width="9" height="9" rx="2" fill="#2f1c66"></rect><text x="204" y="229">Workout</text>
+        <rect x="188" y="248" width="9" height="9" rx="2" fill="#c4b5fd"></rect><text x="204" y="257">Chores</text>
+      </g>
+    </g>
+
+    <!-- the phone, mid-log -->
+    <g filter="url(#hg-lift)">
+      <rect x="330" y="44" width="196" height="374" rx="30" fill="#fff"></rect>
+      <rect x="342" y="56" width="172" height="350" rx="22" fill="#f8f7fb"></rect>
+      <rect x="404" y="66" width="48" height="7" rx="3.5" fill="#d5d2df"></rect>
+      <text x="362" y="106" font-family="Playfair Display, Georgia, serif" font-size="15" font-weight="700" fill="#16131f">Today</text>
+      ${[0, 1, 2].map((i) => {
+        const y = 124 + i * 62;
+        const tint = ['#7856f5', '#0e9f6e', '#a78bfa'][i];
+        const w = [92, 74, 84][i];
+        return `
+      <g>
+        <rect x="362" y="${y}" width="${w}" height="17" rx="8.5" fill="${tint}" opacity=".16"></rect>
+        <circle cx="373" cy="${y + 8.5}" r="4" fill="${tint}"></circle>
+        <rect x="362" y="${y + 25}" width="132" height="7" rx="3.5" fill="#241f30" opacity=".7"></rect>
+        <rect x="362" y="${y + 39}" width="86" height="6" rx="3" fill="#b8b4c6"></rect>
+      </g>`;
+      }).join('')}
+      <rect x="362" y="316" width="132" height="34" rx="17" fill="url(#hg-ribbon)"></rect>
+      <text x="428" y="338" text-anchor="middle" font-family="Barlow, system-ui, sans-serif" font-size="13" font-weight="600" fill="#fff">Start</text>
+    </g>
+
+    <!-- the calorie dial -->
+    <g filter="url(#hg-lift)">
+      <rect x="118" y="332" width="216" height="146" rx="20" fill="#fff"></rect>
+      <text x="142" y="364" font-family="Barlow, system-ui, sans-serif" font-size="10" letter-spacing="1.4" fill="#756f88">DAILY BALANCE</text>
+      <g transform="translate(226 438)">
+        <path d="M-62 0 A 62 62 0 0 1 62 0" fill="none" stroke="#e8e6ef" stroke-width="14" stroke-linecap="round"></path>
+        <path d="M-62 0 A 62 62 0 0 1 62 0" fill="none" stroke="#0e9f6e" stroke-width="14" stroke-linecap="round"
+              stroke-dasharray="132 195"></path>
+        <text text-anchor="middle" y="-6" font-family="Playfair Display, Georgia, serif" font-size="26" font-weight="700" fill="#16131f">~2,169</text>
+        <text text-anchor="middle" y="12" font-family="Barlow, system-ui, sans-serif" font-size="9.5" letter-spacing=".9" fill="#756f88">NET · DEFICIT</text>
+      </g>
+    </g>
+  </svg>`;
+
 function landingScreen() {
   const cta = (size) => `
     <button data-act="auth-open" class="btn btn-primary" style="
@@ -2293,22 +2403,35 @@ function landingScreen() {
       border-radius: 999px; cursor: pointer;">Start Tracking Now</button>`;
 
   return `
-  <div style="min-height:100vh;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);">
-    <header style="display:flex;align-items:center;gap:16px;padding:18px 28px;flex-wrap:wrap;">
-      ${wordmark(30, 22)}
-      <!-- Hidden on a phone: the hero's own button is a thumb-length below it,
-           and two of the same call to action inside one screen is one too many. -->
-      <div class="landing-cta-top" style="margin-left:auto;">${cta(14)}</div>
+  <div class="landing">
+    <header class="landing-bar">
+      <a class="landing-brand" href="#" data-act="scroll-top">
+        ${LOGO_BADGE(34)}
+        <span class="landing-name">ZIMPAN<span style="color:var(--color-accent);">.</span></span>
+      </a>
+      <nav class="landing-nav">
+        <button data-act="scroll-features">Features</button>
+        <button data-act="scroll-features">How it works</button>
+        <button data-act="legal-privacy">Privacy</button>
+        <button data-act="legal-terms">Terms</button>
+      </nav>
+      <div class="landing-actions">
+        <button class="landing-login" data-act="auth-open">Log In</button>
+        <!-- Hidden on a phone: the hero's own button is a thumb-length below it,
+             and two of the same call to action inside one screen is one too many. -->
+        <div class="landing-cta-top">${cta(14)}</div>
+      </div>
     </header>
 
     <section class="hero">
       <div class="hero-copy">
-        <h1 style="font-family:var(--font-heading);font-weight:700;font-size:clamp(32px,5.4vw,54px);line-height:1.06;letter-spacing:-.015em;margin:0 0 16px;text-wrap:balance;">
-          Your Smart Tracking Center for Everything
+        <span class="hero-eyebrow">Free forever · No card required</span>
+        <h1 class="hero-h1">
+          Every hour and every peso, finally accounted for.
         </h1>
-        <p style="font-size:16px;line-height:1.65;color:var(--color-neutral-800);margin:0 0 22px;max-width:52ch;">
-          Zimpan is a <strong>free</strong> all-in-one tool to effortlessly optimize how you track
-          and manage your life.
+        <p class="hero-lede">
+          Log your day in seconds and watch the pattern appear. Zimpan turns what you
+          actually do with your time and money into something you can read — and act on.
         </p>
 
         <ul class="hero-checks">
@@ -2316,19 +2439,21 @@ function landingScreen() {
             <li><span class="hero-check">${CHECK_ICON}</span>${esc(t)}</li>`).join('')}
         </ul>
 
-        ${cta(16)}
+        <div class="hero-ctas">
+          ${cta(16)}
+          <button class="btn btn-secondary hero-cta2" data-act="scroll-features">Explore what it tracks</button>
+        </div>
       </div>
 
-      <div class="hero-art">
-        <!-- Until ds/hero.jpg exists the hero collapses to a single column;
-             hiding only the image would leave half the row empty. -->
-        <img src="ds/hero.jpg" alt="Tracking time, money and wellbeing on a phone"
-             onerror="this.closest('.hero').classList.add('hero-noart')"
-             style="width:100%;height:auto;display:block;border-radius:16px;">
-      </div>
+      <div class="hero-art">${HERO_ART()}</div>
     </section>
 
-    <section style="max-width:1180px;margin:0 auto;padding:4px 28px 12px;">
+    <section class="strip" data-anchor="features">
+      <div class="strip-head">
+        <span class="strip-kicker">What you can track</span>
+        <span class="strip-rule"></span>
+        <span class="strip-note">Four views, one log</span>
+      </div>
       <div class="landing-points">
         ${LANDING_FEATURES.map(([key, eyebrow, title, body]) => `
           <div class="feature-card">
@@ -3944,6 +4069,9 @@ const ACTIONS = {
 
   'auth-submit': submitAuth,
   'sign-out': signOut,
+  'scroll-top': () => window.scrollTo({ top: 0, behavior: 'smooth' }),
+  'scroll-features': () => scrollToAnchor('features'),
+
   'legal-privacy': () => { state.legalOpen = 'privacy'; render(); },
   'legal-terms': () => { state.legalOpen = 'terms'; render(); },
   'legal-close': () => { state.legalOpen = null; render(); },
@@ -4308,7 +4436,7 @@ function clipText(x, s, max) {
 
 /* The sheet's ground. It has to be painted rather than left transparent: the
    export is a JPEG, and anything unpainted arrives as black. */
-const SHEET_BG = '#f2f2f3';
+const SHEET_BG = '#f8f7fb';
 
 /* Draws the whole sheet and returns the y it finished at.
    Everything it prints comes off `v`, the same object reportSheet() renders
@@ -4319,14 +4447,14 @@ function paintReport(x, W, v) {
   const isMoney = v.isMoney;
   const totals = v.totals;
   const total = v.total || 1;
-  const accent = isMoney ? '#3a6b4b' : '#416180';
+  const accent = isMoney ? '#10756c' : '#5f3ac9';
 
   x.fillStyle = SHEET_BG; x.fillRect(0, 0, W, 200000);
-  x.fillStyle = '#1d1f20';
-  x.font = '600 34px "Barlow Condensed", sans-serif'; x.fillText(v.reportTitle, 60, 84);
-  x.font = '400 14px Barlow, sans-serif'; x.fillStyle = '#5d5d60';
+  x.fillStyle = '#16131f';
+  x.font = '600 34px "Playfair Display", serif'; x.fillText(v.reportTitle, 60, 84);
+  x.font = '400 14px Barlow, sans-serif'; x.fillStyle = '#575168';
   x.fillText(v.reportRange, 60, 110);
-  x.strokeStyle = '#c9c9cc'; x.beginPath(); x.moveTo(60, 132); x.lineTo(W - 60, 132); x.stroke();
+  x.strokeStyle = '#d5d2df'; x.beginPath(); x.moveTo(60, 132); x.lineTo(W - 60, 132); x.stroke();
 
   const cx = 210, cy = 350, r = 120;
   let a0 = -Math.PI / 2;
@@ -4341,9 +4469,9 @@ function paintReport(x, W, v) {
      with the total unreadable in dark navy on top of it. */
   x.fillStyle = SHEET_BG;
   x.beginPath(); x.arc(cx, cy, 62, 0, Math.PI * 2); x.fill();
-  x.fillStyle = '#1d1f20'; x.textAlign = 'center';
-  x.font = '600 26px "Barlow Condensed", sans-serif'; x.fillText(v.rangeTotal, cx, cy + 2);
-  x.fillStyle = '#7a7a7d'; x.font = '400 10px Barlow, sans-serif';
+  x.fillStyle = '#16131f'; x.textAlign = 'center';
+  x.font = '600 26px "Playfair Display", serif'; x.fillText(v.rangeTotal, cx, cy + 2);
+  x.fillStyle = '#756f88'; x.font = '400 10px Barlow, sans-serif';
   x.fillText('TRACKED', cx, cy + 20);
   x.textAlign = 'left';
 
@@ -4351,32 +4479,32 @@ function paintReport(x, W, v) {
      export entirely, which left the image showing the shape of the range
      without the sentence that says what the shape means. */
   let ly = 268;
-  x.fillStyle = '#1d1f20'; x.font = '600 21px "Barlow Condensed", sans-serif';
+  x.fillStyle = '#16131f'; x.font = '600 21px "Playfair Display", serif';
   wrapText(x, v.reportHeadline, W - 460).forEach((ln) => { x.fillText(ln, 400, ly); ly += 24; });
   ly += 4;
-  x.fillStyle = '#5d5d60'; x.font = '400 13px Barlow, sans-serif';
+  x.fillStyle = '#575168'; x.font = '400 13px Barlow, sans-serif';
   wrapText(x, v.reportNote, W - 460).forEach((ln) => { x.fillText(ln, 400, ly); ly += 19; });
   ly += 24;
 
   totals.forEach((t) => {
     x.fillStyle = t.color; x.fillRect(400, ly - 10, 12, 12);
-    x.fillStyle = '#1d1f20'; x.font = '400 16px Barlow, sans-serif'; x.fillText(clipText(x, withIcon(t.name), 250), 424, ly);
-    x.fillStyle = '#5d5d60'; x.fillText(`${Math.round((t.mins / total) * 100)}%  ·  ${v.fmtShort(t.mins)}`, 690, ly);
+    x.fillStyle = '#16131f'; x.font = '400 16px Barlow, sans-serif'; x.fillText(clipText(x, withIcon(t.name), 250), 424, ly);
+    x.fillStyle = '#575168'; x.fillText(`${Math.round((t.mins / total) * 100)}%  ·  ${v.fmtShort(t.mins)}`, 690, ly);
     ly += 34;
   });
 
   // Clears the legend rather than assuming it fits — a month can surface far
   // more categories than the original fixed 560 allowed for.
   let ty = Math.max(560, ly + 26);
-  x.fillStyle = '#5d5d60'; x.font = '400 12px Barlow, sans-serif';
+  x.fillStyle = '#575168'; x.font = '400 12px Barlow, sans-serif';
   x.fillText(v.reportColLabel.toUpperCase(), 60, ty); x.fillText('ENTRIES', 520, ty); x.fillText(v.reportAmountLabel.toUpperCase(), 640, ty); x.fillText('SHARE', 800, ty);
-  ty += 12; x.strokeStyle = '#c9c9cc'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
+  ty += 12; x.strokeStyle = '#d5d2df'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
   ty += 30;
   v.reportRows.forEach((r) => {
-    x.fillStyle = '#1d1f20'; x.font = '400 16px Barlow, sans-serif';
+    x.fillStyle = '#16131f'; x.font = '400 16px Barlow, sans-serif';
     x.fillText(clipText(x, withIcon(r.name), 430), 60, ty); x.fillText(String(r.count), 520, ty);
     x.fillText(r.time, 640, ty); x.fillText(r.pct, 800, ty);
-    ty += 16; x.strokeStyle = '#e2e2e5'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
+    ty += 16; x.strokeStyle = '#e8e6ef'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
     ty += 26;
   });
 
@@ -4384,12 +4512,12 @@ function paintReport(x, W, v) {
      the sheet that is not a share of the total, which is why it sits under the
      rule rather than among them — and why leaving it out of the export made the
      numbers look like they should add up to the whole day, and fail to. */
-  x.fillStyle = '#1d1f20'; x.font = '600 18px "Barlow Condensed", sans-serif';
+  x.fillStyle = '#16131f'; x.font = '600 18px "Playfair Display", serif';
   x.fillText(v.reportFooterRowLabel, 60, ty);
-  x.font = '400 16px Barlow, sans-serif'; x.fillStyle = '#5d5d60';
+  x.font = '400 16px Barlow, sans-serif'; x.fillStyle = '#575168';
   x.fillText('—', 520, ty); x.fillText('—', 800, ty);
-  x.fillStyle = '#1d1f20'; x.fillText(v.reportFooterRowValue, 640, ty);
-  ty += 16; x.strokeStyle = '#c9c9cc'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
+  x.fillStyle = '#16131f'; x.fillText(v.reportFooterRowValue, 640, ty);
+  ty += 16; x.strokeStyle = '#d5d2df'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
   ty += 26;
 
   /* Financial insights. Drawn before the early return below, so a money sheet
@@ -4398,16 +4526,16 @@ function paintReport(x, W, v) {
     const f = v.moneyInsight;
 
     ty += 30;
-    x.fillStyle = '#1d1f20'; x.font = '600 22px "Barlow Condensed", sans-serif';
+    x.fillStyle = '#16131f'; x.font = '600 22px "Playfair Display", serif';
     x.fillText('FINANCIAL INSIGHTS', 60, ty);
-    x.font = '400 12px Barlow, sans-serif'; x.fillStyle = '#5d5d60'; x.textAlign = 'right';
+    x.font = '400 12px Barlow, sans-serif'; x.fillStyle = '#575168'; x.textAlign = 'right';
     x.fillText(f.coverageLabel, W - 60, ty);
     x.textAlign = 'left';
     ty += 11;
-    x.strokeStyle = '#c9c9cc'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
+    x.strokeStyle = '#d5d2df'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
     ty += 34;
 
-    x.fillStyle = '#1d1f20'; x.font = '600 21px "Barlow Condensed", sans-serif';
+    x.fillStyle = '#16131f'; x.font = '600 21px "Playfair Display", serif';
     x.fillText(f.headline, 60, ty);
     ty += 30;
 
@@ -4415,10 +4543,10 @@ function paintReport(x, W, v) {
     [['OUT', f.outLabel, false], ['IN', f.inLabel, false], ['NET', f.netLabel, true], ['KEPT', f.rateLabel, true]]
       .forEach((t, i) => {
         const tx = 60 + i * 195;
-        x.fillStyle = '#5d5d60'; x.font = '400 11px Barlow, sans-serif';
+        x.fillStyle = '#575168'; x.font = '400 11px Barlow, sans-serif';
         x.fillText(t[0], tx, ty);
-        x.fillStyle = t[2] ? (f.netUp ? accent : '#1d1f20') : '#1d1f20';
-        x.font = '600 20px "Barlow Condensed", sans-serif';
+        x.fillStyle = t[2] ? (f.netUp ? accent : '#16131f') : '#16131f';
+        x.font = '600 20px "Playfair Display", serif';
         x.fillText(t[1], tx, ty + 23);
       });
     ty += 52;
@@ -4432,8 +4560,8 @@ function paintReport(x, W, v) {
       x.font = '400 13px Barlow, sans-serif';
       items.forEach((t) => {
         const lines = wrapText(x, t, W - 138);
-        x.fillStyle = '#5d5d60'; x.fillText('•', 60, ty);
-        x.fillStyle = '#1d1f20';
+        x.fillStyle = '#575168'; x.fillText('•', 60, ty);
+        x.fillStyle = '#16131f';
         lines.forEach((ln, i) => x.fillText(ln, 78, ty + i * 19));
         ty += lines.length * 19 + 9;
       });
@@ -4443,7 +4571,7 @@ function paintReport(x, W, v) {
     para('WHAT MIGHT HELP', f.advice);
 
     ty += 12;
-    x.fillStyle = '#7a7a7d'; x.font = '400 11px Barlow, sans-serif';
+    x.fillStyle = '#756f88'; x.font = '400 11px Barlow, sans-serif';
     const legal = wrapText(x, DISCLAIMER, W - 120);
     legal.forEach((ln, i) => x.fillText(ln, 60, ty + i * 16));
     ty += legal.length * 16 + 10;
@@ -4452,23 +4580,23 @@ function paintReport(x, W, v) {
   if (!v.reportEntryCount) return ty;
 
   ty += 30;
-  x.fillStyle = '#1d1f20'; x.font = '600 22px "Barlow Condensed", sans-serif';
+  x.fillStyle = '#16131f'; x.font = '600 22px "Playfair Display", serif';
   x.fillText('EVERY ACTIVITY', 60, ty);
-  x.font = '400 12px Barlow, sans-serif'; x.fillStyle = '#5d5d60'; x.textAlign = 'right';
+  x.font = '400 12px Barlow, sans-serif'; x.fillStyle = '#575168'; x.textAlign = 'right';
   x.fillText(`${v.reportEntryCount} ${v.reportEntryCount === 1 ? 'entry' : 'entries'}`, W - 60, ty);
   x.textAlign = 'left';
   ty += 11;
-  x.strokeStyle = '#c9c9cc'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
+  x.strokeStyle = '#d5d2df'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
   ty += 32;
 
   v.reportDays.forEach((d) => {
-    x.fillStyle = '#1d1f20'; x.font = '600 17px "Barlow Condensed", sans-serif';
+    x.fillStyle = '#16131f'; x.font = '600 17px "Playfair Display", serif';
     x.fillText(d.label, 60, ty);
-    x.font = '400 12px Barlow, sans-serif'; x.fillStyle = '#5d5d60'; x.textAlign = 'right';
+    x.font = '400 12px Barlow, sans-serif'; x.fillStyle = '#575168'; x.textAlign = 'right';
     x.fillText(`${d.inLabel ? d.inLabel + ' in · ' : ''}${d.totalLabel}${isMoney ? ' out' : ''}`, W - 60, ty);
     x.textAlign = 'left';
     ty += 8;
-    x.strokeStyle = '#e2e2e5'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
+    x.strokeStyle = '#e8e6ef'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
     ty += 22;
 
     /* Notes indent to the activity column, as they do on screen: a day should
@@ -4478,20 +4606,20 @@ function paintReport(x, W, v) {
     d.rows.forEach((rw) => {
       x.font = '400 13px Barlow, sans-serif';
       if (isMoney) {
-        x.fillStyle = '#1d1f20'; x.fillText(clipText(x, rw.activity, 310), 60, ty);
+        x.fillStyle = '#16131f'; x.fillText(clipText(x, rw.activity, 310), 60, ty);
         x.fillStyle = rw.color; x.fillRect(392, ty - 8, 8, 8);
-        x.fillStyle = '#5d5d60'; x.fillText(clipText(x, withIcon(rw.name), 190), 406, ty);
+        x.fillStyle = '#575168'; x.fillText(clipText(x, withIcon(rw.name), 190), 406, ty);
         x.textAlign = 'right';
         x.fillStyle = accent; x.fillText(rw.in, 730, ty);
-        x.fillStyle = '#1d1f20'; x.fillText(rw.out, W - 60, ty);
+        x.fillStyle = '#16131f'; x.fillText(rw.out, W - 60, ty);
         x.textAlign = 'left';
       } else {
-        x.fillStyle = '#5d5d60'; x.fillText(rw.when, 60, ty);
-        x.fillStyle = '#1d1f20'; x.fillText(clipText(x, rw.activity, 258), 200, ty);
+        x.fillStyle = '#575168'; x.fillText(rw.when, 60, ty);
+        x.fillStyle = '#16131f'; x.fillText(clipText(x, rw.activity, 258), 200, ty);
         x.fillStyle = rw.color; x.fillRect(478, ty - 8, 8, 8);
-        x.fillStyle = '#5d5d60'; x.fillText(clipText(x, withIcon(rw.name), 240), 492, ty);
+        x.fillStyle = '#575168'; x.fillText(clipText(x, withIcon(rw.name), 240), 492, ty);
         x.textAlign = 'right';
-        x.fillStyle = '#1d1f20'; x.fillText(rw.out, W - 60, ty);
+        x.fillStyle = '#16131f'; x.fillText(rw.out, W - 60, ty);
         x.textAlign = 'left';
       }
       ty += 24;
@@ -4499,7 +4627,7 @@ function paintReport(x, W, v) {
       // What the entry said about itself. The preview has carried these since
       // notes were added; the export never has.
       if (rw.note) {
-        x.font = '400 12px Barlow, sans-serif'; x.fillStyle = '#5d5d60';
+        x.font = '400 12px Barlow, sans-serif'; x.fillStyle = '#575168';
         wrapText(x, rw.note, W - 60 - noteX).forEach((ln) => { x.fillText(ln, noteX, ty); ty += 17; });
         ty += 7;
       }
@@ -4524,7 +4652,7 @@ function exportJpg() {
   paintReport(x, W, v);
 
   // The same two-ended footer the sheet prints.
-  x.fillStyle = '#7a7a7d'; x.font = '400 12px Barlow, sans-serif';
+  x.fillStyle = '#756f88'; x.font = '400 12px Barlow, sans-serif';
   x.fillText(`Generated by ZIMPAN · ${v.geoLabel}`, 60, H - 40);
   x.textAlign = 'right';
   x.fillText(v.nowLabel, W - 60, H - 40);

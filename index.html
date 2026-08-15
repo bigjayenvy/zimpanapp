@@ -44,7 +44,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 
 <link rel="icon" type="image/svg+xml" href="ds/favicon.svg">
 <link rel="apple-touch-icon" href="ds/favicon.svg">
-<meta name="theme-color" content="#1e3358">
+<meta name="theme-color" content="#5f3ac9">
 <link rel="stylesheet" href="ds/styles.css">
 <style>
   body { margin: 0; }
@@ -61,23 +61,23 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   input[type="time"]::-webkit-calendar-picker-indicator { opacity: .35; }
 
-  /* — the green —
-     --zg-strong is the requested #00a149, used only where the type is large
-     enough to clear WCAG AA at its 3.03:1 contrast on this background.
-     --zg-text is the same hue darkened to 4.89:1, so the small inline labels
-     that replaced grey stay readable on a phone in daylight. */
+  /* — semantic colour —
+     These carry meaning rather than brand: energy out, energy in, giving. They
+     stay green/amber through the rebrand — recolouring "burned" violet would
+     make it agree with everything else on the page and mean nothing — but both
+     are retuned to sit with the violet rather than against it. */
   :root {
-    --zg-strong: #00a149;
-    --zg-text: #007a38;
-    /* The selected block in the bottom bar. Warm rather than a tint of the
-       accent, so it reads as "you are here" against both tracker themes
-       without changing colour when the money view repoints the accents. */
-    --bn-active: #f6ead4;
-    --zg-donate: #e8a33d;
+    --zg-strong: #0e9f6e;
+    --zg-text: #57516b;
+    /* The selected block in the bottom bar: a tint of the brand, since the
+       brand is now the thing the app is built out of. */
+    --bn-active: #efe9fe;
+    --zg-donate: #e9a13b;
   }
 
-  /* Small inline labels move from grey to green wholesale. neutral-600 is the
-     app's caption grey; the darker body greys are deliberately left alone. */
+  /* Small inline labels take a violet-cast grey rather than a flat one, so the
+     captions belong to the palette. neutral-600 is the app's caption grey; the
+     darker body greys are deliberately left alone. */
   [data-app] { --color-neutral-600: var(--zg-text); }
 
   /* — donate —
@@ -96,28 +96,32 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   /* — money tracker theme —
      Accent tokens are inherited custom properties, so re-declaring them on the
      page wrapper repoints every accent in the money view — buttons, kickers,
-     chips, the report sheet — without touching the design system. */
+     chips, the report sheet — without touching the design system. Teal rather
+     than violet, so which tracker you are in is readable at arm's length; both
+     hues are drawn from the same gradient family. */
   [data-app="money"] {
-    --color-accent: #4f8a63;
-    --color-accent-2: #6a9d7c;
-    --color-accent-100: #eef7f1;
-    --color-accent-200: #d7ecdd;
-    --color-accent-300: #b2d9bf;
-    --color-accent-400: #8dc3a0;
-    --color-accent-500: #6ba982;
-    --color-accent-600: #4f8a63;
-    --color-accent-700: #3a6b4b;
-    --color-accent-800: #274c35;
-    --color-accent-900: #163123;
-    --color-accent-2-100: #eef7f1;
-    --color-accent-2-200: #dceee2;
-    --color-accent-2-300: #bcdcc7;
-    --color-accent-2-400: #9cc7ab;
-    --color-accent-2-500: #7dae8e;
-    --color-accent-2-600: #628f72;
-    --color-accent-2-700: #4a7057;
-    --color-accent-2-800: #33503d;
-    --color-accent-2-900: #1f3326;
+    --color-accent: #16a394;
+    --color-accent-2: #0f766e;
+    --color-accent-100: #e6f7f4;
+    --color-accent-200: #c7ede7;
+    --color-accent-300: #97ddd2;
+    --color-accent-400: #63c8ba;
+    --color-accent-500: #35ae9f;
+    --color-accent-600: #199184;
+    --color-accent-700: #10756c;
+    --color-accent-800: #0b5750;
+    --color-accent-900: #073b36;
+    --color-accent-2-100: #e6f7f4;
+    --color-accent-2-200: #cceee9;
+    --color-accent-2-300: #a3ded5;
+    --color-accent-2-400: #72c9bd;
+    --color-accent-2-500: #46b0a2;
+    --color-accent-2-600: #229286;
+    --color-accent-2-700: #14746b;
+    --color-accent-2-800: #0d5751;
+    --color-accent-2-900: #083c37;
+    --grad-brand: linear-gradient(115deg, #2bb8a5 0%, #16a394 45%, #0f766e 100%);
+    --grad-brand-hover: linear-gradient(115deg, #22a795 0%, #12907f 45%, #0b6259 100%);
   }
 
   /* — loading affordances — */
@@ -199,9 +203,9 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .stickybar { display: none; }
 
   @media (max-width: 720px) {
-    /* The landing header keeps the wordmark only — the hero's own Start
-       Tracking button sits just below it. */
-    .landing-cta-top { display: none; }
+    /* The landing's own phone rules are NOT here — they sit after the landing
+       block further down, which declares the same properties later in the file
+       and would otherwise win at equal specificity. */
 
     /* The tabs and the duplicated Donate/Export buttons live in the bottom bar
        on a phone. Who is signed in, and the way out, stay in the header. */
@@ -402,18 +406,115 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     .focus-date { flex-basis: 46px; font-size: 10.5px; }
   }
 
-  /* — landing — */
+  /* — landing —
+     A tinted ground with the brand bleeding in from the top right, so the page
+     reads as part of the gradient rather than as white paper under it. */
+  .landing {
+    min-height: 100vh; color: var(--color-text); font-family: var(--font-body);
+    background:
+      radial-gradient(1100px 620px at 88% -8%, color-mix(in srgb, #8b5cf6 20%, transparent), transparent 62%),
+      radial-gradient(760px 520px at 6% 4%, color-mix(in srgb, #35ae9f 12%, transparent), transparent 60%),
+      var(--color-bg);
+  }
+
+  .landing-bar {
+    display: flex; align-items: center; gap: 18px;
+    padding: 16px 30px; flex-wrap: wrap;
+    max-width: 1240px; margin: 0 auto;
+  }
+  .landing-brand {
+    display: flex; align-items: center; gap: 10px;
+    text-decoration: none; color: inherit; flex: none;
+  }
+  .landing-name {
+    font-family: var(--font-heading); font-weight: 800; font-size: 21px;
+    letter-spacing: .01em; line-height: 1;
+  }
+  .landing-nav { display: flex; align-items: center; gap: 4px; margin: 0 auto; }
+  .landing-nav button {
+    border: 0; background: transparent; cursor: pointer;
+    font-family: var(--font-body); font-size: 14px; font-weight: 500;
+    color: var(--color-neutral-800); padding: 8px 13px; border-radius: 999px;
+  }
+  .landing-nav button:hover { background: color-mix(in srgb, var(--color-accent) 11%, transparent); color: var(--color-accent-800); }
+  .landing-nav button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+  .landing-actions { display: flex; align-items: center; gap: 10px; flex: none; }
+  .landing-login {
+    border: 0; background: transparent; cursor: pointer;
+    font-family: var(--font-body); font-size: 14px; font-weight: 500;
+    color: var(--color-neutral-800); padding: 8px 6px;
+  }
+  .landing-login:hover { color: var(--color-accent-700); }
+  .landing-login:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: 6px; }
+
   .hero {
     display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
     gap: 44px; align-items: center;
-    max-width: 1180px; margin: 0 auto; padding: 30px 28px 34px;
+    max-width: 1240px; margin: 0 auto; padding: 26px 30px 40px;
   }
+  .hero-eyebrow {
+    display: inline-block; margin-bottom: 16px; padding: 6px 14px;
+    border-radius: 999px; background: #fff;
+    border: 1px solid color-mix(in srgb, var(--color-accent) 26%, transparent);
+    font-size: 11.5px; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--color-accent-700); font-weight: 600;
+    box-shadow: var(--shadow-sm);
+  }
+  /* The reference sets its headline in caps. Done with text-transform rather
+     than in the string, so the copy stays readable in the source. */
+  .hero-h1 {
+    font-family: var(--font-heading); font-weight: 800;
+    font-size: clamp(34px, 4.6vw, 58px); line-height: 1.04;
+    letter-spacing: -.01em; text-transform: uppercase;
+    margin: 0 0 18px; text-wrap: balance;
+  }
+  .hero-lede {
+    font-size: 16px; line-height: 1.65; color: var(--color-neutral-800);
+    margin: 0 0 24px; max-width: 52ch;
+  }
+  .hero-ctas { display: flex; flex-wrap: wrap; gap: 12px; }
+  .hero-cta2 { font-size: 15px; font-weight: 600; padding: 13px 26px; }
 
-  .hero-noart { grid-template-columns: minmax(0, 1fr); }
-  .hero-noart .hero-art { display: none; }
-  .hero-noart .hero-copy { max-width: 760px; margin: 0 auto; text-align: center; }
-  .hero-noart .hero-checks { max-width: 560px; margin-left: auto; margin-right: auto; }
-  .hero-noart .hero-checks li { justify-content: flex-start; }
+  .hero-svg { width: 100%; height: auto; display: block; overflow: visible; }
+
+  /* — the featured strip — */
+  .strip { max-width: 1240px; margin: 0 auto; padding: 12px 30px 20px; scroll-margin-top: 20px; }
+  .strip-head { display: flex; align-items: center; gap: 16px; margin-bottom: 18px; }
+  .strip-kicker {
+    flex: none; font-size: 11.5px; letter-spacing: .16em; text-transform: uppercase;
+    font-weight: 600; color: var(--color-accent-800);
+  }
+  .strip-rule { flex: 1; height: 1px; background: color-mix(in srgb, var(--color-accent-900) 16%, transparent); }
+  .strip-note { flex: none; font-size: 12px; color: var(--color-neutral-600); }
+
+  /* — landing on a phone —
+     Declared here rather than in the shared phone block near the top of this
+     file: that block comes before the landing rules above, and at equal
+     specificity the later declaration wins. */
+  @media (max-width: 720px) {
+    /* The header keeps the wordmark and a way in — the hero's own Start
+       Tracking button sits a thumb-length below it. */
+    .landing-cta-top { display: none; }
+    .landing-bar { padding: 14px 18px; gap: 10px; }
+    .landing-actions { margin-left: auto; }
+    /* The links move under the brand row rather than squeezing beside it, and
+       scroll rather than wrap — four links breaking to two lines leave one
+       stranded, and no amount of trimming holds them on one line at 320px.
+       Same treatment the sticky bar's controls already use. */
+    .landing-nav {
+      order: 9; flex: 1 0 100%; margin: 2px 0 0;
+      justify-content: flex-start; flex-wrap: nowrap; gap: 0;
+      overflow-x: auto; scrollbar-width: none;
+    }
+    .landing-nav::-webkit-scrollbar { display: none; }
+    .landing-nav button { font-size: 12.5px; padding: 6px 10px; flex: none; }
+    .hero-h1 { font-size: clamp(28px, 8.4vw, 40px); }
+    .hero-lede { font-size: 15px; }
+    .hero-ctas { gap: 10px; }
+    .hero-ctas .btn { width: 100%; justify-content: center; }
+    .strip { padding: 8px 18px 16px; }
+    .strip-note { display: none; }
+  }
 
   .hero-checks {
     list-style: none; margin: 0 0 26px; padding: 0;
@@ -424,26 +525,29 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     display: flex; align-items: center; gap: 9px;
     font-size: 14.5px; color: var(--color-neutral-800); min-width: 0;
   }
-  .hero-check { display: flex; flex: none; color: var(--zg-strong); }
+  .hero-check { display: flex; flex: none; color: var(--color-accent); }
   .hero-check svg { width: 19px; height: 19px; display: block; }
 
   .landing-points { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }
   .feature-card {
     display: flex; align-items: flex-start; gap: 14px;
-    background: var(--color-bg); border: 1px solid var(--color-divider);
-    border-radius: 14px; padding: 18px 18px 20px;
-    box-shadow: 0 1px 3px color-mix(in srgb, #2b2b2d 7%, transparent);
+    background: #fff; border: 1px solid color-mix(in srgb, var(--color-accent-900) 8%, transparent);
+    border-radius: var(--radius-lg); padding: 20px 20px 22px;
+    box-shadow: var(--shadow-sm);
+    transition: transform .16s ease, box-shadow .16s ease;
   }
+  .feature-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
   .feature-badge {
-    flex: none; width: 52px; height: 52px; border-radius: 50%;
+    flex: none; width: 52px; height: 52px; border-radius: 16px;
     display: flex; align-items: center; justify-content: center;
-    background: var(--color-accent-100); color: var(--color-accent-700);
+    background: var(--grad-brand); color: #fff;
+    box-shadow: 0 4px 12px color-mix(in srgb, #4f46e5 28%, transparent);
   }
   .feature-badge svg { width: 26px; height: 26px; display: block; }
 
   @media (max-width: 900px) {
     /* Copy first, then the image — the reading order the mobile design uses. */
-    .hero { grid-template-columns: minmax(0, 1fr); gap: 22px; padding: 18px 20px 26px; }
+    .hero { grid-template-columns: minmax(0, 1fr); gap: 26px; padding: 14px 20px 28px; }
     .hero-checks { gap: 9px 16px; margin-bottom: 20px; }
     .hero-checks li { font-size: 13.5px; }
     .landing-points { gap: 12px; }
@@ -591,9 +695,13 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .card-head-right { display: flex; align-items: center; gap: 8px; flex: none; }
   /* The range switch sits on a dark ground here, so its own light styling
-     would vanish into it. */
-  .card-head .seg { border-color: color-mix(in srgb, #fff 34%, transparent); }
+     would vanish into it — the white pill and the brand gradient the switch
+     wears everywhere else both disappear against this head. Transparent
+     track, white pill for the selected one, dark text inside it. */
+  .card-head .seg { background: transparent; border-color: color-mix(in srgb, #fff 34%, transparent); }
+  .card-head .seg-opt + .seg-opt { border-left-color: color-mix(in srgb, #fff 26%, transparent); }
   .card-head .seg-opt span { color: color-mix(in srgb, #fff 82%, transparent); }
+  .card-head .seg-opt:has(input:checked) { background: #fff; }
   .card-head .seg-opt input:checked + span { color: var(--color-accent-900); }
   .head-btn {
     width: 34px; height: 34px; border-radius: 10px; cursor: pointer;
@@ -760,11 +868,11 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      A quieter button than the solid drawer pill: it sits inside a reading
      rather than under one, and should not compete with it. */
   .btn-refine {
-    background: #fff; color: #416180; border-color: #416180;
+    background: #fff; color: #5f3ac9; border-color: #5f3ac9;
     font-size: 11px; padding: 5px 13px;
   }
   .btn-refine:hover:not(:disabled),
-  .btn-refine:focus-visible { background: #416180; color: #fff; border-color: #416180; }
+  .btn-refine:focus-visible { background: #5f3ac9; color: #fff; border-color: #5f3ac9; }
   .btn-refine:disabled { opacity: .6; cursor: default; }
 
   .food-text { font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800); }

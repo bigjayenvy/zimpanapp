@@ -1,17 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="ZIMPAN">
   <title>ZIMPAN</title>
-  <style>
-    .trace { fill: none; stroke: #1e3358; stroke-width: 11; }
-    .node  { fill: #1e3358; }
-    /* A tab bar in dark mode needs a light mark, not a navy one. */
-    @media (prefers-color-scheme: dark) {
-      .trace { stroke: #9dc3e6; }
-      .node  { fill: #9dc3e6; }
-    }
-  </style>
-  <path class="trace" d="M22 20 H78 L22 80 H78" />
-  <circle class="node" cx="22" cy="20" r="9" />
-  <circle class="node" cx="58" cy="41" r="8" />
-  <circle class="node" cx="44" cy="56" r="8" />
-  <circle class="node" cx="78" cy="80" r="9" />
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a78bfa" />
+      <stop offset="50%" stop-color="#7856f5" />
+      <stop offset="100%" stop-color="#4f46e5" />
+    </linearGradient>
+  </defs>
+  <!-- The mark reversed out of the brand gradient, so it holds its colour on a
+       light tab strip and a dark one alike — no prefers-color-scheme needed. -->
+  <rect x="2" y="2" width="96" height="96" rx="28" fill="url(#g)" />
+  <path d="M28 27 H72 L28 73 H72" fill="none" stroke="#fff" stroke-width="10"
+        stroke-linecap="round" stroke-linejoin="round" />
+  <circle cx="28" cy="27" r="7.5" fill="#fff" />
+  <circle cx="72" cy="73" r="7.5" fill="#fff" />
 </svg>
