@@ -459,6 +459,15 @@ const state = {
      preference, and it should not be waiting for you on the next load. */
   weightEditOpen: null,
 
+  /* What each entry form is complaining about, if anything. Set when an add is
+     refused and cleared the moment the field is typed into, so the message
+     never outlives the mistake. */
+  formError: { entry: '', timer: '', money: '' },
+
+  /* A one-shot request for the caret: render() puts focus on the field with
+     this data-k and clears it. Lets an action open a panel and land in it. */
+  focusField: null,
+
   /* ── sync bookkeeping (persisted) ── */
   currencyUpdatedAt: Number(stored.currencyUpdatedAt) || 0,
   tombstones: Object.assign(EMPTY_KEYED(), stored.tombstones),
@@ -2287,7 +2296,9 @@ function landingScreen() {
   <div style="min-height:100vh;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);">
     <header style="display:flex;align-items:center;gap:16px;padding:18px 28px;flex-wrap:wrap;">
       ${wordmark(30, 22)}
-      <div style="margin-left:auto;">${cta(14)}</div>
+      <!-- Hidden on a phone: the hero's own button is a thumb-length below it,
+           and two of the same call to action inside one screen is one too many. -->
+      <div class="landing-cta-top" style="margin-left:auto;">${cta(14)}</div>
     </header>
 
     <section class="hero">
@@ -2567,6 +2578,14 @@ function paintToast() {
   el.textContent = state.toast;
 }
 
+/* What a refused form says, and the hook the input listener uses to take it
+   back down again the moment the field is typed into. */
+function fieldError(scope) {
+  return state.formError[scope]
+    ? `<div class="field-err" data-err="${scope}" role="alert">${esc(state.formError[scope])}</div>`
+    : '';
+}
+
 function segRange(name, labels) {
   const opt = (val, label) => `<label class="seg-opt"><input type="radio" name="${name}" data-act="range-${val}"${state.range === val ? ' checked' : ''}><span>${label}</span></label>`;
   return `<div class="seg">${opt('day', labels[0])}${opt('week', labels[1])}${opt('fortnight', labels[2])}${opt('month', labels[3])}</div>`;
@@ -2615,44 +2634,53 @@ function legend(v) {
   return shown.map((s) => {
     const on = v.focusName === s.name;
     return `
-    <button data-act="legend-pick" data-name="${esc(s.name)}" title="Show the entries behind ${esc(s.name)}"
-      style="display: flex; align-items: center; gap: 9px; font: inherit; font-size: 13px; text-align: left;
-             border: 0; cursor: pointer; color: inherit; padding: 4px 6px; margin: 0 -6px; border-radius: var(--radius-md);
-             background: ${on ? 'var(--color-accent-100)' : 'transparent'}; opacity: ${v.focusName && !on ? '.5' : '1'};">
+    <button class="legend-row" data-act="legend-pick" data-name="${esc(s.name)}" title="Show the entries behind ${esc(s.name)}"
+      style="background: ${on ? 'var(--color-accent-100)' : 'transparent'}; opacity: ${v.focusName && !on ? '.5' : '1'};">
       <span style="width: 10px; height: 10px; flex: none; background: ${esc(s.color)};"></span>
       <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(withIcon(s.name))}</span>
       <span style="font-variant-numeric: tabular-nums; color: var(--color-neutral-700);">${esc(s.pct)}</span>
+      <span class="legend-see">See Entries</span>
     </button>`;
   }).join('') + (all.length > LIST_COLLAPSED
     ? drawerToggle('legend', all.length - LIST_COLLAPSED, v.isMoney ? 'purposes' : 'categories')
     : '');
 }
 
-/* The drilled-down entries. Range-aware, so week and month views list days the
-   day-by-day table on the left cannot show — hence the date column. */
+/* The drilled-down entries, as a lightbox. Range-aware, so week and month views
+   list days the day-by-day table cannot show — hence the date column.
+
+   Rendered from render() rather than from inside a chart card: it is an overlay
+   over the whole page, and both trackers open the same one. */
 function focusPanel(v) {
   if (!v.focusOpen) return '';
 
   const rows = v.focusList.map((r) => `
-        <div style="display: flex; align-items: baseline; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--color-divider);">
-          <span style="flex: 0 0 54px; font-size: 11px; color: var(--color-neutral-600); font-variant-numeric: tabular-nums;">${esc(r.date)}</span>
-          <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px;" title="${esc(r.activity)}">${esc(r.activity)}</span>
-          ${r.meta ? `<span style="flex: none; font-size: 11px; color: var(--color-neutral-600); font-variant-numeric: tabular-nums;">${esc(r.meta)}</span>` : ''}
-          <span style="flex: none; min-width: 52px; text-align: right; font-size: 13px; font-variant-numeric: tabular-nums;">${esc(r.value)}</span>
-        </div>`).join('');
+          <div class="focus-row">
+            <span class="focus-date">${esc(r.date)}</span>
+            <span class="focus-what" title="${esc(r.activity)}">${esc(r.activity)}</span>
+            ${r.meta ? `<span class="focus-meta">${esc(r.meta)}</span>` : ''}
+            <span class="focus-val">${esc(r.value)}</span>
+          </div>`).join('');
 
   return `
-        <div style="margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--color-divider);">
-          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap;">
-            <span style="width: 10px; height: 10px; flex: none; background: ${esc(v.focusColor)};"></span>
-            <h4 style="margin: 0;">${esc(withIcon(v.focusName))}</h4>
-            <span style="font-size: 12px; color: var(--color-neutral-600); margin-right: auto;">${v.focusList.length} ${v.focusList.length === 1 ? 'entry' : 'entries'} · ${esc(v.rangeLabel)}</span>
-            <button class="btn btn-ghost" data-act="focus-clear" style="font-size: 12px;">Clear</button>
+      <div class="no-print focus-backdrop" data-backdrop="focus-clear">
+        <div class="focus-sheet" role="dialog" aria-modal="true" aria-label="Entries for ${esc(v.focusName)}">
+          <div class="focus-head">
+            <span class="focus-swatch" style="background: ${esc(v.focusColor)};"></span>
+            <div class="focus-title">
+              <h4>${esc(withIcon(v.focusName))}</h4>
+              <span class="focus-sub">${v.focusList.length} ${v.focusList.length === 1 ? 'entry' : 'entries'} · ${esc(v.rangeLabel)} · ${esc(v.focusValue)} (${esc(v.focusPct)})</span>
+            </div>
+            <button class="focus-x" data-act="focus-clear" aria-label="Close">×</button>
           </div>
-          <div style="max-height: 268px; overflow-y: auto;">
-            ${rows || '<div style="padding: 18px 0; text-align: center; font-size: 13px; color: var(--color-neutral-600);">Nothing logged here in this range.</div>'}
+          <div class="focus-body">
+            ${rows || '<div style="padding: 26px 0; text-align: center; font-size: 13px; color: var(--color-neutral-600);">Nothing logged here in this range.</div>'}
           </div>
-        </div>`;
+          <div class="focus-foot">
+            <button class="btn btn-secondary" data-act="focus-clear">Close</button>
+          </div>
+        </div>
+      </div>`;
 }
 
 function bars(v) {
@@ -2999,8 +3027,12 @@ function weightCard(v) {
 function pastCard(v) {
   return `
       <div class="blueprint" style="padding: 20px 22px 22px;">
-        <div style="display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; flex-wrap: wrap;">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px; flex-wrap: wrap;">
           <h4 style="margin: 0;">Looking back</h4>
+          <!-- The same window the chart above runs on, reachable from down
+               here too. "Yesterday" rather than "Day": this section only ever
+               counts days that have finished. -->
+          <div style="margin-left: auto;">${segRange('lookrange', ['Yesterday', 'Week', '2 Weeks', 'Month'])}</div>
         </div>
         <div style="font-size: 12px; color: var(--color-neutral-600); margin-bottom: 12px;">${esc(v.pastLabel)}</div>
         <div style="font-size: 13.5px; line-height: 1.6;">${esc(v.pastHeadline)}</div>
@@ -3065,9 +3097,11 @@ function timerCard(v) {
           ${v.timerSince ? `<div style="font-size: 11px; color: ${v.timerStale ? 'var(--color-text)' : 'var(--color-neutral-600)'}; margin-top: 5px;">${esc(v.timerSince)}${v.timerStale ? ' · still running — did you forget to stop it?' : ''}</div>` : ''}
         </div>
         <div style="display: flex; flex-direction: column; gap: 8px; min-width: 0;">
-          <input class="input" data-k="timer-activity" data-sync="timerActivity" placeholder="What are you doing right now?" value="${esc(state.timerActivity)}">
+          <input class="input" data-k="timer-activity" data-sync="timerActivity" placeholder="What are you doing right now?" value="${esc(state.timerActivity)}"${state.formError.timer ? ' aria-invalid="true"' : ''}>
+          ${fieldError('timer')}
           <div style="display: flex; flex-wrap: wrap; gap: 6px;">
             ${timerChips().map((c) => `<button data-act="pick-timer-cat" data-name="${esc(c.name)}" style="${chipStyle(state.timerCategory === c.name, c.color)}">${esc(catIcon(c.name))} ${esc(c.name)}</button>`).join('')}
+            <button class="chip-add" data-act="add-cat-jump">+ Add a Category</button>
           </div>
           ${state.categories.length > CHIPS_COLLAPSED
             ? drawerToggle('categories', state.categories.length - CHIPS_COLLAPSED, 'categories')
@@ -3085,7 +3119,7 @@ function addEntryCard(v) {
         </div>
         <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: end;">
           <div class="field" style="flex: 1 1 150px; min-width: 140px;"><label>Date</label><input class="input" type="date" data-k="form-date" data-sync="form.date" value="${esc(state.form.date)}"></div>
-          <div class="field" style="flex: 3 1 220px; min-width: 180px;"><label>Activity</label><input class="input" data-k="form-activity" data-sync="form.activity" placeholder="e.g. Wash car" value="${esc(state.form.activity)}"></div>
+          <div class="field" style="flex: 3 1 220px; min-width: 180px;"><label>Activity</label><input class="input" data-k="form-activity" data-sync="form.activity" placeholder="e.g. Wash car" value="${esc(state.form.activity)}"${state.formError.entry ? ' aria-invalid="true"' : ''}></div>
           <div class="field" style="flex: 2 1 180px; min-width: 160px;"><label>Category</label>
             <select class="input" data-act="form-category">${options(state.categories.map((c) => c.name), state.form.category, '<option value="__new">+ New category…</option>')}</select>
           </div>
@@ -3099,6 +3133,7 @@ function addEntryCard(v) {
           <div class="field" style="flex: 0 1 100px; min-width: 92px;"><label>Time spent</label><div data-form-duration style="height: 36px; display: flex; align-items: center; font-size: 14px; font-variant-numeric: tabular-nums; color: var(--color-accent-700);">${esc(v.formDuration)}</div></div>
           <button class="btn btn-primary" data-act="add-entry" style="height: 36px;">Add entry</button>
         </div>
+        ${fieldError('entry')}
       </div>`;
 }
 
@@ -3222,7 +3257,6 @@ function timeDesktop(v) {
           ${donut(v, 190, 34, 27)}
           <div style="display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0;">${legend(v)}</div>
         </div>
-        ${focusPanel(v)}
         </div>
       </div>
 
@@ -3288,7 +3322,7 @@ function moneyDesktop(v) {
         </div>
         <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: end;">
           <div class="field" style="flex: 1 1 150px; min-width: 140px;"><label>Date</label><input class="input" type="date" data-k="m-date" data-sync="mForm.date" value="${esc(state.mForm.date)}"></div>
-          <div class="field" style="flex: 3 1 220px; min-width: 180px;"><label>Activity</label><input class="input" data-k="m-activity" data-sync="mForm.activity" placeholder="e.g. Grocery run" value="${esc(state.mForm.activity)}"></div>
+          <div class="field" style="flex: 3 1 220px; min-width: 180px;"><label>Activity</label><input class="input" data-k="m-activity" data-sync="mForm.activity" placeholder="e.g. Grocery run" value="${esc(state.mForm.activity)}"${state.formError.money ? ' aria-invalid="true"' : ''}></div>
           <div class="field" style="flex: 2 1 190px; min-width: 170px;"><label>Purpose</label>
             <select class="input" data-act="m-purpose">${options(state.purposes.map((p) => p.name), state.mForm.purpose, '<option value="__new">+ New purpose…</option>')}</select>
           </div>
@@ -3296,6 +3330,7 @@ function moneyDesktop(v) {
           <div class="field" style="flex: 0 1 130px; min-width: 118px;"><label>Spent</label><input class="input" type="number" min="0" step="0.01" placeholder="0" data-k="m-out" data-sync="mForm.out" value="${esc(state.mForm.out)}"></div>
           <button class="btn btn-primary" data-act="add-money" style="height: 36px;">Add entry</button>
         </div>
+        ${fieldError('money')}
         ${state.newPurposeOpen ? `
           <div style="display: flex; gap: 8px; align-items: center; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--color-divider);">
             <span style="font-size: 12px; color: var(--color-neutral-700);">Name your new purpose</span>
@@ -3325,7 +3360,6 @@ function moneyDesktop(v) {
           ${donut(v, 190, 34, 24)}
           <div style="display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0;">${legend(v)}</div>
         </div>
-        ${focusPanel(v)}
       </div>
 
       ${insightsHeading()}
@@ -3560,6 +3594,7 @@ function render() {
   <div class="no-print" style="padding: 26px 28px 10px; display: flex; align-items: center; gap: 10px 18px; flex-wrap: wrap;">
     ${legalLinks('var(--color-neutral-600)')}
   </div>
+  ${focusPanel(v)}
   ${state.reportOpen ? reportSheet(v) : ''}
   ${notePromptDialog()}
   ${donateSheet()}
@@ -3576,6 +3611,15 @@ function render() {
   // The dialog exists to be typed in, so put the caret there straight away.
   const note = root.querySelector('[data-k="note-draft"]');
   if (note && document.activeElement !== note) note.focus();
+
+  /* A field an action asked for — the one it just opened, or the one it just
+     refused. One shot: clearing it here stops the next unrelated render from
+     stealing the caret back. */
+  if (state.focusField) {
+    const want = root.querySelector(`[data-k="${state.focusField}"]`);
+    state.focusField = null;
+    if (want) want.focus();
+  }
 }
 
 /* ── account actions ── */
@@ -3712,7 +3756,18 @@ function queueTimerSave() {
 
 function toggleTimer() {
   // Written to disk immediately, so a reload one second later still knows.
-  if (!state.timerStart) { state.timerStart = Date.now(); save(); render(); return; }
+  if (!state.timerStart) {
+    /* What you are doing is the entry — a timer started without it produces a
+       row called "Untitled activity", which is a row nobody can read later. */
+    if (!state.timerActivity.trim()) {
+      state.formError.timer = 'Say what you are doing before starting the timer.';
+      state.focusField = 'timer-activity';
+      render();
+      return;
+    }
+    state.formError.timer = '';
+    state.timerStart = Date.now(); save(); render(); return;
+  }
   const round = CONFIG.roundToMinutes || 1;
   const startD = new Date(state.timerStart), endD = new Date();
   const rnd = (m) => Math.round(m / round) * round;
@@ -3738,7 +3793,20 @@ function toggleTimer() {
 
 function addEntry() {
   const f = parseHm(state.form.from), t = parseHm(state.form.to);
-  if (!state.form.activity.trim() || !(t > f)) return;
+  /* Both refusals used to be a silent `return`, which looked like the button
+     was broken rather than like the form was incomplete. */
+  if (!state.form.activity.trim()) {
+    state.formError.entry = 'Activity is required — name what you did.';
+    state.focusField = 'form-activity';
+    render();
+    return;
+  }
+  if (!(t > f)) {
+    state.formError.entry = 'To has to be later than From.';
+    render();
+    return;
+  }
+  state.formError.entry = '';
   const entry = touch('entries', { id: 'm' + Date.now(), date: state.form.date, activity: state.form.activity.trim(), category: state.form.category, from: f, to: t, note: '' });
   state.entries = state.entries.concat([entry]);
   state.selectedDate = state.form.date;
@@ -3751,7 +3819,18 @@ function addEntry() {
 
 function addMoney() {
   const inV = money2(state.mForm.in), outV = money2(state.mForm.out);
-  if (!state.mForm.activity.trim() || (!inV && !outV)) return;
+  if (!state.mForm.activity.trim()) {
+    state.formError.money = 'Activity is required — name what the money was for.';
+    state.focusField = 'm-activity';
+    render();
+    return;
+  }
+  if (!inV && !outV) {
+    state.formError.money = 'Fill in either Received or Spent.';
+    render();
+    return;
+  }
+  state.formError.money = '';
   const row = touch('money', { id: 'mn' + Date.now(), date: state.mForm.date, activity: state.mForm.activity.trim(), purpose: state.mForm.purpose, in: inV, out: outV, note: '' });
   state.money = state.money.concat([row]);
   state.selectedDate = state.mForm.date;
@@ -3917,6 +3996,17 @@ const ACTIONS = {
   // The form opens directly beneath the link, so neither entry mode is disturbed.
   'open-new-cat': () => { state.newCatOpen = !state.newCatOpen; state.newCatName = ''; render(); },
 
+  /* The chip at the end of the timer's category row. Opens the same field the
+     "Add a category +" link does, scrolls it into view and lands the caret in
+     it — from down among the chips it is otherwise off the top of the screen. */
+  'add-cat-jump': () => {
+    state.newCatOpen = true;
+    state.newCatName = '';
+    state.focusField = 'new-cat';
+    render();
+    scrollToAnchor('entry');
+  },
+
   'set-weight': (el) => {
     const kg = Math.round(Number(el.value));
     state.weightKg = Number.isFinite(kg) && kg >= 20 && kg <= 400 ? kg : null;
@@ -4030,10 +4120,13 @@ const ACTIONS = {
   },
 
   // A slice names its share; the name is then the handle for the entries.
+  /* A slice opens the entries behind it, the same as its legend row does.
+     It used to only highlight, leaving the drill-down two clicks away with
+     nothing on screen saying where the second one was. */
   'slice-pick': (el) => {
     const n = el.dataset.name;
-    state.focusOpen = false;
-    state.focus = state.focus === n ? null : n;
+    if (state.focus === n && state.focusOpen) clearFocus();
+    else { state.focus = n; state.focusOpen = true; }
     render();
   },
   'focus-toggle': () => { state.focusOpen = !state.focusOpen; render(); },
@@ -4083,6 +4176,18 @@ const CHANGES = {
 
 /* ─────────────────────────── wiring ─────────────────────────── */
 
+/* A lightbox closes when you click the sheet's surround. Checked before the
+   normal delegation and only when the backdrop is itself the thing clicked —
+   `closest` would otherwise match it for every click landing inside the sheet
+   and close the dialog the moment anyone touched its contents. */
+root.addEventListener('click', (ev) => {
+  const back = ev.target.closest('[data-backdrop]');
+  if (back && ev.target === back) {
+    const fn = ACTIONS[back.dataset.backdrop];
+    if (fn) { ev.preventDefault(); fn(back); }
+  }
+});
+
 root.addEventListener('click', (ev) => {
   const el = ev.target.closest('[data-act]');
   if (!el || !root.contains(el)) return;
@@ -4102,11 +4207,25 @@ root.addEventListener('change', (ev) => {
   }
 });
 
+/* Which complaint each field answers, so typing into it takes the message
+   back down. */
+const ERROR_FIELD = { timerActivity: 'timer', 'form.activity': 'entry', 'mForm.activity': 'money' };
+
 // Text fields feed state without re-rendering, so typing is never interrupted.
 root.addEventListener('input', (ev) => {
   const el = ev.target;
   if (!el.dataset || !el.dataset.sync) return;
   setDeep(el.dataset.sync, el.value);
+
+  /* Cleared by hand rather than by re-rendering: a render here would rebuild
+     the field under the caret on every keystroke. */
+  const scope = ERROR_FIELD[el.dataset.sync];
+  if (scope && state.formError[scope]) {
+    state.formError[scope] = '';
+    const msg = root.querySelector(`[data-err="${scope}"]`);
+    if (msg) msg.remove();
+    el.removeAttribute('aria-invalid');
+  }
   // What you are timing has to survive a reload too, not just the start time.
   if (el.dataset.sync === 'timerActivity') queueTimerSave();
   if (el.hasAttribute('data-live-dur')) {

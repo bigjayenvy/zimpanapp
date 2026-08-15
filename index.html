@@ -51,8 +51,14 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   input, select, button { font-family: inherit; }
   .btn { border-radius: 999px; padding-inline: 18px; }
   .btn-icon { border-radius: 999px; padding-inline: 0; }
-  .seg { border-radius: 999px; }
+  .seg { border-radius: 999px; max-width: 100%; }
   .seg-opt { padding-inline: 15px; }
+  /* Four options at full padding need 307px, and the insights column on a
+     320px phone offers about 270. The labels stay whole and the padding gives
+     way — "Yesterday" abbreviated would be worse than a tighter pill. */
+  @media (max-width: 560px) {
+    .seg-opt { padding-inline: 9px; font-size: 12px; }
+  }
   input[type="time"]::-webkit-calendar-picker-indicator { opacity: .35; }
 
   /* — the green —
@@ -193,6 +199,10 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .stickybar { display: none; }
 
   @media (max-width: 720px) {
+    /* The landing header keeps the wordmark only — the hero's own Start
+       Tracking button sits just below it. */
+    .landing-cta-top { display: none; }
+
     /* The tabs and the duplicated Donate/Export buttons live in the bottom bar
        on a phone. Who is signed in, and the way out, stay in the header. */
     .appbar-tabs, .appbar-cta { display: none !important; }
@@ -287,6 +297,109 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     @media (prefers-reduced-motion: reduce) {
       .stickybar { transition: none; }
     }
+  }
+
+  /* — form validation —
+     A refused add used to be a silent no-op, which reads as a broken button. */
+  .field-err {
+    display: flex; align-items: center; gap: 6px;
+    margin-top: 8px; font-size: 12px; line-height: 1.45; color: #a4291f;
+  }
+  .field-err::before {
+    content: "!"; flex: none;
+    width: 15px; height: 15px; border-radius: 50%;
+    background: #a4291f; color: #fff;
+    font-size: 10px; font-weight: 700; line-height: 15px; text-align: center;
+  }
+  [aria-invalid="true"] { border-color: #a4291f !important; }
+  [aria-invalid="true"]:focus-visible { outline-color: #a4291f; }
+
+  /* — legend —
+     The rows have always been clickable; nothing on them said so.
+
+     The row bleeds 6px past its column so the selected tint reads as a band
+     rather than as a box around the words. Declared here rather than inline
+     because the narrow case below has to be able to take the bleed back: with
+     it, the row is its column plus 12px, which is enough to push a 320px page
+     sideways once "See Entries" is on the end of it. */
+  .legend-row {
+    display: flex; align-items: center; gap: 9px;
+    font: inherit; font-size: 13px; text-align: left;
+    border: 0; cursor: pointer; color: inherit;
+    padding: 4px 6px; margin: 0 -6px; border-radius: var(--radius-md);
+  }
+  .legend-see {
+    flex: none; font-size: 10.5px; letter-spacing: .01em;
+    color: var(--color-accent-700); text-decoration: underline;
+    text-underline-offset: 2px; white-space: nowrap;
+  }
+
+  @media (max-width: 560px) {
+    .legend-row { margin: 0; padding: 4px 0; gap: 7px; }
+    .legend-see { font-size: 10px; }
+  }
+
+  /* The chip that ends the timer's category row. Dashed, so it reads as a way
+     to add one rather than as another category to pick. */
+  .chip-add {
+    display: inline-flex; align-items: center; cursor: pointer;
+    font-family: var(--font-body); font-size: 11px; padding: 4px 12px;
+    border-radius: 999px; border: 1px dashed var(--color-accent-700);
+    background: transparent; color: var(--color-accent-700); font-weight: 600;
+  }
+  .chip-add:hover { background: var(--color-accent-100); }
+  .chip-add:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+
+  /* — the entries behind a slice —
+     A lightbox rather than a panel under the chart: on a phone the list opened
+     below the fold of a card you were already scrolled past, so nothing
+     appeared to happen. 55 clears the fixed chrome (bottom bar 45, sticky
+     header and back-to-top 46) and stays under the donation sheet at 70. */
+  .focus-backdrop {
+    position: fixed; inset: 0; z-index: 55;
+    background: color-mix(in srgb, var(--color-neutral-900) 58%, transparent);
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px; overflow: auto;
+  }
+  .focus-sheet {
+    width: 560px; max-width: 100%; max-height: calc(100vh - 40px);
+    display: flex; flex-direction: column;
+    background: var(--color-bg); border-radius: 16px;
+    box-shadow: var(--shadow-lg); overflow: hidden;
+  }
+  .focus-head {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 16px 18px 14px; border-bottom: 1px solid var(--color-divider);
+  }
+  .focus-swatch { width: 12px; height: 12px; flex: none; margin-top: 5px; }
+  .focus-title { min-width: 0; margin-right: auto; }
+  .focus-title h4 { margin: 0; font-size: 18px; line-height: 1.2; overflow-wrap: anywhere; }
+  .focus-sub { display: block; margin-top: 3px; font-size: 11.5px; color: var(--color-neutral-600); }
+  .focus-x {
+    flex: none; border: 0; background: transparent; cursor: pointer;
+    font-size: 24px; line-height: 1; padding: 0 4px; color: var(--color-neutral-600);
+  }
+  .focus-x:hover { color: var(--color-text); }
+  .focus-body { overflow-y: auto; padding: 4px 18px; -webkit-overflow-scrolling: touch; }
+  .focus-row {
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 9px 0; border-bottom: 1px solid var(--color-divider);
+  }
+  .focus-date { flex: 0 0 54px; font-size: 11px; color: var(--color-neutral-600); font-variant-numeric: tabular-nums; }
+  .focus-what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
+  .focus-meta { flex: none; font-size: 11px; color: var(--color-neutral-600); font-variant-numeric: tabular-nums; }
+  .focus-val { flex: none; min-width: 56px; text-align: right; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+  .focus-foot {
+    display: flex; justify-content: flex-end;
+    padding: 12px 18px 14px; border-top: 1px solid var(--color-divider);
+  }
+
+  @media (max-width: 560px) {
+    .focus-backdrop { padding: 12px; align-items: flex-end; }
+    .focus-sheet { max-height: calc(100vh - 90px); }
+    .focus-title h4 { font-size: 16px; }
+    .focus-what { font-size: 12.5px; }
+    .focus-date { flex-basis: 46px; font-size: 10.5px; }
   }
 
   /* — landing — */
