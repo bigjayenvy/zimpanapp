@@ -12,9 +12,12 @@
 // Mirrors the component's authored props.
 const CONFIG = { defaultRange: 'day', roundToMinutes: 1 };
 
-const PALETTE = ['#7856f5', '#a78bfa', '#2f1c66', '#c4b5fd', '#5f3ac9', '#ddd0fe', '#472b97', '#8b7bd8'];
+/* Lifted from the brand banner. Time takes its plum/rose/gold side, money the
+   teal side below, so the two trackers still read apart at a glance while both
+   are drawn out of the same artwork. */
+const PALETTE = ['#4a2458', '#9b7bab', '#2e1b3d', '#e79aa4', '#6b4478', '#c9a04f', '#3d2150', '#f0b6bd'];
 // Money runs on green. Same light/dark rhythm as PALETTE so slices stay apart.
-const MONEY_PALETTE = ['#10756c', '#35ae9f', '#073b36', '#97ddd2', '#199184', '#c7ede7', '#0b5750', '#63c8ba'];
+const MONEY_PALETTE = ['#1f6b63', '#4fbfae', '#0f3f3a', '#a8dcd2', '#2a8b7d', '#7fc9bd', '#154f49', '#35a596'];
 const PURPOSES = ['Shopping', 'Projects', 'Movies', 'Petrol', 'Groceries', 'Eat Out', 'House Improvements', 'Birthdays', 'Commute', 'Gadgets', 'Utilities', 'Appliances'];
 const STORE_KEY = 'zimpan.v1';
 
@@ -23,15 +26,6 @@ const STORE_KEY = 'zimpan.v1';
    The Z drawn as a circuit trace with nodes at its corners and along the
    diagonal. Vector rather than the source PNG so it stays sharp at favicon
    size and inherits colour — currentColor lets it invert wherever it sits. */
-
-const LOGO_MARK = (size) => `
-<svg viewBox="0 0 100 100" width="${size}" height="${size}" aria-hidden="true" focusable="false" style="display:block;flex:none;">
-  <path d="M22 20 H78 L22 80 H78" fill="none" stroke="currentColor" stroke-width="11"></path>
-  <circle cx="22" cy="20" r="9" fill="currentColor"></circle>
-  <circle cx="58" cy="41" r="8" fill="currentColor"></circle>
-  <circle cx="44" cy="56" r="8" fill="currentColor"></circle>
-  <circle cx="78" cy="80" r="9" fill="currentColor"></circle>
-</svg>`;
 
 /* The mark on a gradient disc, for the places that carry the brand rather than
    just wearing the current text colour — the landing header, the sign-in
@@ -55,10 +49,14 @@ const LOGO_BADGE = (size) => `
 
 const DONATE_URL = 'https://www.paypal.com/ncp/payment/CJ6PTT55VQWX6';
 
+/* The badge, not the bare trace: one mark for the whole product, the same one
+   the home page opens with. It keeps its own gradient rather than following the
+   tracker's accent — a logo that changes colour with the page it is on is not
+   really a logo. */
 function wordmark(markSize, titleSize) {
   return `
     <div style="display: flex; align-items: center; gap: 10px;">
-      <span style="color: var(--color-accent-900);">${LOGO_MARK(markSize)}</span>
+      <span>${LOGO_BADGE(markSize)}</span>
       <span style="display: flex; flex-direction: column; gap: 1px;">
         <span style="font-family: var(--font-heading); font-weight: 600; font-size: ${titleSize}px; letter-spacing: .02em; line-height: 1;">ZIMPAN<span style="color: var(--color-accent-700);">.</span></span>
         <span style="font-size: ${Math.max(9, Math.round(titleSize * 0.46))}px; letter-spacing: .14em; text-transform: uppercase; color: var(--color-neutral-600);">Track What Matters</span>
@@ -74,6 +72,28 @@ const hm = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 const parseHm = (s) => { const [h, m] = (s || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
 const clock12 = (m) => { const h = Math.floor(m / 60), mm = m % 60; const ap = h >= 12 ? 'PM' : 'AM'; const h12 = h % 12 === 0 ? 12 : h % 12; return `${h12}:${pad(mm)} ${ap}`; };
 const dayLabel = (d) => new Date(d + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+
+/* ── entries that run past midnight ──
+   An entry is a date plus two clock times inside it, which cannot express a
+   sleep that starts at 9PM and ends at 6AM. A `to` earlier than its `from` is
+   read as "the next morning" instead of as a negative span, and such an entry
+   is dated the day it *ended* — you log Tuesday night's sleep against
+   Wednesday, which is the day you want to see it on.
+
+   Every duration in the app goes through span(), so the wrap is handled once
+   rather than at each of the dozen places that used to subtract directly. */
+const span = (e) => {
+  const f = Number(e.from) || 0, t = Number(e.to) || 0;
+  return t >= f ? t - f : t + 1440 - f;
+};
+const wraps = (e) => (Number(e.to) || 0) < (Number(e.from) || 0);
+
+/* The clock day after an ISO date, for entries whose end lands there. */
+const nextDay = (isoDate) => {
+  const d = new Date(isoDate + 'T00:00:00');
+  d.setDate(d.getDate() + 1);
+  return iso(d);
+};
 
 function dur(mins) {
   if (mins <= 0) return '—';
@@ -281,7 +301,7 @@ function seedState() {
       'Chores', 'Workout', 'Potato Couching', 'Family Time', 'Focus Work',
       'Eat', 'Sleep', 'Prayers and Reflections', 'Meetings', 'Cooking'
     ].map((name, i) => ({ name, color: PALETTE[i % PALETTE.length] })),
-    purposes: PURPOSES.map((n, i) => ({ name: n, color: PALETTE[i % PALETTE.length] }))
+    purposes: PURPOSES.map((n, i) => ({ name: n, color: MONEY_PALETTE[i % MONEY_PALETTE.length] }))
   };
 }
 
@@ -947,7 +967,14 @@ async function boot() {
 
 /* ─────────────────────────── derivations ─────────────────────────── */
 
-const colorOf = (name) => { const c = state.categories.find((x) => x.name === name); return c ? c.color : PALETTE[7]; };
+/* Derived from position rather than read from the row. A stored colour is a
+   colour chosen under whichever palette was current when the category was made,
+   which is how an account that predates a rebrand keeps wearing the old one.
+   Nothing in the app lets you pick a category colour, so there is none to lose. */
+const colorOf = (name) => {
+  const i = state.categories.findIndex((x) => x.name === name);
+  return i < 0 ? PALETTE[PALETTE.length - 1] : PALETTE[i % PALETTE.length];
+};
 /* Purposes are drawn from MONEY_PALETTE by position rather than from the colour
    saved on the record, so the green theme applies to data logged before it
    existed without rewriting anything in storage. */
@@ -982,7 +1009,7 @@ const moneyRangeEntries = () => withinRange(state.money);
 function totalsByCategory(list) {
   const map = {};
   list.forEach((e) => {
-    const m = Math.max(0, e.to - e.from);
+    const m = span(e);
     if (!map[e.category]) map[e.category] = { name: e.category, mins: 0, count: 0, color: colorOf(e.category) };
     map[e.category].mins += m; map[e.category].count += 1;
   });
@@ -1041,7 +1068,7 @@ function wellbeing(list) {
   const mins = { physical: 0, emotional: 0, mental: 0, spiritual: 0 };
   let tracked = 0, still = 0, drain = 0, vague = 0;
   list.forEach((e) => {
-    const m = Math.max(0, e.to - e.from);
+    const m = span(e);
     if (!m) return;
     tracked += m;
     const hit = WELLBEING.find((r) => r.re.test(`${e.activity} ${e.category}`.toLowerCase()));
@@ -1360,13 +1387,15 @@ const KCAL_PER_KG_PER_DAY = 22;
 
 function burnFor(entries, weightKg, days) {
   const kg = Number(weightKg) || DEFAULT_WEIGHT_KG;
-  const span = Math.max(1, days || 1);
+  // Named for what it is. It was `span`, which now shadowed the entry-length
+  // helper of that name and made every burn read as zero.
+  const dayCount = Math.max(1, days || 1);
   let kcal = 0, minutes = 0;
   entries.forEach((e) => {
     const text = `${e.activity || ''} ${e.category || ''} ${e.note || ''}`.toLowerCase();
     const hit = METS.find((m) => m.re.test(text));
     if (!hit) return;
-    const mins = Math.max(0, (e.to || 0) - (e.from || 0));
+    const mins = span(e);
     if (!mins) return;
     minutes += mins;
     kcal += hit.met * kg * (mins / 60);
@@ -1374,8 +1403,8 @@ function burnFor(entries, weightKg, days) {
   return {
     kcal: Math.round(kcal),
     minutes,
-    restKcal: Math.round(KCAL_PER_KG_PER_DAY * kg * span),
-    days: span,
+    restKcal: Math.round(KCAL_PER_KG_PER_DAY * kg * dayCount),
+    days: dayCount,
     assumedWeight: !weightKg
   };
 }
@@ -1711,11 +1740,11 @@ function compute() {
       date: dayLabel(e.date),
       activity: e.activity,
       meta: isMoney ? '' : `${clock12(e.from)} – ${clock12(e.to)}`,
-      value: isMoney ? amount(e.out) : durShort(Math.max(0, e.to - e.from))
+      value: isMoney ? amount(e.out) : durShort(span(e))
     }));
 
   const top = totals[0] ? totals[0].mins : 1;
-  const dayTracked = dayList.reduce((a, e) => a + Math.max(0, e.to - e.from), 0);
+  const dayTracked = dayList.reduce((a, e) => a + span(e), 0);
   const untrackedMins = Math.max(0, 960 - dayTracked);
 
   let streak = 0;
@@ -1735,7 +1764,7 @@ function compute() {
   reportSource.forEach((e) => { (byDate[e.date] = byDate[e.date] || []).push(e); });
   const reportDays = Object.keys(byDate).sort().map((d) => {
     const list = byDate[d].slice().sort((a, b) => (isMoney ? 0 : a.from - b.from));
-    const outSumDay = list.reduce((a, e) => a + (isMoney ? (Number(e.out) || 0) : Math.max(0, e.to - e.from)), 0);
+    const outSumDay = list.reduce((a, e) => a + (isMoney ? (Number(e.out) || 0) : span(e)), 0);
     const inSumDay = isMoney ? list.reduce((a, e) => a + (Number(e.in) || 0), 0) : 0;
     return {
       label: new Date(d + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
@@ -1747,7 +1776,7 @@ function compute() {
         name: isMoney ? e.purpose : e.category,
         color: isMoney ? purposeColor(e.purpose) : colorOf(e.category),
         when: isMoney ? '' : `${clock12(e.from)} – ${clock12(e.to)}`,
-        out: isMoney ? (Number(e.out) ? amount(e.out) : '—') : durShort(Math.max(0, e.to - e.from)),
+        out: isMoney ? (Number(e.out) ? amount(e.out) : '—') : durShort(span(e)),
         in: isMoney ? (Number(e.in) ? amount(e.in) : '—') : ''
       }))
     };
@@ -1761,7 +1790,9 @@ function compute() {
   const sinceSix = Math.max(0, nowMins - 360);
   const todayList = s.entries
     .filter((e) => e.date === todayIso)
-    .map((e) => Object.assign({}, e, { to: Math.min(e.to, nowMins) }))
+    /* An entry that wrapped began last night, so only the part after midnight
+       counts towards today's reading; the rest belongs to yesterday evening. */
+    .map((e) => Object.assign({}, e, wraps(e) ? { from: 0, to: Math.min(e.to, nowMins) } : { to: Math.min(e.to, nowMins) }))
     .filter((e) => e.to > e.from);
   const todayWb = wellbeing(todayList);
   const todayTop = totalsByCategory(todayList)[0];
@@ -1790,7 +1821,7 @@ function compute() {
   const pastWb = wellbeing(pastList);
   const pastTotals = totalsByCategory(pastList);
   const byDay = {};
-  pastList.forEach((e) => { byDay[e.date] = (byDay[e.date] || 0) + Math.max(0, e.to - e.from); });
+  pastList.forEach((e) => { byDay[e.date] = (byDay[e.date] || 0) + span(e); });
   const busiest = Object.keys(byDay).sort((a, b) => byDay[b] - byDay[a])[0];
 
   const pastLabel = !pastDates.length ? 'No finished days in this range yet'
@@ -1817,7 +1848,9 @@ function compute() {
             : { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`
       : '',
     timerStale: !!s.timerStart && (now - s.timerStart) > 12 * 60 * 60 * 1000,
-    formDuration: formTo > formFrom ? dur(formTo - formFrom) : 'set a time',
+    formDuration: formTo === formFrom ? 'set a time'
+      : formTo > formFrom ? dur(formTo - formFrom)
+      : `${dur(formTo + 1440 - formFrom)} · next day`,
 
     dayTotalLabel: dur(dayTracked),
     rangeTotal: fmtShort(total),
@@ -1890,9 +1923,16 @@ function compute() {
     reportDays,
     reportEntryCount: reportSource.length,
 
-    timeline: dayList.map((e) => {
-      const a = Math.max(360, Math.min(1320, e.from)), b = Math.max(360, Math.min(1320, e.to));
-      return { title: `${e.activity} · ${clock12(e.from)}`, color: colorOf(e.category), left: `${((a - 360) / 960 * 100).toFixed(2)}%`, width: `${Math.max(0.4, (b - a) / 960 * 100).toFixed(2)}%` };
+    /* The axis runs 6AM to 10PM, so an entry that wrapped shows as two pieces —
+       the tail of the evening and the head of the morning — rather than as one
+       bar drawn backwards, which is what a single clamped span produced. */
+    timeline: dayList.flatMap((e) => {
+      const pieces = wraps(e) ? [[e.from, 1440], [0, e.to]] : [[e.from, e.to]];
+      return pieces.map(([s0, s1]) => {
+        const a = Math.max(360, Math.min(1320, s0)), b = Math.max(360, Math.min(1320, s1));
+        if (b <= a) return null;
+        return { title: `${e.activity} · ${clock12(e.from)}`, color: colorOf(e.category), left: `${((a - 360) / 960 * 100).toFixed(2)}%`, width: `${Math.max(0.4, (b - a) / 960 * 100).toFixed(2)}%` };
+      }).filter(Boolean);
     })
   };
 }
@@ -1905,7 +1945,7 @@ function liveLine() {
   const nowMins = now.getHours() * 60 + now.getMinutes();
   // Only what the clock has actually reached — an entry logged ahead of now is
   // not "what is happening".
-  const started = state.entries.filter((e) => e.date === todayIso && e.from <= nowMins);
+  const started = state.entries.filter((e) => e.date === todayIso && !wraps(e) && e.from <= nowMins);
   if (!started.length) return 'Nothing logged yet today.';
   const spanning = started.find((e) => e.to > nowMins);
   if (spanning) return `In progress · ${spanning.activity} · since ${clock12(spanning.from)}`;
@@ -2110,7 +2150,7 @@ function stickyBar(v) {
     <div class="stickybar-in">
       <div class="stickybar-controls">${controls}</div>
       <button class="stickybar-mark" data-act="scroll-top" aria-label="Back to top">
-        <span style="color: var(--color-accent-900);">${LOGO_MARK(19)}</span>
+        <span>${LOGO_BADGE(19)}</span>
         <span class="stickybar-name">ZIMPAN<span style="color: var(--color-accent-700);">.</span></span>
       </button>
     </div>
@@ -2274,7 +2314,7 @@ const legalLinks = (color) => `
    first thing you see. */
 const authLockup = () => `
       <div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:12px;margin-bottom:6px;">
-        <span style="color:var(--color-accent-900);">${LOGO_MARK(72)}</span>
+        <span>${LOGO_BADGE(72)}</span>
         <span style="display:flex;flex-direction:column;gap:3px;">
           <span style="font-family:var(--font-heading);font-weight:600;font-size:30px;letter-spacing:.02em;line-height:1;">ZIMPAN<span style="color:var(--color-accent-700);">.</span></span>
           <span style="font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--color-neutral-600);">Track What Matters</span>
@@ -2427,7 +2467,7 @@ function landingScreen() {
       <div class="hero-copy">
         <span class="hero-eyebrow">Free forever · No card required</span>
         <h1 class="hero-h1">
-          Every hour and every peso, finally accounted for.
+          Your Tracking Center for Everything That Matters
         </h1>
         <p class="hero-lede">
           Log your day in seconds and watch the pattern appear. Zimpan turns what you
@@ -2729,23 +2769,30 @@ function donut(v, size, stroke, totalSize) {
       <title>${esc(s.name)} · ${esc(s.pct)}</title></circle>`;
   }).join('');
 
+  /* The readout is set in the heading serif, which is far wider than the
+     condensed sans it replaced — a long money total such as "AED 6,617.45"
+     wrapped out of the hole and across the ring. The size is fitted to the
+     string it actually has to hold, and never wraps. */
+  const hole = size * 0.64;
+  const fit = (text) => Math.max(13, Math.min(totalSize, Math.floor(hole / (String(text).length * 0.54))));
+
   const centre = v.focusName
     ? `<button data-act="focus-toggle" title="Show the entries behind ${esc(v.focusName)}"
         style="pointer-events: auto; display: flex; flex-direction: column; align-items: center; gap: 2px; max-width: 100%; border: 0; background: transparent; padding: 0; font: inherit; color: inherit; cursor: pointer;">
         <span style="font-size: 11px; line-height: 1.2; text-align: center; color: var(--color-neutral-700); text-decoration: underline; text-underline-offset: 2px;">${esc(withIcon(v.focusName))}</span>
-        <span style="font-family: var(--font-heading); font-size: ${totalSize}px; line-height: 1;">${esc(v.focusPct)}</span>
-        <span style="font-size: 11px; color: var(--color-neutral-600); font-variant-numeric: tabular-nums;">${esc(v.focusValue)}</span>
+        <span style="font-family: var(--font-heading); font-size: ${fit(v.focusPct)}px; line-height: 1; white-space: nowrap;">${esc(v.focusPct)}</span>
+        <span style="font-size: 11px; color: var(--color-neutral-600); font-variant-numeric: tabular-nums; white-space: nowrap;">${esc(v.focusValue)}</span>
       </button>`
-    : `<div style="font-family: var(--font-heading); font-size: ${totalSize}px; line-height: 1;">${esc(v.rangeTotal)}</div>
-       <div style="font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--color-neutral-600);">${esc(v.rangeLabel)}</div>`;
+    : `<div style="font-family: var(--font-heading); font-size: ${fit(v.rangeTotal)}px; line-height: 1.05; white-space: nowrap;">${esc(v.rangeTotal)}</div>
+       <div style="font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--color-neutral-600); white-space: nowrap;">${esc(v.rangeLabel)}</div>`;
 
   return `
     <div style="position: relative; width: ${size}px; height: ${size}px; flex: none;">
       <svg viewBox="0 0 200 200" style="width: 100%; height: 100%; transform: rotate(-90deg);">
-        <circle cx="100" cy="100" r="72" fill="none" stroke="var(--color-neutral-200)" stroke-width="${stroke}"></circle>
+        <circle cx="100" cy="100" r="72" fill="none" stroke="var(--track)" stroke-width="${stroke}"></circle>
         ${arcs}
       </svg>
-      <div style="position: absolute; inset: 0; padding: 0 21%; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;">
+      <div style="position: absolute; inset: 0; padding: 0 18%; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;">
         ${centre}
       </div>
     </div>`;
@@ -2816,7 +2863,7 @@ function bars(v) {
       <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 5px;">
         <span>${esc(withIcon(l.name))}</span><span style="color: var(--color-neutral-700); font-variant-numeric: tabular-nums;">${esc(l.label)}</span>
       </div>
-      <div style="height: 8px; background: var(--color-neutral-200);">
+      <div style="height: 8px; background: var(--track);">
         <div style="height: 100%; width: ${l.width}; background: ${esc(l.color)};"></div>
       </div>
     </div>`).join('') + (all.length > LIST_COLLAPSED
@@ -2847,7 +2894,7 @@ function dimensionCards(readings) {
           <div class="wb-head">
             <span class="wb-dial">
               <svg viewBox="0 0 60 60" aria-hidden="true" focusable="false">
-                <circle cx="30" cy="30" r="26" fill="none" stroke="var(--color-neutral-200)" stroke-width="5"></circle>
+                <circle cx="30" cy="30" r="26" fill="none" stroke="var(--track)" stroke-width="5"></circle>
                 <circle cx="30" cy="30" r="26" fill="none" stroke="${tone}" stroke-width="5" stroke-linecap="round"
                         stroke-dasharray="${dash.toFixed(2)} ${C.toFixed(2)}" transform="rotate(-90 30 30)"></circle>
               </svg>
@@ -2898,7 +2945,7 @@ function balanceGauges(food, burn, scope) {
     return `
           <div class="cal-dial">
             <svg viewBox="0 0 110 62" aria-hidden="true" focusable="false">
-              <path d="M13 55 A 42 42 0 0 1 97 55" fill="none" stroke="var(--color-neutral-200)" stroke-width="9" stroke-linecap="round"></path>
+              <path d="M13 55 A 42 42 0 0 1 97 55" fill="none" stroke="var(--track)" stroke-width="9" stroke-linecap="round"></path>
               <path d="M13 55 A 42 42 0 0 1 97 55" fill="none" stroke="${tone}" stroke-width="9" stroke-linecap="round"
                     stroke-dasharray="${dash.toFixed(2)} ${ARC.toFixed(2)}"></path>
             </svg>
@@ -2909,7 +2956,7 @@ function balanceGauges(food, burn, scope) {
           </div>`;
   };
 
-  const netTone = deficit ? 'var(--zg-strong)' : 'var(--zg-donate)';
+  const netTone = deficit ? 'var(--zg-strong)' : 'var(--zg-alert)';
   const open = state.weightEditOpen === scope;
 
   return `
@@ -3171,7 +3218,7 @@ function pastCard(v) {
                 <span>${esc(withIcon(t.name))}</span>
                 <span style="color: var(--color-neutral-700); font-variant-numeric: tabular-nums;">${esc(t.label)} · ${esc(t.pct)}</span>
               </div>
-              <div style="height: 5px; background: var(--color-neutral-200);">
+              <div style="height: 5px; background: var(--track);">
                 <div style="height: 100%; width: ${t.width}; background: ${esc(t.color)};"></div>
               </div>
             </div>`).join('')}
@@ -3306,7 +3353,7 @@ function timeTableCard(v) {
   });
 
   const card = (e) => {
-    const spent = Math.max(0, e.to - e.from);
+    const spent = span(e);
     const tint = colorOf(e.category);
     return `
                 <div class="entry-card">
@@ -3349,7 +3396,11 @@ function timelineCard(v) {
       <div class="blueprint card-w-head">
         ${cardHead('Your day, end to end', '6 AM to 10 PM · gaps are time you didn\'t log')}
         <div class="card-body">
-        <div style="position: relative; height: 34px; background: repeating-linear-gradient(90deg, var(--color-neutral-200) 0 1px, transparent 1px 100%); border: 1px solid var(--color-divider);">
+        <!-- The unlogged ground is a wash of the accent rather than bare grey,
+             and the hour ticks a stronger tint of the same. -->
+        <div style="position: relative; height: 34px; border-radius: 8px; overflow: hidden;
+                    background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--color-accent) 34%, transparent) 0 1px, transparent 1px 100%), var(--track);
+                    border: 1px solid color-mix(in srgb, var(--color-accent) 22%, transparent);">
           ${v.timeline.map((s) => `<div title="${esc(s.title)}" style="position: absolute; top: 0; bottom: 0; left: ${s.left}; width: ${s.width}; background: ${esc(s.color)};"></div>`).join('')}
         </div>
         <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--color-neutral-600); margin-top: 6px; font-variant-numeric: tabular-nums;">
@@ -3627,11 +3678,11 @@ function reportSheet(v) {
           <div style="display: flex; gap: 36px; align-items: center; margin-bottom: 32px; flex-wrap: wrap;">
             <div class="report-donut" style="position: relative; flex: none;">
               <svg viewBox="0 0 200 200" style="width: 100%; height: 100%; transform: rotate(-90deg);">
-                <circle cx="100" cy="100" r="72" fill="none" stroke="var(--color-neutral-200)" stroke-width="40"></circle>
+                <circle cx="100" cy="100" r="72" fill="none" stroke="var(--track)" stroke-width="40"></circle>
                 ${v.slices.map((s) => `<circle cx="100" cy="100" r="72" fill="none" stroke="${esc(s.color)}" stroke-width="40" stroke-dasharray="${s.dash}" stroke-dashoffset="${s.offset}"></circle>`).join('')}
               </svg>
               <div style="position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;">
-                <div style="font-family: var(--font-heading); font-size: 30px; line-height: 1;">${esc(v.rangeTotal)}</div>
+                <div style="font-family: var(--font-heading); font-size: ${Math.max(15, Math.min(30, Math.floor(148 / (String(v.rangeTotal).length * 0.54))))}px; line-height: 1.05; white-space: nowrap;">${esc(v.rangeTotal)}</div>
                 <div style="font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--color-neutral-600);">tracked</div>
               </div>
             </div>
@@ -3897,13 +3948,24 @@ function toggleTimer() {
   const startD = new Date(state.timerStart), endD = new Date();
   const rnd = (m) => Math.round(m / round) * round;
   const from = rnd(startD.getHours() * 60 + startD.getMinutes());
+
+  /* Taken from the two timestamps rather than from the two wall clocks. Read
+     off the clocks, a session that ran from 9PM to 6AM looked like it went
+     backwards, and the old `Math.max(to, from + 1)` floor turned nine hours of
+     sleep into a one-minute entry. Capped just under a full day: past that the
+     clock has lapped and there is no honest reading left. */
+  const elapsed = Math.max(1, Math.min(1439, Math.round((endD - startD) / 60000)));
+  const to = (from + elapsed) % 1440;
+  const overnight = to < from;
+
   const entry = {
     id: 't' + Date.now(),
-    date: iso(startD),
+    // Dated the morning it ended, so last night's sleep shows up on today.
+    date: overnight ? iso(endD) : iso(startD),
     activity: state.timerActivity.trim() || 'Untitled activity',
     category: state.timerCategory,
     from,
-    to: Math.max(rnd(endD.getHours() * 60 + endD.getMinutes()), from + 1)
+    to
   };
   state.entries = state.entries.concat([touch('entries', entry)]);
   state.timerStart = null;
@@ -3926,13 +3988,16 @@ function addEntry() {
     render();
     return;
   }
-  if (!(t > f)) {
-    state.formError.entry = 'To has to be later than From.';
+  if (t === f) {
+    state.formError.entry = 'From and To are the same time.';
     render();
     return;
   }
   state.formError.entry = '';
-  const entry = touch('entries', { id: 'm' + Date.now(), date: state.form.date, activity: state.form.activity.trim(), category: state.form.category, from: f, to: t, note: '' });
+  /* To earlier than From means it ran past midnight, the same as the timer —
+     and it lands on the morning it ended, not the evening it began. */
+  const date = t < f ? nextDay(state.form.date) : state.form.date;
+  const entry = touch('entries', { id: 'm' + Date.now(), date, activity: state.form.activity.trim(), category: state.form.category, from: f, to: t, note: '' });
   state.entries = state.entries.concat([entry]);
   state.selectedDate = state.form.date;
   state.form = Object.assign({}, state.form, { activity: '', from: state.form.to, to: '' });
@@ -4360,7 +4425,9 @@ root.addEventListener('input', (ev) => {
     const out = root.querySelector('[data-form-duration]');
     if (out) {
       const f = parseHm(state.form.from), t = parseHm(state.form.to);
-      out.textContent = t > f ? dur(t - f) : 'set a time';
+      out.textContent = t === f ? 'set a time'
+        : t > f ? dur(t - f)
+        : `${dur(t + 1440 - f)} · next day`;
     }
   }
 });

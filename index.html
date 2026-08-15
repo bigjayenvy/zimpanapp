@@ -73,6 +73,13 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
        brand is now the thing the app is built out of. */
     --bn-active: #efe9fe;
     --zg-donate: #e9a13b;
+    /* A calorie surplus is a warning rather than a nudge, so it leaves the
+       amber the food gauge uses and takes a red of its own. */
+    --zg-alert: #d92d20;
+    /* The empty half of any meter — the donut's ring, a progress bar's rest,
+       the unlogged part of the timeline. A wash of the accent rather than the
+       neutral grey these all used, and it repoints with the tracker. */
+    --track: color-mix(in srgb, var(--color-accent) 15%, #fff);
   }
 
   /* Small inline labels take a violet-cast grey rather than a flat one, so the
@@ -409,13 +416,21 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   /* — landing —
      A tinted ground with the brand bleeding in from the top right, so the page
      reads as part of the gradient rather than as white paper under it. */
+  /* The banner sits top-right, where the artwork's own white space leaves the
+     left half clear for the headline. The gradients under it are not decoration
+     for its own sake — they are what shows if ds/home-bg.jpg is missing, so the
+     page never falls back to bare white. */
   .landing {
     min-height: 100vh; color: var(--color-text); font-family: var(--font-body);
     background:
-      radial-gradient(1100px 620px at 88% -8%, color-mix(in srgb, #8b5cf6 20%, transparent), transparent 62%),
-      radial-gradient(760px 520px at 6% 4%, color-mix(in srgb, #35ae9f 12%, transparent), transparent 60%),
+      url('ds/home-bg.jpg') top right / clamp(760px, 76%, 1500px) auto no-repeat,
+      radial-gradient(1100px 620px at 88% -8%, color-mix(in srgb, #4a2458 18%, transparent), transparent 62%),
+      radial-gradient(760px 520px at 6% 4%, color-mix(in srgb, #2a8b7d 12%, transparent), transparent 60%),
       var(--color-bg);
   }
+
+  /* Below the hero the artwork has run out, so the ground closes to flat. */
+  .landing > .strip, .landing > footer { position: relative; }
 
   .landing-bar {
     display: flex; align-items: center; gap: 18px;
@@ -492,6 +507,16 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      file: that block comes before the landing rules above, and at equal
      specificity the later declaration wins. */
   @media (max-width: 720px) {
+    /* The artwork's clear half is on its left, which a phone-width crop loses —
+       so the banner moves behind the page rather than beside the words, with a
+       scrim over it to keep the headline readable on top. */
+    .landing {
+      background:
+        linear-gradient(180deg, color-mix(in srgb, #f8f7fb 78%, transparent) 0%, color-mix(in srgb, #f8f7fb 94%, transparent) 46%, #f8f7fb 72%),
+        url('ds/home-bg.jpg') top right / 190% auto no-repeat,
+        var(--color-bg);
+    }
+
     /* The header keeps the wordmark and a way in — the hero's own Start
        Tracking button sits a thumb-length below it. */
     .landing-cta-top { display: none; }
