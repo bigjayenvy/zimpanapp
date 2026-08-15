@@ -361,6 +361,7 @@ function save() {
       entries: state.entries, money: state.money,
       categories: state.categories, purposes: state.purposes,
       currency: state.currency, currencyUpdatedAt: state.currencyUpdatedAt,
+      steps: state.steps,
       weightKg: state.weightKg, weightUpdatedAt: state.weightUpdatedAt,
       entryMode: state.entryMode,
       tombstones: state.tombstones, dirty: state.dirty,
@@ -476,6 +477,11 @@ const state = {
   categories: stored.categories,
   purposes: stored.purposes,
   currency: CURRENCIES.some((c) => c.code === stored.currency) ? stored.currency : 'PHP',
+  /* Steps walked, keyed by date. Held on this device only: the sync protocol
+     carries entries, money, categories, purposes, currency and weight, and
+     adding a kind to it needs a table on the server that does not exist yet. */
+  steps: (stored.steps && typeof stored.steps === 'object') ? stored.steps : {},
+
   weightKg: Number(stored.weightKg) || null,
   weightUpdatedAt: Number(stored.weightUpdatedAt) || 0,
   // 'timer' or 'manual' — only one entry card is on screen at a time.
@@ -517,6 +523,10 @@ const state = {
 
   /* Which wellbeing pillar has its activity list open: {key, scope}. */
   pillarOpen: null,
+
+  /* The date whose step count is being edited, or nothing. */
+  stepsOpen: null,
+  stepsDraft: '',
 
   /* What each entry form is complaining about, if anything. Set when an add is
      refused and cleared the moment the field is typed into, so the message
@@ -1442,7 +1452,24 @@ function entryEnergy(e) {
    the comparison and leave it meaningless. */
 const KCAL_PER_KG_PER_DAY = 22;
 
-function burnFor(entries, weightKg, days) {
+/* Steps, priced as the walking they were.
+   A hundred steps a minute is the usual cadence figure, and walking is 3.5
+   METs — the same rate the entry above it would be charged at, so a walk you
+   logged and a walk your phone counted cost the same. */
+const STEPS_PER_MINUTE = 100;
+const stepsKcal = (steps, weightKg) => {
+  const n = Number(steps) || 0;
+  if (n <= 0) return 0;
+  const kg = Number(weightKg) || DEFAULT_WEIGHT_KG;
+  return Math.round(3.5 * kg * (n / STEPS_PER_MINUTE / 60));
+};
+
+/* Steps recorded across a set of dates. */
+function stepsIn(dates) {
+  return dates.reduce((a, d) => a + (Number(state.steps[d]) || 0), 0);
+}
+
+function burnFor(entries, weightKg, days, dates) {
   const kg = Number(weightKg) || DEFAULT_WEIGHT_KG;
   // Named for what it is. It was `span`, which now shadowed the entry-length
   // helper of that name and made every burn read as zero.
@@ -1457,9 +1484,17 @@ function burnFor(entries, weightKg, days) {
     minutes += mins;
     kcal += hit.met * kg * (mins / 60);
   });
+  /* Steps join the workout figure rather than standing beside it: they are
+     movement that burned energy, and a second dial for them would split one
+     reading into two that each look small. */
+  const steps = dates ? stepsIn(dates) : 0;
+  const fromSteps = stepsKcal(steps, weightKg);
+
   return {
-    kcal: Math.round(kcal),
+    kcal: Math.round(kcal) + fromSteps,
     minutes,
+    steps,
+    fromSteps,
     restKcal: Math.round(KCAL_PER_KG_PER_DAY * kg * dayCount),
     days: dayCount,
     assumedWeight: !weightKg
@@ -1874,6 +1909,26 @@ function compute() {
     pastFallback = true;
   }
   const pastDates = Array.from(new Set(pastList.map((e) => e.date))).sort();
+
+  /* Every finished day the window covers, not only the ones carrying an entry.
+     A step count can be the only thing recorded against a day, and that day
+     still has to be counted. */
+  const pastSpan = (() => {
+    const out = [];
+    for (let i = 0; i < rangeDays(); i++) {
+      const d = new Date(s.selectedDate + 'T00:00:00');
+      d.setDate(d.getDate() - i);
+      const key = iso(d);
+      if (key !== todayIso) out.push(key);
+    }
+    // A one-day window sitting on today has nothing finished in it, and the
+    // section falls back to yesterday — so the steps do too.
+    if (!out.length) {
+      const y = new Date(todayIso + 'T00:00:00'); y.setDate(y.getDate() - 1);
+      out.push(iso(y));
+    }
+    return out.sort();
+  })();
   // Money logged on the same finished days, so the food read covers both trackers.
   const pastDateSet = new Set(pastDates);
   const pastMoney = s.money.filter((e) => pastDateSet.has(e.date));
@@ -1929,7 +1984,7 @@ function compute() {
     todayReadings: dimensionReadings(todayWb, 1),
     todayAdvice: adviceFor(todayWb, dimensionReadings(todayWb, 1), 1),
     todayFood: foodReport(todayList, s.money.filter((e) => e.date === todayIso), 1),
-    todayBurn: burnFor(todayList, s.weightKg, 1),
+    todayBurn: burnFor(todayList, s.weightKg, 1, [todayIso]),
     todayEmpty: todayList.length === 0,
 
     pastLabel,
@@ -1948,7 +2003,7 @@ function compute() {
     pastReadings: dimensionReadings(pastWb, pastDates.length),
     pastAdvice: adviceFor(pastWb, dimensionReadings(pastWb, pastDates.length), pastDates.length),
     pastFood: foodReport(pastList, pastMoney, Math.max(1, pastDates.length)),
-    pastBurn: burnFor(pastList, s.weightKg, Math.max(1, pastDates.length)),
+    pastBurn: burnFor(pastList, s.weightKg, Math.max(1, pastDates.length), pastSpan),
     pastEmpty: pastDates.length === 0,
 
     untracked: durShort(untrackedMins),
@@ -1966,6 +2021,9 @@ function compute() {
     moneyInsight: isMoney ? financialInsights(mRangeList, mPrevList, winDays) : null,
     // The block is built for a fortnight; anything else gets a one-tap way there.
     insightAtFortnight: s.range === 'fortnight',
+
+    // The one finished day the lookback is showing, when it is showing one.
+    pastSingleDate: pastSpan.length === 1 ? pastSpan[0] : null,
 
     reportRange: reportRangeLabel(),
     reportTitle: isMoney ? 'MONEY REPORT' : 'TIME REPORT',
@@ -2718,29 +2776,25 @@ function notePromptDialog() {
    account and following the user onto their other devices. */
 
 const DONATE_SEEN_KEY = 'zimpan.donate.v1';
-const DONATE_AFTER_MS = 20 * 60 * 1000;
-const DONATE_IDLE_MS = 2 * 60 * 1000;
+/* Five minutes with the app open, whether or not anyone is touching it —
+   reading a report or leaving the tab up counts the same as typing. It used to
+   need twenty minutes of *active* time, which a reader never accumulated. */
+const DONATE_AFTER_MS = 5 * 60 * 1000;
 const DONATE_TICK_MS = 15 * 1000;
 
-let activeMs = 0;
-let lastInteractionAt = Date.now();
+let openMs = 0;
 
 const donateSeenOn = () => { try { return localStorage.getItem(DONATE_SEEN_KEY) || ''; } catch (err) { return ''; } };
 const markDonateSeen = () => { try { localStorage.setItem(DONATE_SEEN_KEY, iso(new Date())); } catch (err) { /* private mode */ } };
 
-// Capturing, so it still counts inside the dialogs and the report sheet.
-['click', 'keydown', 'input', 'touchstart'].forEach((evt) => {
-  document.addEventListener(evt, () => { lastInteractionAt = Date.now(); }, { passive: true, capture: true });
-});
-
 function tickDonate() {
   if (!state.auth || state.donateOpen) return;
+  // Still only counts while the tab is actually on screen — a window left in a
+  // background tab for an hour has not been used for an hour.
   if (document.visibilityState !== 'visible') return;
-  const engaged = !!state.timerStart || (Date.now() - lastInteractionAt) < DONATE_IDLE_MS;
-  if (!engaged) return;
 
-  activeMs += DONATE_TICK_MS;
-  if (activeMs < DONATE_AFTER_MS) return;
+  openMs += DONATE_TICK_MS;
+  if (openMs < DONATE_AFTER_MS) return;
   // Recomputed rather than read from todayIso, which was fixed at load and
   // would be yesterday for anyone who left the app open past midnight.
   if (donateSeenOn() === iso(new Date())) return;
@@ -2970,6 +3024,54 @@ function dimensionCards(readings, scope) {
   }).join('');
 }
 
+/* Steps for one day. A lightbox rather than a field on the card: it is entered
+   once a day from a phone's own counter, and a permanent input for it would sit
+   there empty most of the time. */
+function stepsSheet() {
+  if (!state.stepsOpen) return '';
+  const date = state.stepsOpen;
+  const saved = Number(state.steps[date]) || 0;
+  const draft = state.stepsDraft === '' ? '' : Number(state.stepsDraft) || 0;
+  const preview = stepsKcal(draft || saved, state.weightKg);
+  const when = date === todayIso
+    ? 'today'
+    : new Date(date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+
+  return `
+      <div class="no-print focus-backdrop" data-backdrop="steps-close">
+        <div class="focus-sheet steps-sheet" role="dialog" aria-modal="true" aria-label="Steps for ${esc(when)}">
+          <div class="focus-head">
+            <span class="focus-swatch" style="background: var(--zg-strong);"></span>
+            <div class="focus-title">
+              <h4>Steps</h4>
+              <span class="focus-sub">for ${esc(when)}</span>
+            </div>
+            <button class="focus-x" data-act="steps-close" aria-label="Close">×</button>
+          </div>
+          <div class="focus-body steps-body">
+            <label class="steps-label" for="steps-count">How many steps did you walk?</label>
+            <input class="input steps-input" id="steps-count" type="number" min="0" max="200000" step="1"
+              inputmode="numeric" data-k="steps-count" data-sync="stepsDraft" data-enter="steps-save"
+              placeholder="e.g. 8,000" value="${saved ? esc(saved) : ''}">
+            <div class="steps-preview">
+              ${preview
+                ? `About <strong>${preview.toLocaleString('en-US')} kcal</strong>, counted into calories burned from workout and movement.`
+                : 'Priced as walking, at the same rate a logged walk is charged.'}
+            </div>
+            <div class="steps-note">
+              A rough estimate from step count and your weight${state.weightKg ? '' : ` (${DEFAULT_WEIGHT_KG} kg assumed)`}.
+              Kept on this device — steps do not sync between devices yet.
+            </div>
+          </div>
+          <div class="focus-foot">
+            ${saved ? '<button class="btn btn-ghost" data-act="steps-clear" style="margin-right:auto;font-size:12.5px;">Remove</button>' : ''}
+            <button class="btn btn-secondary" data-act="steps-close">Cancel</button>
+            <button class="btn btn-primary" data-act="steps-save">Save</button>
+          </div>
+        </div>
+      </div>`;
+}
+
 /* The activities behind one pillar's figure. Most rules credit a fraction of an
    entry — chores are half of physical, a workout a third of mental — so the
    list shows what each one contributed as well as how long it ran, which is the
@@ -3018,7 +3120,7 @@ function pillarSheet(v) {
    `scope` names the card this pair of gauges belongs to — the same block is
    drawn twice on the page, so the weight editor needs to know which copy was
    asked for and the fields inside it need keys that do not collide. */
-function balanceGauges(food, burn, scope) {
+function balanceGauges(food, burn, scope, stepDate) {
   if (!food.kcal && !burn.kcal) return '';
 
   /* A thirty-day total on a dial scaled for one day reads as wildly over-eaten
@@ -3064,7 +3166,14 @@ function balanceGauges(food, burn, scope) {
   return `
       <div class="cal-kicker">${days > 1 ? `Average day across ${days} days` : 'Daily calorie balance'}</div>
       <div class="cal-row">
-        ${dial(burned, 'var(--zg-strong)', CAL_ICONS.workout, 'Calories burned (workout)', '')}
+        ${dial(burned, 'var(--zg-strong)', CAL_ICONS.workout, 'Calories burned from workout and movement',
+          /* The steps link is offered only where a single day is on screen —
+             a step count belongs to one date, and there is no honest way to
+             enter one against a week. */
+          stepDate ? `${burn.steps
+            ? `${burn.steps.toLocaleString('en-US')} steps${burn.fromSteps ? ` · about ${burn.fromSteps.toLocaleString('en-US')} kcal of the figure above` : ''}. `
+            : ''}<button class="cal-link" data-act="steps-open" data-date="${esc(stepDate)}">${burn.steps ? 'Edit your steps' : 'Add your steps'}</button>.`
+            : (burn.steps ? `Includes ${burn.steps.toLocaleString('en-US')} steps across the range.` : ''))}
         ${dial(eaten, 'var(--zg-donate)', CAL_ICONS.food, 'Calories consumed (food)', '')}
         ${dial(rested, 'var(--color-accent-700)', CAL_ICONS.rest, 'Calories burned (at rest)',
           `Roughly burned at rest based on ${burn.assumedWeight
@@ -3265,7 +3374,7 @@ function todayCard(v) {
           <span data-today-kicker style="font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--color-accent-700); margin-left: auto;">${esc(v.todayKicker)}</span>
         </div>
         <div data-live-line style="font-size: 12px; color: var(--color-neutral-600);">${esc(v.todayLive)}</div>
-        ${balanceGauges(v.todayFood, v.todayBurn, 'today')}
+        ${balanceGauges(v.todayFood, v.todayBurn, 'today', todayIso)}
         <div class="wb-status"><span class="wb-kicker">Daily log status</span>${esc(v.todayHeadline)}</div>
         ${v.todayEmpty || !state.drawers.today ? '' : `
           <div class="wb-grid">${dimensionCards(v.todayReadings, 'today')}</div>
@@ -3311,7 +3420,7 @@ function pastCard(v) {
         <div style="font-size: 12px; color: var(--color-neutral-600); margin-bottom: 12px;">${esc(v.pastLabel)}</div>
         <div style="font-size: 13.5px; line-height: 1.6;">${esc(v.pastHeadline)}</div>
         ${v.pastBusiest ? `<div style="font-size: 12.5px; line-height: 1.6; color: var(--color-neutral-700); margin-top: 4px;">${esc(v.pastBusiest)}</div>` : ''}
-        ${balanceGauges(v.pastFood, v.pastBurn, 'past')}
+        ${balanceGauges(v.pastFood, v.pastBurn, 'past', v.pastSingleDate)}
         ${v.pastEmpty || !state.drawers.lookback ? '' : `
         <div style="display: flex; flex-direction: column; gap: 8px; margin: 16px 0 18px;">
           ${v.pastTop.map((t) => `
@@ -3844,6 +3953,12 @@ function restoreFocus(f) {
 
 function render() {
   const f = captureFocus();
+  /* Every render replaces the whole tree, which collapses the document to
+     nothing for an instant and takes the scroll position with it — switching
+     the range from down the page threw you back to the top. Captured here and
+     put back below; anything that means to move the page (scrollToAnchor, the
+     back-to-top button) runs after render and still wins. */
+  const scrollY = window.scrollY;
 
   // Gates, in order: nothing to show before the session is known (unless this
   // browser already has an account and can work offline), then the migration
@@ -3854,6 +3969,7 @@ function render() {
     // journey that leads to it.
     const panelOpen = state.authOpen || state.authMode === 'reset';
     root.innerHTML = landingScreen() + (panelOpen ? authScreen() : '') + legalSheet();
+    if (scrollY && window.scrollY !== scrollY) window.scrollTo(0, scrollY);
     restoreFocus(f);
     if (panelOpen) mountGoogleButton();
     return;
@@ -3876,6 +3992,7 @@ function render() {
   </div>
   ${focusPanel(v)}
   ${pillarSheet(v)}
+  ${stepsSheet()}
   ${state.reportOpen ? reportSheet(v) : ''}
   ${notePromptDialog()}
   ${donateSheet()}
@@ -3885,6 +4002,9 @@ function render() {
   ${mobileNav(v)}
 </div>`;
 
+  /* Before focus: restoring focus to a field can itself scroll the page, and
+     that scroll is the one worth keeping. */
+  if (scrollY && window.scrollY !== scrollY) window.scrollTo(0, scrollY);
   restoreFocus(f);
   paintBusy();
   // The tree was just replaced, so the scroll-driven classes have to be put back.
@@ -4439,6 +4559,31 @@ const ACTIONS = {
   'pillar-open': (el) => { state.pillarOpen = { key: el.dataset.key, scope: el.dataset.scope }; render(); },
   'pillar-close': () => { state.pillarOpen = null; render(); },
 
+  'steps-open': (el) => {
+    state.stepsOpen = el.dataset.date;
+    state.stepsDraft = String(state.steps[el.dataset.date] || '');
+    state.focusField = 'steps-count';
+    render();
+  },
+  'steps-close': () => { state.stepsOpen = null; state.stepsDraft = ''; render(); },
+  'steps-save': () => {
+    const date = state.stepsOpen;
+    if (!date) return;
+    const n = Math.round(Number(state.stepsDraft));
+    // Blank or zero removes the day rather than storing a nought, so the link
+    // goes back to offering to add one.
+    if (Number.isFinite(n) && n > 0) state.steps[date] = Math.min(200000, n);
+    else delete state.steps[date];
+    state.stepsOpen = null; state.stepsDraft = '';
+    save(); render();
+    flash(state.steps[date] ? `Saved · ${state.steps[date].toLocaleString('en-US')} steps` : 'Steps cleared');
+  },
+  'steps-clear': () => {
+    if (state.stepsOpen) delete state.steps[state.stepsOpen];
+    state.stepsOpen = null; state.stepsDraft = '';
+    save(); render(); flash('Steps cleared');
+  },
+
   'open-report': () => { state.reportOpen = true; render(); },
   'close-report': () => { state.reportOpen = false; render(); },
   'export-pdf': () => window.print(),
@@ -4556,6 +4701,7 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && state.donateOpen) { state.donateOpen = false; render(); return; }
   if (ev.key === 'Escape' && state.legalOpen) { state.legalOpen = null; render(); return; }
   if (ev.key === 'Escape' && state.authOpen && state.authMode !== 'reset') { state.authOpen = false; render(); return; }
+  if (ev.key === 'Escape' && state.stepsOpen) { state.stepsOpen = null; state.stepsDraft = ''; render(); return; }
   if (ev.key === 'Escape' && state.pillarOpen) { state.pillarOpen = null; render(); return; }
   if (ev.key === 'Escape' && state.reportOpen) { state.reportOpen = false; render(); return; }
   if (ev.key === 'Escape' && state.focus) { clearFocus(); render(); }

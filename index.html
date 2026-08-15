@@ -404,6 +404,15 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     display: flex; align-items: center; justify-content: flex-end; gap: 12px;
     padding: 12px 18px 14px; border-top: 1px solid var(--color-divider);
   }
+  /* — steps — */
+  .steps-sheet { width: 420px; }
+  .steps-body { padding: 18px; }
+  .steps-label { display: block; font-size: 13px; color: var(--color-neutral-800); margin-bottom: 8px; }
+  .steps-input { font-size: 20px; font-family: var(--font-heading); height: 48px; text-align: center; }
+  .steps-preview { margin-top: 12px; font-size: 13px; line-height: 1.55; color: var(--color-text); }
+  .steps-preview strong { color: var(--zg-strong); }
+  .steps-note { margin-top: 10px; font-size: 11.5px; line-height: 1.5; color: var(--color-neutral-600); }
+
   .focus-foot-note {
     margin-right: auto; font-size: 11px; line-height: 1.45;
     color: var(--color-neutral-600); max-width: 60%;
@@ -1128,6 +1137,33 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
        own line rather than crushing both. */
     .entry-foot { flex-wrap: wrap; row-gap: 7px; }
     .entry-kcal { font-size: 10px; padding: 3px 8px; order: 3; margin-left: 0; flex-basis: 100%; text-align: center; }
+  }
+
+  /* — no zoom on focus (phones) —
+     iOS Safari zooms the viewport whenever a focused field computes under 16px,
+     and it has ignored user-scalable=no and maximum-scale since iOS 10 — so the
+     meta tag cannot fix this and the fields themselves have to be big enough.
+     Declared last, and with !important, because the rules it overrides are
+     themselves !important and sit earlier in this file.
+
+     The dense fields get their space back by giving up padding rather than
+     type, so rows grow a little but nothing overflows. */
+  @media (max-width: 720px) {
+    input, select, textarea,
+    .input, .cell-input, .cell-time, .cell-num, .entry-name, .entry-select,
+    .entry-times .cell-time, .rows .cell-input, .rows .cell-time,
+    .rows td[data-col="category"] select {
+      font-size: 16px !important;
+    }
+    /* 16px in a half-width card needs the padding back. */
+    .entry-card { padding: 10px 11px 9px; }
+    .entry-name { padding-bottom: 1px; }
+    .entry-controls { gap: 5px; margin: 5px 0 8px; }
+    .entry-select { padding: 2px 8px !important; }
+    .entry-leg { font-size: 9px; letter-spacing: .06em; }
+    .entry-times { gap: 4px; }
+    .entry-time { gap: 4px; }
+    .cell-note { font-size: 10px; padding: 3px 8px; }
   }
 
   /* Only the report sheet prints, and it has to flow in normal document order:
