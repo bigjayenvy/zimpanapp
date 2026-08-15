@@ -208,8 +208,17 @@ const FOLLOW_UPS = [
     placeholder: 'e.g. rice, chicken, vegetables, milk'
   },
   {
+    /* Time at the stove, not a meal. Tested before the eating patterns because
+       "cooking dinner" matches both, and read as neither a question nor food:
+       asking "what did you eat?" for an hour of cooking was the wrong question,
+       and counting it as a meal put calories on the day that nobody ate. */
+    key: 'cooking',
+    re: /\bcook|baking|\bbake\b|meal prep|prepping|luto|nagluluto/,
+    silent: true
+  },
+  {
     key: 'food',
-    re: /\bfood\b|\beat\b|eating|\bate\b|\bmeal\b|breakfast|lunch|dinner|snack|merienda|restaurant|dining|cook|cooking|baking|kape|coffee|cafe|takeout|kain/,
+    re: /\bfood\b|\beat\b|eating|\bate\b|\bmeal\b|breakfast|lunch|dinner|snack|merienda|restaurant|dining|kape|coffee|cafe|takeout|kain/,
     title: 'What did you eat?',
     hint: 'Optional — a line about the meal is enough.',
     placeholder: 'e.g. grilled chicken, rice, salad'
@@ -225,9 +234,16 @@ const FOLLOW_UPS = [
 
 // Reads both the free text and the category/purpose, since either can be the
 // thing that identifies an entry as a workout or a meal.
-function followUpFor(kind, row) {
+function matchFollowUp(row) {
   const hay = `${row.activity || ''} ${row.category || row.purpose || ''}`.toLowerCase();
   return FOLLOW_UPS.find((f) => f.re.test(hay)) || null;
+}
+
+/* A silent rule exists to claim a row before a later rule can — it says what
+   the row is *not*, and has no question to ask. */
+function followUpFor(kind, row) {
+  const hit = matchFollowUp(row);
+  return hit && !hit.silent ? hit : null;
 }
 
 const catIcon = (name) => iconFor(name, '⏱️');
@@ -498,6 +514,9 @@ const state = {
      'past', or nothing. Not persisted: it is a thing you opened, not a
      preference, and it should not be waiting for you on the next load. */
   weightEditOpen: null,
+
+  /* Which wellbeing pillar has its activity list open: {key, scope}. */
+  pillarOpen: null,
 
   /* What each entry form is complaining about, if anything. Set when an add is
      refused and cleared the moment the field is typed into, so the message
@@ -1066,6 +1085,10 @@ const WELLBEING = [
 
 function wellbeing(list) {
   const mins = { physical: 0, emotional: 0, mental: 0, spiritual: 0 };
+  /* What fed each figure. A reading like "22m of movement" is unarguable
+     until you want to know which 22 minutes — and since most rules credit a
+     fraction of an entry, the answer is rarely the obvious one. */
+  const parts = { physical: [], emotional: [], mental: [], spiritual: [] };
   let tracked = 0, still = 0, drain = 0, vague = 0;
   list.forEach((e) => {
     const m = span(e);
@@ -1075,9 +1098,17 @@ function wellbeing(list) {
     if (!hit) { vague += m; return; }
     if (hit.still) still += m;
     if (hit.drain) drain += m;
-    Object.keys(hit.w).forEach((k) => { mins[k] += m * hit.w[k]; });
+    Object.keys(hit.w).forEach((k) => {
+      if (!hit.w[k]) return;
+      mins[k] += m * hit.w[k];
+      parts[k].push({
+        activity: e.activity, category: e.category, date: e.date,
+        mins: m, weight: hit.w[k], credited: Math.round(m * hit.w[k])
+      });
+    });
   });
-  return { mins, tracked, still, drain, vague };
+  Object.keys(parts).forEach((k) => parts[k].sort((a, b) => b.credited - a.credited));
+  return { mins, parts, tracked, still, drain, vague };
 }
 
 /* Wording that reads the same whether the window is one day or thirty — the
@@ -1156,7 +1187,9 @@ const FOOD_GROUPS = [
 ];
 
 const isFoodRow = (row) => {
-  const q = followUpFor(row.purpose ? 'money' : 'entries', row);
+  // The raw match, not the question: cooking is claimed by a silent rule that
+  // has no question, and must still be kept out of the day's intake.
+  const q = matchFollowUp(row);
   return !!q && (q.key === 'food' || q.key === 'shopping-food');
 };
 
@@ -1378,6 +1411,30 @@ const METS = [
 
 const DEFAULT_WEIGHT_KG = 70;
 
+/* What a single entry did to the day's calorie ledger, for the chip on its
+   card. Exercise is checked first: METS only ever matches activity verbs, so a
+   meal cannot be mistaken for a workout, but an entry naming both should read
+   as the effort it was. Returns nothing for the great majority of entries,
+   which are neither. */
+function entryEnergy(e) {
+  const mins = span(e);
+  if (!mins) return null;
+
+  const text = `${e.activity || ''} ${e.category || ''} ${e.note || ''}`.toLowerCase();
+  const met = METS.find((m) => m.re.test(text));
+  if (met) {
+    const kg = Number(state.weightKg) || DEFAULT_WEIGHT_KG;
+    const kcal = Math.round(met.met * kg * (mins / 60));
+    return kcal ? { kind: 'burn', kcal, label: `~${kcal.toLocaleString('en-US')} kcal burned` } : null;
+  }
+
+  if (isFoodRow(e)) {
+    const kcal = nutritionFor([e]).kcal;
+    return kcal ? { kind: 'food', kcal, label: `~${kcal.toLocaleString('en-US')} kcal eaten` } : null;
+  }
+  return null;
+}
+
 /* Resting burn — what the body spends doing nothing. Proper formulae want
    height, age and sex; from weight alone about 22 kcal per kilogram per day is
    the usual midpoint, good to roughly ±25%. Reported on its own rather than
@@ -1490,7 +1547,9 @@ function dimensionReadings(wb, days) {
       key: dim.key, label: dim.label, status, ratio,
       // The meter is capped; `ratio` stays raw so overload is still detectable.
       pct: Math.max(0, Math.min(100, Math.round(ratio * 100))),
-      note: clamp(NOTES[dim.key][status](durShort(Math.round(total)), aside), 300)
+      note: clamp(NOTES[dim.key][status](durShort(Math.round(total)), aside), 300),
+      total: Math.round(total),
+      entries: wb.parts[dim.key] || []
     };
   });
 }
@@ -2884,7 +2943,7 @@ const METER_COLOR = {
    at a glance where a flat meter reads as a row to be scanned, and it gives the
    icon somewhere to sit. Drawn as a full circle rotated a quarter turn so the
    fill starts at the top. */
-function dimensionCards(readings) {
+function dimensionCards(readings, scope) {
   const C = 2 * Math.PI * 26;
   return readings.map((r) => {
     const dash = (Math.max(0, Math.min(100, r.pct)) / 100) * C;
@@ -2903,8 +2962,51 @@ function dimensionCards(readings) {
             <span class="wb-label">${esc(r.label)}</span>
           </div>
           <div class="wb-note">${esc(r.note)}</div>
+          ${r.entries.length ? `
+          <button class="wb-see" data-act="pillar-open" data-key="${esc(r.key)}" data-scope="${esc(scope)}">
+            See the ${r.entries.length} ${r.entries.length === 1 ? 'activity' : 'activities'} behind this
+          </button>` : ''}
         </div>`;
   }).join('');
+}
+
+/* The activities behind one pillar's figure. Most rules credit a fraction of an
+   entry — chores are half of physical, a workout a third of mental — so the
+   list shows what each one contributed as well as how long it ran, which is the
+   only way the total adds up on the page. */
+function pillarSheet(v) {
+  if (!state.pillarOpen) return '';
+  const { key, scope } = state.pillarOpen;
+  const readings = scope === 'past' ? v.pastReadings : v.todayReadings;
+  const r = (readings || []).find((x) => x.key === key);
+  if (!r) return '';
+
+  const rows = r.entries.map((p) => `
+          <div class="focus-row">
+            <span class="focus-date">${esc(dayLabel(p.date))}</span>
+            <span class="focus-what" title="${esc(p.activity)}">${esc(p.activity)}</span>
+            <span class="focus-meta">${esc(withIcon(p.category))}${p.weight < 1 ? ` · counts ${Math.round(p.weight * 100)}%` : ''}</span>
+            <span class="focus-val">${esc(durShort(p.credited))}</span>
+          </div>`).join('');
+
+  return `
+      <div class="no-print focus-backdrop" data-backdrop="pillar-close">
+        <div class="focus-sheet" role="dialog" aria-modal="true" aria-label="Activities behind ${esc(r.label)}">
+          <div class="focus-head">
+            <span class="focus-swatch" style="background: ${esc(METER_COLOR[r.status])};"></span>
+            <div class="focus-title">
+              <h4>${esc(r.label)}</h4>
+              <span class="focus-sub">${esc(durShort(r.total))} credited · ${r.entries.length} ${r.entries.length === 1 ? 'activity' : 'activities'} · ${scope === 'past' ? 'looking back' : 'today'}</span>
+            </div>
+            <button class="focus-x" data-act="pillar-close" aria-label="Close">×</button>
+          </div>
+          <div class="focus-body">${rows}</div>
+          <div class="focus-foot">
+            <span class="focus-foot-note">Partial credit is deliberate — an hour of chores is not an hour of exercise.</span>
+            <button class="btn btn-secondary" data-act="pillar-close">Close</button>
+          </div>
+        </div>
+      </div>`;
 }
 
 /* Two half-dials facing each other with the difference between them in the
@@ -3166,7 +3268,7 @@ function todayCard(v) {
         ${balanceGauges(v.todayFood, v.todayBurn, 'today')}
         <div class="wb-status"><span class="wb-kicker">Daily log status</span>${esc(v.todayHeadline)}</div>
         ${v.todayEmpty || !state.drawers.today ? '' : `
-          <div class="wb-grid">${dimensionCards(v.todayReadings)}</div>
+          <div class="wb-grid">${dimensionCards(v.todayReadings, 'today')}</div>
           ${foodBlock(v.todayFood, 'today')}
           ${adviceBlock(v.todayAdvice)}`}
         ${v.todayEmpty ? '' : drawerToggle('today', 0, '', REPORT_LABELS)}
@@ -3223,7 +3325,7 @@ function pastCard(v) {
               </div>
             </div>`).join('')}
         </div>
-        <div class="wb-grid">${dimensionCards(v.pastReadings)}</div>
+        <div class="wb-grid">${dimensionCards(v.pastReadings, 'past')}</div>
         ${foodBlock(v.pastFood, 'past')}
         ${adviceBlock(v.pastAdvice)}`}
         ${v.pastEmpty ? '' : drawerToggle('lookback', 0, '', REPORT_LABELS)}
@@ -3355,6 +3457,7 @@ function timeTableCard(v) {
   const card = (e) => {
     const spent = span(e);
     const tint = colorOf(e.category);
+    const energy = entryEnergy(e);
     return `
                 <div class="entry-card">
                   <input class="entry-name" data-k="r-${esc(e.id)}-a" data-change="entry-activity" data-id="${esc(e.id)}" value="${esc(e.activity)}" title="${esc(e.activity)}${e.note ? ` — ${esc(e.note)}` : ''}">
@@ -3369,6 +3472,7 @@ function timeTableCard(v) {
                   </div>
                   <div class="entry-foot">
                     <span class="entry-dur">${esc(dur(spent))}</span>
+                    ${energy ? `<span class="entry-kcal" data-kind="${energy.kind}" title="A rough estimate from what you logged${energy.kind === 'burn' ? ' and your weight' : ''}">${esc(energy.label)}</span>` : ''}
                     <button class="cell-del" data-act="entry-remove" data-id="${esc(e.id)}" title="Delete entry" aria-label="Delete entry">×</button>
                   </div>
                 </div>`;
@@ -3771,6 +3875,7 @@ function render() {
     ${legalLinks('var(--color-neutral-600)')}
   </div>
   ${focusPanel(v)}
+  ${pillarSheet(v)}
   ${state.reportOpen ? reportSheet(v) : ''}
   ${notePromptDialog()}
   ${donateSheet()}
@@ -4331,6 +4436,9 @@ const ACTIONS = {
   },
   'focus-clear': () => { clearFocus(); render(); },
 
+  'pillar-open': (el) => { state.pillarOpen = { key: el.dataset.key, scope: el.dataset.scope }; render(); },
+  'pillar-close': () => { state.pillarOpen = null; render(); },
+
   'open-report': () => { state.reportOpen = true; render(); },
   'close-report': () => { state.reportOpen = false; render(); },
   'export-pdf': () => window.print(),
@@ -4448,6 +4556,7 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && state.donateOpen) { state.donateOpen = false; render(); return; }
   if (ev.key === 'Escape' && state.legalOpen) { state.legalOpen = null; render(); return; }
   if (ev.key === 'Escape' && state.authOpen && state.authMode !== 'reset') { state.authOpen = false; render(); return; }
+  if (ev.key === 'Escape' && state.pillarOpen) { state.pillarOpen = null; render(); return; }
   if (ev.key === 'Escape' && state.reportOpen) { state.reportOpen = false; render(); return; }
   if (ev.key === 'Escape' && state.focus) { clearFocus(); render(); }
 });
