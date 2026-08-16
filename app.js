@@ -1403,6 +1403,97 @@ function nutritionFor(rows) {
   };
 }
 
+/* ── sleep ──
+   Sleep is tracked time that no activity-worded pillar should claim, so it gets
+   a reading of its own. The window most guidance settles on is seven to nine
+   hours; under six the losses show up as attention and appetite well before
+   they are felt as tiredness, and consistently over ten tracks with disrupted
+   rest rather than abundant rest. */
+const SLEEP_RE = /sleep|nap|siesta/;
+const isSleepRow = (row) => SLEEP_RE.test(`${row.activity || ''} ${row.category || ''}`.toLowerCase());
+
+const SLEEP_LOW = 6 * 60, SLEEP_GOOD = 7 * 60, SLEEP_LONG = 9 * 60 + 30;
+
+/* Bedtimes are circular — 11PM and 1AM are two hours apart, not twenty-two.
+   Anything before noon is read as the small hours of the following night. */
+const nightMinute = (from) => (from < 720 ? from + 1440 : from);
+
+function sleepReport(entries) {
+  const rows = entries.filter(isSleepRow).filter((e) => span(e) > 0);
+  if (!rows.length) return { nights: 0 };
+
+  /* The longest stretch on a date is the night; anything shorter is a nap.
+     Summing the two would let three naps read as a good night. */
+  const byDate = {};
+  rows.forEach((e) => { (byDate[e.date] = byDate[e.date] || []).push(e); });
+  const nights = Object.keys(byDate).sort().map((date) => {
+    const list = byDate[date].slice().sort((a, b) => span(b) - span(a));
+    return {
+      date,
+      main: list[0],
+      mins: span(list[0]),
+      napMins: list.slice(1).reduce((a, e) => a + span(e), 0)
+    };
+  });
+
+  const avg = Math.round(nights.reduce((a, n) => a + n.mins, 0) / nights.length);
+  const napTotal = nights.reduce((a, n) => a + n.napMins, 0);
+  const status = avg >= SLEEP_LONG ? 'long'
+    : avg >= SLEEP_GOOD ? 'strong'
+      : avg >= SLEEP_LOW ? 'steady' : 'thin';
+
+  /* How much the bedtime moved across the window. Under an hour is a routine;
+     past two, the body never learns when the night starts. */
+  const beds = nights.map((n) => nightMinute(n.main.from));
+  const drift = nights.length > 1 ? Math.max(...beds) - Math.min(...beds) : 0;
+
+  return { nights: nights.length, list: nights, avg, napTotal, status, drift };
+}
+
+/* `t` arrives already phrased — a bare duration for one night, "X a night
+   across N nights" for a window — because "6h a night" is a strange way to
+   describe the only night there was. */
+const SLEEP_NOTES = {
+  thin: (t) => `${t}. Under six hours the cost lands on attention and appetite before it is felt as tiredness, which is exactly what makes a short week easy to mistake for a busy one.`,
+  steady: (t) => `${t} — close to enough. The last hour is usually the cheapest to find: a fixed wake time moves it more reliably than an earlier bedtime, because the bedtime follows once the mornings are fixed.`,
+  strong: (t) => `${t}, inside the range most guidance settles on. From here consistency matters more than the total — the same wake time every day steadies mood and appetite better than a long weekend catch-up does.`,
+  long: (t) => `${t}. Consistently long sleep is worth a second look: it tracks with disrupted rest and with low mood more often than it tracks with being well rested.`
+};
+
+/* Everything the sleep block prints, worked out once. */
+function sleepReading(entries, days) {
+  const r = sleepReport(entries);
+  if (!r.nights) {
+    return {
+      nights: 0,
+      headline: 'No sleep logged in this stretch.',
+      advice: 'Start the timer when you turn in and stop it when you wake — a stretch that runs past midnight is counted against the morning you wake up, so it lands on the right day.'
+    };
+  }
+
+  const multi = r.nights > 1;
+  const headline = SLEEP_NOTES[r.status](
+    multi ? `${durShort(r.avg)} a night across ${r.nights} nights` : durShort(r.avg));
+
+  const parts = [];
+  if (!multi) {
+    const n = r.list[0];
+    parts.push(`${clock12(n.main.from)} to ${clock12(n.main.to)}.`);
+  }
+  if (r.napTotal) parts.push(`${durShort(r.napTotal)} of that was naps, counted separately from the night.`);
+  if (multi && r.drift >= 120) {
+    parts.push(`Your bedtime moved by ${durShort(r.drift)} across the window. A body reads a moving bedtime as a moving night, and the first hour of sleep is the one that suffers.`);
+  } else if (multi && r.drift < 60) {
+    // "all week" would be a claim about nights that were never logged.
+    parts.push('Bedtime held within the hour across the nights you logged — that steadiness is worth as much as the total.');
+  }
+  if (multi && r.nights < days) {
+    parts.push(`${r.nights} of ${days} nights logged, so this is an average of what you recorded rather than of the whole stretch.`);
+  }
+
+  return { nights: r.nights, headline, detail: parts.join(' '), advice: '' };
+}
+
 /* MET values — energy cost relative to sitting still. Burn is
    MET × kilograms × hours, the standard approximation. */
 const METS = [
@@ -1890,7 +1981,6 @@ function compute() {
      actually happened. An entry logged ahead of the clock contributes only the
      part of it already behind us. */
   const nowMins = now.getHours() * 60 + now.getMinutes();
-  const sinceSix = Math.max(0, nowMins - 360);
   const todayList = s.entries
     .filter((e) => e.date === todayIso)
     /* An entry that wrapped began last night, so only the part after midnight
@@ -1900,11 +1990,20 @@ function compute() {
   const todayWb = wellbeing(todayList);
   const todayTop = totalsByCategory(todayList)[0];
   const partOfDay = nowMins < 720 ? 'Morning' : nowMins < 1020 ? 'Afternoon' : nowMins < 1260 ? 'Evening' : 'Late';
-  const todayHeadline = sinceSix < 30
+  /* The window has to be the one the entries actually sit in. "Since 6 AM"
+     assumed nothing was ever logged before then — true until sleep could run
+     past midnight, after which a night ending at 5:45 reported six hours logged
+     out of a ninety-minute window. When something starts before six, the day is
+     measured from midnight and says so. */
+  const dayFrom = todayList.reduce((m, e) => Math.min(m, e.from), 360);
+  const dayWindow = Math.max(0, nowMins - dayFrom);
+  const windowLabel = dayFrom < 360 ? 'so far today' : 'since 6 AM';
+
+  const todayHeadline = dayWindow < 30
     ? 'The day is barely under way — nothing to read into yet.'
     : !todayWb.tracked
-      ? `Nothing logged yet across the ${durShort(sinceSix)} since 6 AM.`
-      : `${durShort(todayWb.tracked)} logged of the ${durShort(sinceSix)} since 6 AM${todayTop ? `, most of it on ${todayTop.name.toLowerCase()}` : ''}.`;
+      ? `Nothing logged yet across the ${durShort(dayWindow)} ${windowLabel}.`
+      : `${durShort(todayWb.tracked)} logged of the ${durShort(dayWindow)} ${windowLabel}${todayTop ? `, most of it on ${todayTop.name.toLowerCase()}` : ''}.`;
 
   /* ── the days behind it ──
      The range window with today taken out, so the look-back is only ever about
@@ -1992,6 +2091,9 @@ function compute() {
     todayLive: liveLine(),
     todayReadings: dimensionReadings(todayWb, 1),
     todayAdvice: adviceFor(todayWb, dimensionReadings(todayWb, 1), 1),
+    // Last night's sleep is dated today, so the raw entries are read rather
+    // than todayList, which clips everything to the current minute.
+    todaySleep: sleepReading(s.entries.filter((e) => e.date === todayIso), 1),
     todayFood: foodReport(todayList, s.money.filter((e) => e.date === todayIso), 1),
     todayBurn: burnFor(todayList, s.weightKg, 1, [todayIso]),
     todayEmpty: todayList.length === 0,
@@ -2011,6 +2113,7 @@ function compute() {
     })),
     pastReadings: dimensionReadings(pastWb, pastDates.length),
     pastAdvice: adviceFor(pastWb, dimensionReadings(pastWb, pastDates.length), pastDates.length),
+    pastSleep: sleepReading(pastList, pastSpan.length),
     pastFood: foodReport(pastList, pastMoney, Math.max(1, pastDates.length)),
     pastBurn: burnFor(pastList, s.weightKg, Math.max(1, pastDates.length), pastSpan),
     pastEmpty: pastDates.length === 0,
@@ -3348,6 +3451,20 @@ function foodBlock(food, scope) {
           </div>`;
 }
 
+/* The night behind the day. Sits with the other readings rather than among the
+   four pillars: sleep is not an activity, and a fifth card in a grid built for
+   four would say it was. */
+function sleepBlock(sleep, scope) {
+  if (!sleep) return '';
+  return `
+          <div style="margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--color-divider);">
+            <div class="wb-kicker">${scope === 'past' ? 'How you slept' : 'Last night'}</div>
+            <div class="food-text">${esc(sleep.headline)}</div>
+            ${sleep.detail ? `<div class="food-text" style="margin-top: 7px;">${esc(sleep.detail)}</div>` : ''}
+            ${sleep.advice ? `<div class="food-text" style="margin-top: 7px;">${esc(sleep.advice)}</div>` : ''}
+          </div>`;
+}
+
 /* Asked once, then remembered on this device. The wording is plain about what
    leaves the browser, because "your data stays yours" is on the landing page
    and this is the one place that stops being strictly true. */
@@ -3387,6 +3504,7 @@ function todayCard(v) {
         <div class="wb-status"><span class="wb-kicker">Daily log status</span>${esc(v.todayHeadline)}</div>
         ${v.todayEmpty || !state.drawers.today ? '' : `
           <div class="wb-grid">${dimensionCards(v.todayReadings, 'today')}</div>
+          ${sleepBlock(v.todaySleep, 'today')}
           ${foodBlock(v.todayFood, 'today')}
           ${adviceBlock(v.todayAdvice)}`}
         ${v.todayEmpty ? '' : drawerToggle('today', 0, '', REPORT_LABELS)}
@@ -3444,6 +3562,7 @@ function pastCard(v) {
             </div>`).join('')}
         </div>
         <div class="wb-grid">${dimensionCards(v.pastReadings, 'past')}</div>
+        ${sleepBlock(v.pastSleep, 'past')}
         ${foodBlock(v.pastFood, 'past')}
         ${adviceBlock(v.pastAdvice)}`}
         ${v.pastEmpty ? '' : drawerToggle('lookback', 0, '', REPORT_LABELS)}
