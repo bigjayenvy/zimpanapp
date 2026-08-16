@@ -1038,10 +1038,50 @@ function withinRange(list) {
 const rangeEntries = () => withinRange(state.entries);
 const moneyRangeEntries = () => withinRange(state.money);
 
+/* ── overlapping entries ──
+   A minute of the day belongs to one activity. Entries are allowed to contain
+   each other — a meal inside a staycation, a session inside a conference — and
+   summing them straight made a day read as twenty-six hours and let the
+   container swallow the chart: a 22-hour staycation with dinner logged inside
+   it reported 96% family time.
+
+   The shorter entry is the more specific account of a minute, so it takes it;
+   the longer one keeps only what nothing else claims. Resolved per date, since
+   a window spans several.
+
+   This is for totals — day totals, shares, pillars, calories. An entry's own
+   card still shows its own length: that is what you entered, and it has to
+   agree with the From and To printed beside it. */
+function resolveSpans(list) {
+  const out = new Map();
+  const byDate = {};
+  list.forEach((e) => { (byDate[e.date] = byDate[e.date] || []).push(e); });
+
+  Object.keys(byDate).forEach((date) => {
+    // Shortest first: the most specific claim on a minute gets there first.
+    const order = byDate[date].slice().sort((a, b) => span(a) - span(b));
+    const taken = new Uint8Array(1440);
+    order.forEach((e) => {
+      const ranges = wraps(e) ? [[e.from, 1440], [0, e.to]] : [[e.from, e.to]];
+      let mins = 0;
+      ranges.forEach(([s0, s1]) => {
+        const lo = Math.max(0, Math.floor(s0)), hi = Math.min(1440, Math.ceil(s1));
+        for (let m = lo; m < hi; m++) if (!taken[m]) { taken[m] = 1; mins++; }
+      });
+      out.set(e, mins);
+    });
+  });
+  return out;
+}
+
+/* Minutes an entry contributes to a total, once overlaps are settled. */
+const effective = (eff) => (e) => eff.get(e) || 0;
+
 function totalsByCategory(list) {
   const map = {};
+  const mins = effective(resolveSpans(list));
   list.forEach((e) => {
-    const m = span(e);
+    const m = mins(e);
     if (!map[e.category]) map[e.category] = { name: e.category, mins: 0, count: 0, color: colorOf(e.category) };
     map[e.category].mins += m; map[e.category].count += 1;
   });
@@ -1116,8 +1156,10 @@ function wellbeing(list, steps) {
      fraction of an entry, the answer is rarely the obvious one. */
   const parts = { physical: [], emotional: [], mental: [], spiritual: [] };
   let tracked = 0, still = 0, drain = 0, vague = 0;
+  // `mins` is already the per-dimension tally above, so this one is named apart.
+  const effMins = effective(resolveSpans(list));
   list.forEach((e) => {
-    const m = span(e);
+    const m = effMins(e);
     if (!m) return;
     tracked += m;
     const hit = WELLBEING.find((r) => r.re.test(`${e.activity} ${e.category}`.toLowerCase()));
@@ -1598,12 +1640,13 @@ function burnFor(entries, weightKg, days, dates) {
   // Named for what it is. It was `span`, which now shadowed the entry-length
   // helper of that name and made every burn read as zero.
   const dayCount = Math.max(1, days || 1);
+  const effMins = effective(resolveSpans(entries));
   let kcal = 0, minutes = 0;
   entries.forEach((e) => {
     const text = `${e.activity || ''} ${e.category || ''} ${e.note || ''}`.toLowerCase();
     const hit = METS.find((m) => m.re.test(text));
     if (!hit) return;
-    const mins = span(e);
+    const mins = effMins(e);
     if (!mins) return;
     minutes += mins;
     kcal += hit.met * kg * (mins / 60);
@@ -1951,18 +1994,30 @@ function compute() {
       ? mRangeList.filter((e) => e.purpose === focusItem.name && e.out > 0)
       : rangeEntries().filter((e) => e.category === focusItem.name))
     : [];
+  /* Resolved across the whole range rather than across the focused subset —
+     the minutes a grocery run takes off a deep-work block are settled between
+     the two of them, and filtering to one category first would hide the
+     other. The list has to add up to the slice it was opened from. */
+  const focusMins = isMoney ? null : effective(resolveSpans(rangeEntries()));
   const focusList = focusSource
     .slice()
     .sort((a, b) => (a.date === b.date ? (isMoney ? 0 : a.from - b.from) : (a.date < b.date ? 1 : -1)))
-    .map((e) => ({
-      date: dayLabel(e.date),
-      activity: e.activity,
-      meta: isMoney ? '' : `${clock12(e.from)} – ${clock12(e.to)}`,
-      value: isMoney ? amount(e.out) : durShort(span(e))
-    }));
+    .map((e) => {
+      const counted = isMoney ? 0 : focusMins(e);
+      const logged = span(e);
+      return {
+        date: dayLabel(e.date),
+        activity: e.activity,
+        meta: isMoney ? ''
+          // Says so when another entry claimed part of this one, rather than
+          // printing a figure that quietly disagrees with the clock beside it.
+          : `${clock12(e.from)} – ${clock12(e.to)}${counted < logged ? ` · ${durShort(logged)} logged` : ''}`,
+        value: isMoney ? amount(e.out) : durShort(counted)
+      };
+    });
 
   const top = totals[0] ? totals[0].mins : 1;
-  const dayTracked = dayList.reduce((a, e) => a + span(e), 0);
+  const dayTracked = (() => { const m = effective(resolveSpans(dayList)); return dayList.reduce((a, e) => a + m(e), 0); })();
   const untrackedMins = Math.max(0, 960 - dayTracked);
 
   let streak = 0;
@@ -1982,7 +2037,8 @@ function compute() {
   reportSource.forEach((e) => { (byDate[e.date] = byDate[e.date] || []).push(e); });
   const reportDays = Object.keys(byDate).sort().map((d) => {
     const list = byDate[d].slice().sort((a, b) => (isMoney ? 0 : a.from - b.from));
-    const outSumDay = list.reduce((a, e) => a + (isMoney ? (Number(e.out) || 0) : span(e)), 0);
+    const dayMins = effective(resolveSpans(list));
+    const outSumDay = list.reduce((a, e) => a + (isMoney ? (Number(e.out) || 0) : dayMins(e)), 0);
     const inSumDay = isMoney ? list.reduce((a, e) => a + (Number(e.in) || 0), 0) : 0;
     return {
       label: new Date(d + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
@@ -2067,7 +2123,8 @@ function compute() {
   const pastWb = wellbeing(pastList, { count: stepsIn(pastSpan), date: pastSpan[pastSpan.length - 1], days: pastSpan.length });
   const pastTotals = totalsByCategory(pastList);
   const byDay = {};
-  pastList.forEach((e) => { byDay[e.date] = (byDay[e.date] || 0) + span(e); });
+  const pastMins = effective(resolveSpans(pastList));
+  pastList.forEach((e) => { byDay[e.date] = (byDay[e.date] || 0) + pastMins(e); });
   const busiest = Object.keys(byDay).sort((a, b) => byDay[b] - byDay[a])[0];
 
   const pastLabel = !pastDates.length ? 'No finished days in this range yet'
