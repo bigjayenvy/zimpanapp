@@ -1166,24 +1166,166 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     .cell-note { font-size: 10px; padding: 3px 8px; }
   }
 
-  /* Only the report sheet prints, and it has to flow in normal document order:
-     the preview backdrop is position:fixed, which pins printed output to a
-     single page and would truncate any range longer than a day. */
+  /* — the report deck —
+     One card at a time, snapped horizontally. Scroll-snap rather than a
+     gesture handler: it gives native momentum and rubber-banding, and it does
+     not fight the browser for the touch. */
+  .deck-backdrop {
+    position: fixed; inset: 0; z-index: 58;
+    background: color-mix(in srgb, var(--color-accent-900) 92%, transparent);
+    display: flex; align-items: center; justify-content: center; padding: 16px;
+  }
+  .deck-shell {
+    position: relative; width: 560px; max-width: 100%;
+    height: min(760px, calc(100vh - 32px));
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .deck-bars { display: flex; gap: 5px; flex: none; padding: 0 2px; }
+  .deck-bar {
+    flex: 1; height: 4px; border: 0; padding: 0; cursor: pointer; border-radius: 999px;
+    background: color-mix(in srgb, #fff 30%, transparent);
+  }
+  .deck-bar.is-on { background: #fff; }
+  .deck-bar:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+
+  /* Sits over the card on a phone, where a white glyph on a white card is no
+     glyph at all — so it carries its own dark ground at every width. */
+  .deck-x {
+    position: absolute; top: 16px; right: 10px; z-index: 4;
+    width: 34px; height: 34px; border-radius: 50%; cursor: pointer;
+    border: 1px solid color-mix(in srgb, #fff 34%, transparent);
+    background: color-mix(in srgb, var(--color-accent-900) 68%, transparent);
+    color: #fff; font-size: 21px; line-height: 1; padding: 0 0 2px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .deck-x:hover { background: var(--color-accent-900); }
+  .deck-x:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
+  .deck-track {
+    flex: 1; min-height: 0;
+    display: flex; overflow-x: auto; overflow-y: hidden;
+    scroll-snap-type: x mandatory; scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .deck-track::-webkit-scrollbar { display: none; }
+  .deck-slide { flex: 0 0 100%; scroll-snap-align: center; min-width: 0; display: flex; }
+
+  .deck-card {
+    --card-accent: var(--color-accent);
+    flex: 1; min-width: 0;
+    background: #fff; border-radius: var(--radius-lg);
+    padding: 30px 30px 24px; display: flex; flex-direction: column;
+    box-shadow: var(--shadow-lg);
+  }
+  /* The content sits in the middle of the card rather than hugging its top —
+     a sparse card is three lines, and pinned to the top it read as a mistake.
+     Scrolls within itself when a card carries six rows and a note. */
+  .deck-body {
+    flex: 1; min-height: 0; overflow-y: auto;
+    display: flex; flex-direction: column; justify-content: center;
+  }
+  .deck-kicker {
+    font-size: 11.5px; letter-spacing: .16em; text-transform: uppercase;
+    font-weight: 600; color: var(--card-accent); margin-bottom: 14px;
+  }
+  .deck-big {
+    font-family: var(--font-heading); font-weight: 700; line-height: 1;
+    font-size: clamp(52px, 15vw, 82px); letter-spacing: -.01em;
+    overflow-wrap: anywhere;
+  }
+  .deck-title { font-size: 21px; line-height: 1.35; color: var(--color-neutral-800); margin-top: 12px; }
+  .deck-lines { margin-top: 12px; }
+  .deck-lines p { margin: 0 0 7px; font-size: 14.5px; line-height: 1.55; color: var(--color-neutral-700); }
+
+  .deck-rows { margin-top: 18px; }
+  .deck-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 0; border-bottom: 1px solid var(--color-divider);
+    font-size: 15px;
+  }
+  .deck-dot { width: 11px; height: 11px; flex: none; border-radius: 3px; }
+  .deck-row-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .deck-row-meta { flex: none; font-size: 12.5px; color: var(--color-neutral-600); }
+  .deck-row-value { flex: none; font-variant-numeric: tabular-nums; font-weight: 600; }
+
+  .deck-note { margin-top: 16px; font-size: 13.5px; line-height: 1.6; color: var(--color-neutral-700); }
+  .deck-mark {
+    flex: none; padding-top: 18px;
+    font-family: var(--font-heading); font-weight: 700; font-size: 13px;
+    color: var(--color-neutral-500);
+  }
+  .deck-mark span { color: var(--card-accent); }
+
+  .deck-arrow {
+    position: absolute; top: 50%; transform: translateY(-50%); z-index: 3;
+    width: 40px; height: 40px; border-radius: 50%; cursor: pointer;
+    border: 1px solid color-mix(in srgb, #fff 40%, transparent);
+    background: color-mix(in srgb, var(--color-accent-900) 55%, transparent);
+    color: #fff; font-size: 24px; line-height: 1; padding: 0 0 3px;
+  }
+  .deck-arrow:hover { background: var(--color-accent-900); }
+  .deck-prev { left: -18px; }
+  .deck-next { right: -18px; }
+
+  .deck-foot { flex: none; display: flex; gap: 10px; justify-content: center; }
+  .deck-foot .btn { font-size: 14px; }
+
+  /* Screen-hidden; the PDF's closing pages. */
+  .deck-print { display: none; }
+
+  @media (max-width: 620px) {
+    .deck-backdrop { padding: 0; }
+    .deck-shell { height: 100vh; width: 100%; gap: 8px; padding: 10px 10px 12px; }
+    .deck-bars { padding-top: 4px; padding-right: 42px; }
+    .deck-x { top: 22px; }
+    .deck-card { border-radius: 14px; padding: 26px 20px 20px; }
+    /* No room beside the card on a phone, and a thumb does not need them. */
+    .deck-arrow { display: none; }
+    .deck-foot .btn { flex: 1; justify-content: center; padding-inline: 12px; }
+  }
+
+  /* — the PDF —
+     Printing unrolls the deck: the fixed backdrop becomes ordinary flow (fixed
+     positioning pins output to a single page and truncates everything after
+     it), the horizontal scroller becomes a stack, and each card takes a page.
+     The detail pages the deck hides on screen follow at the end, so the file
+     carries both the story and the evidence behind it. */
   @media print {
     .no-print { display: none !important; }
     [data-app] > .appbar,
     [data-app] > [data-page-grid] { display: none !important; }
     [data-app] { min-height: 0 !important; padding-bottom: 0 !important; }
-    [data-report-backdrop] {
+
+    .deck-backdrop {
       position: static !important; inset: auto !important; z-index: auto !important;
+      display: block !important; background: none !important; padding: 0 !important;
+    }
+    .deck-shell {
+      width: 100% !important; max-width: none !important; height: auto !important;
+      display: block !important; padding: 0 !important;
+    }
+    .deck-track {
       display: block !important; overflow: visible !important;
-      background: none !important; padding: 0 !important;
+      scroll-snap-type: none !important;
     }
-    [data-report-backdrop] > div { width: 100% !important; max-width: none !important; }
-    #report-sheet {
-      box-shadow: none !important; border: 0 !important;
-      padding: 0 !important; background: none !important;
+    .deck-slide {
+      display: block !important; width: 100% !important;
+      break-after: page; page-break-after: always;
     }
+    .deck-slide:last-of-type { break-after: auto; page-break-after: auto; }
+    .deck-card {
+      box-shadow: none !important; border: 1px solid #ddd !important;
+      border-radius: 0 !important; overflow: visible !important;
+      padding: 0 0 18px !important; min-height: 0 !important;
+      display: block !important;
+    }
+    .deck-big { font-size: 44px !important; }
+    .deck-mark { margin-top: 20px !important; }
+
+    .deck-print { display: block !important; break-before: page; page-break-before: always; }
+    .deck-print h4 { font-size: 20px; margin: 0 0 12px; }
+    .deck-print table { width: 100%; }
+
     @page { margin: 14mm; }
   }
 </style>

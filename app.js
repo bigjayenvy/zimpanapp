@@ -1531,7 +1531,7 @@ function sleepReading(entries, days) {
   const r = sleepReport(entries);
   if (!r.nights) {
     return {
-      nights: 0,
+      nights: 0, avgMins: 0,
       headline: 'No sleep logged in this stretch.',
       advice: 'Start the timer when you turn in and stop it when you wake — a stretch that runs past midnight is counted against the morning you wake up, so it lands on the right day.'
     };
@@ -1557,7 +1557,7 @@ function sleepReading(entries, days) {
     parts.push(`${r.nights} of ${days} nights logged, so this is an average of what you recorded rather than of the whole stretch.`);
   }
 
-  return { nights: r.nights, headline, detail: parts.join(' '), advice: '' };
+  return { nights: r.nights, avgMins: r.avg, headline, detail: parts.join(' '), advice: '' };
 }
 
 /* MET values — energy cost relative to sitting still. Burn is
@@ -1979,6 +1979,31 @@ function compute() {
      rather than inside the insight so the window arithmetic stays in one file
      region with `withinRange`. */
   const winDays = rangeDays();
+
+  /* ── the whole window, for the report deck ──
+     The insight cards read "today" and "the finished days behind it"; a report
+     is about the window as a whole, today included. Every date in it is
+     enumerated rather than taken from the entries, so a day carrying only a
+     step count still counts as a day. */
+  const windowDates = (() => {
+    const out = [];
+    for (let i = 0; i < winDays; i++) {
+      const d = new Date(s.selectedDate + 'T00:00:00');
+      d.setDate(d.getDate() - i);
+      out.push(iso(d));
+    }
+    return out.sort();
+  })();
+  const rangeList = rangeEntries();
+  const rangeWb = wellbeing(rangeList, { count: stepsIn(windowDates), date: s.selectedDate, days: winDays });
+  const rangeBusy = (() => {
+    const per = {};
+    const m = effective(resolveSpans(rangeList));
+    rangeList.forEach((e) => { per[e.date] = (per[e.date] || 0) + m(e); });
+    const top = Object.keys(per).sort((a, b) => per[b] - per[a])[0];
+    return top ? { date: top, mins: per[top], days: Object.keys(per).length } : null;
+  })();
+
   const prevEndDate = new Date(windowStart(s.selectedDate, winDays) + 'T00:00:00');
   prevEndDate.setDate(prevEndDate.getDate() - 1);
   const prevEnd = iso(prevEndDate);
@@ -2243,6 +2268,17 @@ function compute() {
 
     reportDays,
     reportEntryCount: reportSource.length,
+
+    /* Readings across the whole window, for the report deck. */
+    rangeReadings: dimensionReadings(rangeWb, winDays),
+    rangeSleep: sleepReading(rangeList, winDays),
+    rangeBurn: burnFor(rangeList, s.weightKg, winDays, windowDates),
+    rangeFood: foodReport(rangeList, mRangeList, winDays),
+    rangeSteps: stepsIn(windowDates),
+    rangeDayCount: winDays,
+    rangeBusiest: rangeBusy
+      ? { label: dayLabel(rangeBusy.date), value: durShort(rangeBusy.mins), days: rangeBusy.days }
+      : null,
 
     /* The axis runs 6AM to 10PM, so an entry that wrapped shows as two pieces —
        the tail of the evening and the head of the morning — rather than as one
@@ -3987,6 +4023,166 @@ function moneyDesktop(v) {
   </div>`;
 }
 
+/* ─────────────────────────── the report deck ───────────────────────────
+
+   A swipeable run of cards rather than a sheet: on a phone the old report was
+   a long scroll of tables nobody read to the end of. Each card is described as
+   data — a kicker, a hero figure, a caption, optional ranked rows, a closing
+   note — and three renderers read that same description: the deck on screen,
+   the print stylesheet that turns it into a PDF, and the canvas that turns one
+   card into a shareable image. One description means they cannot drift. */
+
+const card = (key, o) => Object.assign({ key, kicker: '', big: '', title: '', lines: [], rows: [], note: '' }, o);
+
+function timeCards(v) {
+  const out = [];
+  const top = v.reportRows[0];
+
+  out.push(card('cover', {
+    kicker: v.reportRange,
+    big: v.rangeTotal,
+    title: 'tracked',
+    lines: [`${v.reportEntryCount} ${v.reportEntryCount === 1 ? 'entry' : 'entries'} logged`],
+    note: v.reportHeadline
+  }));
+
+  if (v.reportRows.length) out.push(card('where', {
+    kicker: 'Where the time went',
+    rows: v.reportRows.slice(0, 6).map((r) => ({ label: withIcon(r.name), value: r.time, meta: r.pct, color: r.color }))
+  }));
+
+  if (top) out.push(card('top', {
+    kicker: 'Your headline',
+    big: top.pct,
+    title: `of it went to ${top.name}`,
+    lines: [`${top.time} across ${top.count} ${top.count === 1 ? 'entry' : 'entries'}`],
+    accent: top.color
+  }));
+
+  if (v.rangeBusiest && v.rangeBusiest.days > 1) out.push(card('busiest', {
+    kicker: 'Busiest day',
+    big: v.rangeBusiest.value,
+    title: `on ${v.rangeBusiest.label}`,
+    lines: [`${v.rangeBusiest.days} ${v.rangeBusiest.days === 1 ? 'day' : 'days'} carried something`]
+  }));
+
+  out.push(card('streak', {
+    kicker: 'Streak',
+    big: v.streakLabel,
+    title: 'logged in a row',
+    note: v.streakNote
+  }));
+
+  const fed = v.rangeReadings.filter((r) => r.total > 0);
+  if (fed.length) out.push(card('pillars', {
+    kicker: 'How it fed you',
+    rows: v.rangeReadings.map((r) => ({
+      label: r.label, value: r.total ? durShort(r.total) : '—', meta: r.status, color: METER_COLOR[r.status]
+    })),
+    note: 'Partial credit is deliberate — an hour of chores is not an hour of exercise.'
+  }));
+
+  if (v.rangeSleep.nights) out.push(card('sleep', {
+    kicker: 'How you slept',
+    big: durShort(v.rangeSleep.avgMins),
+    title: v.rangeSleep.nights > 1 ? 'a night' : 'that night',
+    note: v.rangeSleep.headline
+  }));
+
+  const b = v.rangeBurn, f = v.rangeFood;
+  if (b.kcal || f.kcal) {
+    const net = Math.round((b.kcal + b.restKcal - f.kcal) / Math.max(1, b.days));
+    out.push(card('energy', {
+      kicker: 'Energy',
+      big: `~${Math.abs(net).toLocaleString('en-US')}`,
+      title: `net calories a day · ${net >= 0 ? 'deficit' : 'surplus'}`,
+      rows: [
+        { label: 'Burned, workout and movement', value: `~${Math.round(b.kcal / Math.max(1, b.days)).toLocaleString('en-US')}` },
+        { label: 'Burned at rest', value: `~${Math.round(b.restKcal / Math.max(1, b.days)).toLocaleString('en-US')}` },
+        { label: 'Eaten', value: `~${Math.round(f.kcal / Math.max(1, b.days)).toLocaleString('en-US')}` }
+      ],
+      note: 'Rough estimates from what you logged and your weight.'
+    }));
+  }
+
+  out.push(card('untracked', {
+    kicker: 'What got away',
+    big: v.untracked,
+    title: 'unaccounted for on the selected day',
+    note: v.untrackedNote
+  }));
+
+  return out;
+}
+
+function moneyCards(v) {
+  const out = [];
+  const f = v.moneyInsight;
+  const top = v.reportRows[0];
+
+  out.push(card('cover', {
+    kicker: v.reportRange,
+    big: v.moneyOut,
+    title: 'went out',
+    lines: [`${v.reportEntryCount} ${v.reportEntryCount === 1 ? 'entry' : 'entries'} logged`],
+    note: v.reportHeadline
+  }));
+
+  if (v.reportRows.length) out.push(card('where', {
+    kicker: 'Where the money went',
+    rows: v.reportRows.slice(0, 6).map((r) => ({ label: withIcon(r.name), value: r.time, meta: r.pct, color: r.color }))
+  }));
+
+  if (top) out.push(card('top', {
+    kicker: 'Your headline',
+    big: top.pct,
+    title: `of it went to ${top.name}`,
+    lines: [`${top.time} across ${top.count} ${top.count === 1 ? 'entry' : 'entries'}`],
+    accent: top.color
+  }));
+
+  /* The single biggest thing you paid for. Nothing else on the page says it,
+     and it is usually the line people go looking for. */
+  const biggest = v.mRangeList
+    ? v.mRangeList.filter((e) => Number(e.out) > 0).sort((a, b) => Number(b.out) - Number(a.out))[0]
+    : null;
+  if (biggest) out.push(card('biggest', {
+    kicker: 'Biggest single spend',
+    big: amount(biggest.out),
+    title: biggest.activity,
+    lines: [`${withIcon(biggest.purpose)} · ${dayLabel(biggest.date)}`]
+  }));
+
+  out.push(card('inout', {
+    kicker: 'In, out, kept',
+    rows: [
+      { label: 'Money in', value: v.moneyIn },
+      { label: 'Money out', value: v.moneyOut },
+      { label: 'Net', value: v.moneyNet },
+      { label: 'Kept', value: f ? f.rateLabel : '—' }
+    ],
+    note: v.netNote
+  }));
+
+  if (f && f.trendLabel) out.push(card('trend', {
+    kicker: 'Against the window before',
+    big: f.trendLabel,
+    title: f.trendUp ? 'more than the previous stretch' : 'less than the previous stretch',
+    lines: [f.headline],
+    note: f.coverageLabel
+  }));
+
+  if (f && f.observations && f.observations.length) out.push(card('stands', {
+    kicker: 'What stands out',
+    lines: f.observations.slice(0, 3),
+    note: f.advice && f.advice.length ? f.advice[0] : ''
+  }));
+
+  return out;
+}
+
+const deckCards = (v) => (v.isMoney ? moneyCards(v) : timeCards(v));
+
 /* ── sharing ──
 
    A report has no URL to send: the data belongs to one account and is never
@@ -4000,43 +4196,6 @@ const SHARE_ICONS = {
   email: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="display:block;flex:none;"><rect x="2.5" y="4.5" width="19" height="15" rx="2.5"/><path d="m3 7 8.1 5.4a1.6 1.6 0 0 0 1.8 0L21 7"/></svg>`
 };
 
-function reportShareText(v) {
-  const isMoney = v.isMoney;
-  const lines = [];
-  lines.push(`ZIMPAN — ${isMoney ? 'Money' : 'Time'} report`);
-  lines.push(v.reportRange);
-  lines.push('');
-
-  if (isMoney) {
-    lines.push(`Spent: ${v.moneyOut} across ${v.moneyOutCount} entries`);
-    lines.push(`Received: ${v.moneyIn} · Net: ${v.moneyNet}`);
-  } else {
-    lines.push(`Tracked: ${v.rangeTotal} across ${v.reportEntryCount} entries`);
-  }
-
-  const top = v.reportRows.slice(0, 5);
-  if (top.length) {
-    lines.push('');
-    lines.push(isMoney ? 'Where it went:' : 'Where the time went:');
-    top.forEach((r, i) => lines.push(`${i + 1}. ${r.name} — ${r.time} (${r.pct})`));
-  }
-
-  /* One line of the reading, so the message says something the table does not.
-     The money side has the insight block; the time side has its advice list. */
-  /* Advice on the time side is an object now, not a string — reading it as one
-     would send "[object Object]" to whoever the report was shared with. */
-  const note = isMoney
-    ? (v.moneyInsight && v.moneyInsight.observations[0]) || ''
-    : (v.pastAdvice && v.pastAdvice[0] && `${v.pastAdvice[0].lead}. ${v.pastAdvice[0].text}`) || '';
-  if (note) { lines.push(''); lines.push(note); }
-
-  lines.push('');
-  lines.push('Tracked with ZIMPAN · https://zimpan.com');
-  return lines.join('\n');
-}
-
-/* Every entry in range, day by day. `break-inside: avoid` keeps a day's block
-   from being split across pages when this goes to PDF. */
 function reportActivities(v) {
   if (!v.reportEntryCount) {
     return `
@@ -4085,77 +4244,87 @@ function reportActivities(v) {
           </div>`;
 }
 
+/* The deck. One card on screen at a time, snapping horizontally; the print
+   stylesheet unrolls the same markup into a page each, followed by the detail
+   pages below. */
 function reportSheet(v) {
-  const rows = v.reportRows.map((r) => `
-                <tr>
-                  <td><span style="display: inline-flex; align-items: center; gap: 8px;"><span style="width: 10px; height: 10px; background: ${esc(r.color)};"></span>${esc(withIcon(r.name))}</span></td>
-                  <td style="text-align: right; font-variant-numeric: tabular-nums;">${r.count}</td>
-                  <td style="text-align: right; font-variant-numeric: tabular-nums;">${esc(r.time)}</td>
-                  <td style="text-align: right; font-variant-numeric: tabular-nums;">${esc(r.pct)}</td>
-                </tr>`).join('');
+  if (!state.reportOpen) return '';
+  const cards = deckCards(v);
+  if (!cards.length) return '';
+
+  const slide = (c, i) => `
+        <section class="deck-slide" data-slide="${i}" data-key="${esc(c.key)}">
+          <div class="deck-card"${c.accent ? ` style="--card-accent: ${esc(c.accent)};"` : ''}>
+            <div class="deck-body">
+            ${c.kicker ? `<div class="deck-kicker">${esc(c.kicker)}</div>` : ''}
+            ${c.big ? `<div class="deck-big">${esc(c.big)}</div>` : ''}
+            ${c.title ? `<div class="deck-title">${esc(c.title)}</div>` : ''}
+            ${c.lines.length ? `<div class="deck-lines">${c.lines.map((l) => `<p>${esc(l)}</p>`).join('')}</div>` : ''}
+            ${c.rows.length ? `
+            <div class="deck-rows">
+              ${c.rows.map((r) => `
+                <div class="deck-row">
+                  ${r.color ? `<span class="deck-dot" style="background: ${esc(r.color)};"></span>` : ''}
+                  <span class="deck-row-label">${esc(r.label)}</span>
+                  ${r.meta ? `<span class="deck-row-meta">${esc(r.meta)}</span>` : ''}
+                  <span class="deck-row-value">${esc(r.value)}</span>
+                </div>`).join('')}
+            </div>` : ''}
+            ${c.note ? `<div class="deck-note">${esc(c.note)}</div>` : ''}
+            </div>
+            <div class="deck-mark">ZIMPAN<span>.</span> · ${esc(v.reportRange)}</div>
+          </div>
+        </section>`;
 
   return `
-    <!-- 50 puts this with the app's other overlays (auth, the note prompt) and,
-         crucially, above the fixed chrome: the bottom bar at 45 and the sticky
-         header and back-to-top at 46. At its old 40 all three drew on top of
-         the sheet, which on a phone meant the header covering its toolbar. -->
-    <div class="report-wrap" data-report-backdrop style="position: fixed; inset: 0; background: color-mix(in srgb, var(--color-neutral-900) 55%, transparent); display: flex; align-items: flex-start; justify-content: center; overflow: auto; z-index: 50;">
-      <div style="width: 780px; max-width: 100%;">
-        <div class="no-print report-tools">
-          <span class="report-hint" style="color: var(--color-bg); font-size: 13px; margin-right: auto;">Preview — chart, totals and every activity in range.</span>
-          <button class="btn btn-secondary" data-act="export-pdf" style="background: var(--color-bg);">Download PDF</button>
-          <button class="btn btn-secondary" data-act="export-jpg" style="background: var(--color-bg);">Download JPG</button>
-          <button class="btn btn-secondary" data-act="share-whatsapp" style="background: var(--color-bg);">${SHARE_ICONS.whatsapp}<span>WhatsApp</span></button>
-          <button class="btn btn-secondary" data-act="share-email" style="background: var(--color-bg);">${SHARE_ICONS.email}<span>Email</span></button>
-          <button class="btn btn-secondary" data-act="close-report" style="background: var(--color-bg);">Close</button>
+      <div class="deck-backdrop" data-report-backdrop>
+        <div class="deck-shell">
+          <div class="deck-bars no-print">
+            ${cards.map((c, i) => `<button class="deck-bar${i === 0 ? ' is-on' : ''}" data-act="deck-go" data-i="${i}" aria-label="Card ${i + 1}"></button>`).join('')}
+          </div>
+
+          <button class="deck-x no-print" data-act="close-report" aria-label="Close">×</button>
+
+          <div class="deck-track" data-deck-track>
+            ${cards.map(slide).join('')}
+          </div>
+
+          <button class="deck-arrow deck-prev no-print" data-act="deck-prev" aria-label="Previous">‹</button>
+          <button class="deck-arrow deck-next no-print" data-act="deck-next" aria-label="Next">›</button>
+
+          <div class="deck-foot no-print">
+            <button class="btn btn-secondary" data-act="share-card">Share this card</button>
+            <button class="btn btn-primary" data-act="export-pdf">Download PDF</button>
+          </div>
         </div>
-        <div class="report-sheet" id="report-sheet" style="background: var(--color-bg); box-shadow: var(--shadow-lg);">
-          <div style="display: flex; align-items: baseline; border-bottom: 1px solid var(--color-divider); padding-bottom: 14px; margin-bottom: 28px;">
-            <div style="font-family: var(--font-heading); font-size: 26px; margin-right: auto;">${esc(v.reportTitle)}</div>
-            <div style="font-size: 12px; color: var(--color-neutral-700);">${esc(v.reportRange)}</div>
-          </div>
-          <div style="display: flex; gap: 36px; align-items: center; margin-bottom: 32px; flex-wrap: wrap;">
-            <div class="report-donut" style="position: relative; flex: none;">
-              <svg viewBox="0 0 200 200" style="width: 100%; height: 100%; transform: rotate(-90deg);">
-                <circle cx="100" cy="100" r="72" fill="none" stroke="var(--track)" stroke-width="40"></circle>
-                ${v.slices.map((s) => `<circle cx="100" cy="100" r="72" fill="none" stroke="${esc(s.color)}" stroke-width="40" stroke-dasharray="${s.dash}" stroke-dashoffset="${s.offset}"></circle>`).join('')}
-              </svg>
-              <div style="position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;">
-                <div style="font-family: var(--font-heading); font-size: ${Math.max(15, Math.min(30, Math.floor(148 / (String(v.rangeTotal).length * 0.54))))}px; line-height: 1.05; white-space: nowrap;">${esc(v.rangeTotal)}</div>
-                <div style="font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--color-neutral-600);">tracked</div>
-              </div>
-            </div>
-            <div style="flex: 1 1 240px; min-width: 0;">
-              <div style="font-family: var(--font-heading); font-size: 20px; margin-bottom: 8px;">${esc(v.reportHeadline)}</div>
-              <div style="font-size: 13px; color: var(--color-neutral-700); line-height: 1.6;">${esc(v.reportNote)}</div>
-            </div>
-          </div>
-          <div style="overflow-x: auto;">
+
+        <!-- Screen-hidden, printed last: the evidence behind the cards. -->
+        <div class="deck-print">
+          <h4>${esc(v.reportTitle)} · ${esc(v.reportRange)}</h4>
           <table class="table">
             <thead><tr><th>${esc(v.reportColLabel)}</th><th style="text-align: right;">Entries</th><th style="text-align: right;">${esc(v.reportAmountLabel)}</th><th style="text-align: right;">Share</th></tr></thead>
             <tbody>
-              ${rows}
+              ${v.reportRows.map((r) => `
+                <tr>
+                  <td>${esc(withIcon(r.name))}</td>
+                  <td style="text-align: right;">${r.count}</td>
+                  <td style="text-align: right;">${esc(r.time)}</td>
+                  <td style="text-align: right;">${esc(r.pct)}</td>
+                </tr>`).join('')}
               <tr>
-                <td style="font-family: var(--font-heading);">${esc(v.reportFooterRowLabel)}</td>
+                <td style="font-weight: 700;">${esc(v.reportFooterRowLabel)}</td>
                 <td style="text-align: right;">—</td>
-                <td style="text-align: right; font-variant-numeric: tabular-nums;">${esc(v.reportFooterRowValue)}</td>
+                <td style="text-align: right;">${esc(v.reportFooterRowValue)}</td>
                 <td style="text-align: right;">—</td>
               </tr>
             </tbody>
           </table>
-          </div>
-          ${v.isMoney ? `
-          <div style="margin-top: 34px; padding-top: 18px; border-top: 1px solid var(--color-divider); break-inside: avoid;">
-            <div style="font-family: var(--font-heading); font-size: 20px; margin-bottom: 12px;">Financial Insights</div>
-            ${insightsBody(v, true)}
-          </div>` : ''}
           ${reportActivities(v)}
-          <div style="margin-top: 30px; font-size: 11px; color: var(--color-neutral-600); display: flex; justify-content: space-between;">
-            <span>Generated by ZIMPAN · ${esc(v.geoLabel)}</span><span>${esc(v.nowLabel)}</span>
+          <div style="margin-top: 22px; font-size: 11px; color: var(--color-neutral-600);">
+            Generated by ZIMPAN · ${esc(v.geoLabel)} · ${esc(v.nowLabel)}
           </div>
         </div>
-      </div>
-    </div>`;
+      </div>`;
 }
 
 /* ─────────────────────────── render ─────────────────────────── */
@@ -4810,21 +4979,18 @@ const ACTIONS = {
     save(); render(); flash('Steps cleared');
   },
 
-  'open-report': () => { state.reportOpen = true; render(); },
+  'open-report': () => { state.reportOpen = true; deckIndex = 0; render(); },
   'close-report': () => { state.reportOpen = false; render(); },
   'export-pdf': () => window.print(),
-  'export-jpg': () => exportJpg(),
 
-  /* Both hand the text to something else to send — nothing leaves the browser
-     until the person presses send in WhatsApp or their mail client. */
-  'share-whatsapp': () => {
-    window.open(`https://wa.me/?text=${encodeURIComponent(reportShareText(compute()))}`, '_blank', 'noopener');
-  },
-  'share-email': () => {
-    const v = compute();
-    const subject = `ZIMPAN ${v.isMoney ? 'money' : 'time'} report — ${v.reportRange}`;
-    window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(reportShareText(v))}`;
-  }
+  /* Navigation moves the scroller, not the state: re-rendering the deck to
+     change card would rebuild the track and lose the position it was being
+     asked to change. */
+  'deck-next': () => deckGo(deckIndex + 1),
+  'deck-prev': () => deckGo(deckIndex - 1),
+  'deck-go': (el) => deckGo(Number(el.dataset.i)),
+
+  'share-card': () => shareCard()
 };
 
 const CHANGES = {
@@ -4929,6 +5095,11 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && state.authOpen && state.authMode !== 'reset') { state.authOpen = false; render(); return; }
   if (ev.key === 'Escape' && state.stepsOpen) { state.stepsOpen = null; state.stepsDraft = ''; render(); return; }
   if (ev.key === 'Escape' && state.pillarOpen) { state.pillarOpen = null; render(); return; }
+  if (state.reportOpen && (ev.key === 'ArrowRight' || ev.key === 'ArrowLeft')) {
+    ev.preventDefault();
+    deckGo(deckIndex + (ev.key === 'ArrowRight' ? 1 : -1));
+    return;
+  }
   if (ev.key === 'Escape' && state.reportOpen) { state.reportOpen = false; render(); return; }
   if (ev.key === 'Escape' && state.focus) { clearFocus(); render(); }
 });
@@ -4984,232 +5155,175 @@ function clipText(x, s, max) {
 
 /* The sheet's ground. It has to be painted rather than left transparent: the
    export is a JPEG, and anything unpainted arrives as black. */
-const SHEET_BG = '#f8f7fb';
+/* ── the deck's scroller ──
+   The active card is scroll position, not state. Tracking it here rather than
+   in `state` keeps a swipe from triggering a render, which would rebuild the
+   track under the finger doing the swiping. */
+let deckIndex = 0;
 
-/* Draws the whole sheet and returns the y it finished at.
-   Everything it prints comes off `v`, the same object reportSheet() renders
-   from — the two layouts are drawn by different machinery, so shared wording is
-   the only thing keeping the exported image and the preview saying the same
-   thing. Re-deriving a label here is how they drift apart. */
-function paintReport(x, W, v) {
-  const isMoney = v.isMoney;
-  const totals = v.totals;
-  const total = v.total || 1;
-  const accent = isMoney ? '#10756c' : '#5f3ac9';
-
-  x.fillStyle = SHEET_BG; x.fillRect(0, 0, W, 200000);
-  x.fillStyle = '#16131f';
-  x.font = '600 34px "Playfair Display", serif'; x.fillText(v.reportTitle, 60, 84);
-  x.font = '400 14px Barlow, sans-serif'; x.fillStyle = '#575168';
-  x.fillText(v.reportRange, 60, 110);
-  x.strokeStyle = '#d5d2df'; x.beginPath(); x.moveTo(60, 132); x.lineTo(W - 60, 132); x.stroke();
-
-  const cx = 210, cy = 350, r = 120;
-  let a0 = -Math.PI / 2;
-  totals.forEach((t) => {
-    const a1 = a0 + (t.mins / total) * Math.PI * 2;
-    x.beginPath(); x.moveTo(cx, cy); x.arc(cx, cy, r, a0, a1); x.closePath();
-    x.fillStyle = t.color; x.fill(); a0 = a1;
-  });
-  /* A disc in the page colour rather than a destination-out punch. That cut
-     through the background fill as well as the ring, and JPEG carries no alpha
-     to hold the hole — so the middle of the donut exported as a black circle
-     with the total unreadable in dark navy on top of it. */
-  x.fillStyle = SHEET_BG;
-  x.beginPath(); x.arc(cx, cy, 62, 0, Math.PI * 2); x.fill();
-  x.fillStyle = '#16131f'; x.textAlign = 'center';
-  x.font = '600 26px "Playfair Display", serif'; x.fillText(v.rangeTotal, cx, cy + 2);
-  x.fillStyle = '#756f88'; x.font = '400 10px Barlow, sans-serif';
-  x.fillText('TRACKED', cx, cy + 20);
-  x.textAlign = 'left';
-
-  /* The reading that sits beside the donut on screen. It went missing from the
-     export entirely, which left the image showing the shape of the range
-     without the sentence that says what the shape means. */
-  let ly = 268;
-  x.fillStyle = '#16131f'; x.font = '600 21px "Playfair Display", serif';
-  wrapText(x, v.reportHeadline, W - 460).forEach((ln) => { x.fillText(ln, 400, ly); ly += 24; });
-  ly += 4;
-  x.fillStyle = '#575168'; x.font = '400 13px Barlow, sans-serif';
-  wrapText(x, v.reportNote, W - 460).forEach((ln) => { x.fillText(ln, 400, ly); ly += 19; });
-  ly += 24;
-
-  totals.forEach((t) => {
-    x.fillStyle = t.color; x.fillRect(400, ly - 10, 12, 12);
-    x.fillStyle = '#16131f'; x.font = '400 16px Barlow, sans-serif'; x.fillText(clipText(x, withIcon(t.name), 250), 424, ly);
-    x.fillStyle = '#575168'; x.fillText(`${Math.round((t.mins / total) * 100)}%  ·  ${v.fmtShort(t.mins)}`, 690, ly);
-    ly += 34;
-  });
-
-  // Clears the legend rather than assuming it fits — a month can surface far
-  // more categories than the original fixed 560 allowed for.
-  let ty = Math.max(560, ly + 26);
-  x.fillStyle = '#575168'; x.font = '400 12px Barlow, sans-serif';
-  x.fillText(v.reportColLabel.toUpperCase(), 60, ty); x.fillText('ENTRIES', 520, ty); x.fillText(v.reportAmountLabel.toUpperCase(), 640, ty); x.fillText('SHARE', 800, ty);
-  ty += 12; x.strokeStyle = '#d5d2df'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
-  ty += 30;
-  v.reportRows.forEach((r) => {
-    x.fillStyle = '#16131f'; x.font = '400 16px Barlow, sans-serif';
-    x.fillText(clipText(x, withIcon(r.name), 430), 60, ty); x.fillText(String(r.count), 520, ty);
-    x.fillText(r.time, 640, ty); x.fillText(r.pct, 800, ty);
-    ty += 16; x.strokeStyle = '#e8e6ef'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
-    ty += 26;
-  });
-
-  /* The table's last row: untracked time, or money in. It is the one figure on
-     the sheet that is not a share of the total, which is why it sits under the
-     rule rather than among them — and why leaving it out of the export made the
-     numbers look like they should add up to the whole day, and fail to. */
-  x.fillStyle = '#16131f'; x.font = '600 18px "Playfair Display", serif';
-  x.fillText(v.reportFooterRowLabel, 60, ty);
-  x.font = '400 16px Barlow, sans-serif'; x.fillStyle = '#575168';
-  x.fillText('—', 520, ty); x.fillText('—', 800, ty);
-  x.fillStyle = '#16131f'; x.fillText(v.reportFooterRowValue, 640, ty);
-  ty += 16; x.strokeStyle = '#d5d2df'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
-  ty += 26;
-
-  /* Financial insights. Drawn before the early return below, so a money sheet
-     still carries the reading even when there is nothing to itemise under it. */
-  if (isMoney && v.moneyInsight) {
-    const f = v.moneyInsight;
-
-    ty += 30;
-    x.fillStyle = '#16131f'; x.font = '600 22px "Playfair Display", serif';
-    x.fillText('FINANCIAL INSIGHTS', 60, ty);
-    x.font = '400 12px Barlow, sans-serif'; x.fillStyle = '#575168'; x.textAlign = 'right';
-    x.fillText(f.coverageLabel, W - 60, ty);
-    x.textAlign = 'left';
-    ty += 11;
-    x.strokeStyle = '#d5d2df'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
-    ty += 34;
-
-    x.fillStyle = '#16131f'; x.font = '600 21px "Playfair Display", serif';
-    x.fillText(f.headline, 60, ty);
-    ty += 30;
-
-    // The same four figures as the card, on one row.
-    [['OUT', f.outLabel, false], ['IN', f.inLabel, false], ['NET', f.netLabel, true], ['KEPT', f.rateLabel, true]]
-      .forEach((t, i) => {
-        const tx = 60 + i * 195;
-        x.fillStyle = '#575168'; x.font = '400 11px Barlow, sans-serif';
-        x.fillText(t[0], tx, ty);
-        x.fillStyle = t[2] ? (f.netUp ? accent : '#16131f') : '#16131f';
-        x.font = '600 20px "Playfair Display", serif';
-        x.fillText(t[1], tx, ty + 23);
-      });
-    ty += 52;
-
-    const para = (kicker, items) => {
-      if (!items.length) return;
-      ty += 14;
-      x.fillStyle = accent; x.font = '400 11px Barlow, sans-serif';
-      x.fillText(kicker, 60, ty);
-      ty += 20;
-      x.font = '400 13px Barlow, sans-serif';
-      items.forEach((t) => {
-        const lines = wrapText(x, t, W - 138);
-        x.fillStyle = '#575168'; x.fillText('•', 60, ty);
-        x.fillStyle = '#16131f';
-        lines.forEach((ln, i) => x.fillText(ln, 78, ty + i * 19));
-        ty += lines.length * 19 + 9;
-      });
-    };
-
-    para('WHAT STANDS OUT', f.observations);
-    para('WHAT MIGHT HELP', f.advice);
-
-    ty += 12;
-    x.fillStyle = '#756f88'; x.font = '400 11px Barlow, sans-serif';
-    const legal = wrapText(x, DISCLAIMER, W - 120);
-    legal.forEach((ln, i) => x.fillText(ln, 60, ty + i * 16));
-    ty += legal.length * 16 + 10;
-  }
-
-  if (!v.reportEntryCount) return ty;
-
-  ty += 30;
-  x.fillStyle = '#16131f'; x.font = '600 22px "Playfair Display", serif';
-  x.fillText('EVERY ACTIVITY', 60, ty);
-  x.font = '400 12px Barlow, sans-serif'; x.fillStyle = '#575168'; x.textAlign = 'right';
-  x.fillText(`${v.reportEntryCount} ${v.reportEntryCount === 1 ? 'entry' : 'entries'}`, W - 60, ty);
-  x.textAlign = 'left';
-  ty += 11;
-  x.strokeStyle = '#d5d2df'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
-  ty += 32;
-
-  v.reportDays.forEach((d) => {
-    x.fillStyle = '#16131f'; x.font = '600 17px "Playfair Display", serif';
-    x.fillText(d.label, 60, ty);
-    x.font = '400 12px Barlow, sans-serif'; x.fillStyle = '#575168'; x.textAlign = 'right';
-    x.fillText(`${d.inLabel ? d.inLabel + ' in · ' : ''}${d.totalLabel}${isMoney ? ' out' : ''}`, W - 60, ty);
-    x.textAlign = 'left';
-    ty += 8;
-    x.strokeStyle = '#e8e6ef'; x.beginPath(); x.moveTo(60, ty); x.lineTo(W - 60, ty); x.stroke();
-    ty += 22;
-
-    /* Notes indent to the activity column, as they do on screen: a day should
-       still scan as a list of entries rather than a wall of prose. */
-    const noteX = isMoney ? 60 : 200;
-
-    d.rows.forEach((rw) => {
-      x.font = '400 13px Barlow, sans-serif';
-      if (isMoney) {
-        x.fillStyle = '#16131f'; x.fillText(clipText(x, rw.activity, 310), 60, ty);
-        x.fillStyle = rw.color; x.fillRect(392, ty - 8, 8, 8);
-        x.fillStyle = '#575168'; x.fillText(clipText(x, withIcon(rw.name), 190), 406, ty);
-        x.textAlign = 'right';
-        x.fillStyle = accent; x.fillText(rw.in, 730, ty);
-        x.fillStyle = '#16131f'; x.fillText(rw.out, W - 60, ty);
-        x.textAlign = 'left';
-      } else {
-        x.fillStyle = '#575168'; x.fillText(rw.when, 60, ty);
-        x.fillStyle = '#16131f'; x.fillText(clipText(x, rw.activity, 258), 200, ty);
-        x.fillStyle = rw.color; x.fillRect(478, ty - 8, 8, 8);
-        x.fillStyle = '#575168'; x.fillText(clipText(x, withIcon(rw.name), 240), 492, ty);
-        x.textAlign = 'right';
-        x.fillStyle = '#16131f'; x.fillText(rw.out, W - 60, ty);
-        x.textAlign = 'left';
-      }
-      ty += 24;
-
-      // What the entry said about itself. The preview has carried these since
-      // notes were added; the export never has.
-      if (rw.note) {
-        x.font = '400 12px Barlow, sans-serif'; x.fillStyle = '#575168';
-        wrapText(x, rw.note, W - 60 - noteX).forEach((ln) => { x.fillText(ln, noteX, ty); ty += 17; });
-        ty += 7;
-      }
-    });
-    ty += 18;
-  });
-
-  return ty;
+function deckGo(i) {
+  const track = root.querySelector('[data-deck-track]');
+  if (!track) return;
+  const slides = track.querySelectorAll('.deck-slide');
+  const n = Math.max(0, Math.min(slides.length - 1, i));
+  track.scrollTo({ left: slides[n].offsetLeft, behavior: 'smooth' });
 }
 
-function exportJpg() {
-  // compute() already holds the totals the sheet is drawn from; deriving a
-  // second set here was another way for the image to disagree with the preview.
-  const v = compute();
+/* Bound once, filtered to the deck: the track only exists while the report is
+   open, and re-binding on every render would stack listeners. */
+root.addEventListener('scroll', (ev) => {
+  const track = ev.target;
+  if (!track.matches || !track.matches('[data-deck-track]')) return;
+  const slides = [...track.querySelectorAll('.deck-slide')];
+  if (!slides.length) return;
+  const mid = track.scrollLeft + track.clientWidth / 2;
+  let best = 0, bestD = Infinity;
+  slides.forEach((sl, i) => {
+    const d = Math.abs(sl.offsetLeft + sl.offsetWidth / 2 - mid);
+    if (d < bestD) { bestD = d; best = i; }
+  });
+  if (best === deckIndex) return;
+  deckIndex = best;
+  // Painted directly; a render here would fight the scroll that caused it.
+  root.querySelectorAll('.deck-bar').forEach((b, i) => b.classList.toggle('is-on', i === deckIndex));
+}, true);
 
-  const W = 900;
-  const H = Math.max(1160, Math.ceil(paintReport(measuringContext(), W, v)) + 84);
+/* ── one card, as an image ──
+   Drawn rather than screenshotted, so it carries the brand at a size worth
+   sending and does not depend on what the viewport happened to be. */
+const CARD_W = 1080, CARD_H = 1350;
+
+/* Laid out in two passes: the first measures with nothing drawn, the second
+   draws with the block centred on what the first measured. Wrapping depends on
+   the font metrics of the real context, so the same context does both — every
+   paint is simply gated on `draw`. */
+function paintCard(x, c, v, draw, offsetY) {
+  const accent = v.isMoney ? '#10756c' : '#5f3ac9';
+  const tint = c.accent || accent;
+  const M = 64, R = 44;
+  const cw = CARD_W - M * 2, ch = CARD_H - M * 2;
+  const L = M + 66, RW = cw - 132;
+
+  if (draw) {
+    const grad = x.createLinearGradient(0, 0, CARD_W, CARD_H);
+    if (v.isMoney) { grad.addColorStop(0, '#2bb8a5'); grad.addColorStop(.55, '#16a394'); grad.addColorStop(1, '#0f766e'); }
+    else { grad.addColorStop(0, '#8b5cf6'); grad.addColorStop(.55, '#6d54f0'); grad.addColorStop(1, '#4f46e5'); }
+    x.fillStyle = grad; x.fillRect(0, 0, CARD_W, CARD_H);
+    x.fillStyle = '#ffffff';
+    x.beginPath();
+    if (x.roundRect) x.roundRect(M, M, cw, ch, R); else x.rect(M, M, cw, ch);
+    x.fill();
+  }
+
+  let y = (offsetY || 0);
+  const top = y;
+
+  if (c.kicker) {
+    x.font = '600 30px Barlow, sans-serif';
+    if (draw) { x.fillStyle = tint; x.fillText(c.kicker.toUpperCase(), L, y); }
+    y += 66;
+  }
+  if (c.big) {
+    const size = Math.max(60, Math.min(150, Math.floor(RW / (String(c.big).length * 0.56))));
+    x.font = `700 ${size}px "Playfair Display", Georgia, serif`;
+    if (draw) { x.fillStyle = '#16131f'; x.fillText(c.big, L, y + size * 0.78); }
+    y += size + 22;
+  }
+  if (c.title) {
+    x.font = '400 40px Barlow, sans-serif';
+    wrapText(x, c.title, RW).slice(0, 3).forEach((ln) => {
+      if (draw) { x.fillStyle = '#3b3648'; x.fillText(ln, L, y); }
+      y += 50;
+    });
+    y += 12;
+  }
+  c.lines.forEach((ln) => {
+    x.font = '400 32px Barlow, sans-serif';
+    wrapText(x, ln, RW).forEach((t) => {
+      if (draw) { x.fillStyle = '#575168'; x.fillText(t, L, y); }
+      y += 42;
+    });
+    y += 10;
+  });
+  if (c.rows.length) {
+    y += 14;
+    c.rows.slice(0, 6).forEach((r) => {
+      x.font = '400 34px Barlow, sans-serif';
+      const vw = x.measureText(r.value).width;
+      if (draw) {
+        if (r.color) { x.fillStyle = r.color; x.fillRect(L, y - 24, 20, 20); }
+        x.fillStyle = '#16131f';
+        // The label gives way to the value and the share, which are fixed width.
+        x.fillText(clipText(x, r.label, RW - vw - (r.meta ? 150 : 40) - (r.color ? 34 : 0)), L + (r.color ? 34 : 0), y);
+        x.textAlign = 'right';
+        x.fillStyle = '#16131f'; x.fillText(r.value, L + RW, y);
+        if (r.meta) {
+          x.font = '400 26px Barlow, sans-serif';
+          x.fillStyle = '#756f88';
+          // Placed off the measured value rather than a guessed offset, which
+          // ran the two into each other on "11 hr 15 min".
+          x.fillText(r.meta, L + RW - vw - 26, y);
+        }
+        x.textAlign = 'left';
+      }
+      y += 30;
+      if (draw) { x.strokeStyle = '#e8e6ef'; x.beginPath(); x.moveTo(L, y); x.lineTo(L + RW, y); x.stroke(); }
+      y += 40;
+    });
+  }
+  if (c.note) {
+    y += 8;
+    x.font = '400 27px Barlow, sans-serif';
+    wrapText(x, c.note, RW).slice(0, 5).forEach((ln) => {
+      if (draw) { x.fillStyle = '#575168'; x.fillText(ln, L, y); }
+      y += 37;
+    });
+  }
+
+  if (draw) {
+    // Pinned rather than flowed, so it sits identically on every card.
+    x.fillStyle = tint; x.font = '700 34px "Playfair Display", Georgia, serif';
+    x.fillText('ZIMPAN.', L, CARD_H - M - 56);
+    x.fillStyle = '#756f88'; x.font = '400 26px Barlow, sans-serif';
+    x.fillText(v.reportRange, L, CARD_H - M - 18);
+  }
+
+  return y - top;
+}
+
+async function shareCard() {
+  const v = compute();
+  const cards = deckCards(v);
+  const c = cards[Math.max(0, Math.min(cards.length - 1, deckIndex))];
+  if (!c) return;
+
+  try { await document.fonts.ready; } catch (err) { /* fonts are best-effort */ }
 
   const cv = document.createElement('canvas');
-  cv.width = W * 2; cv.height = H * 2;
-  const x = cv.getContext('2d'); x.scale(2, 2);
-  paintReport(x, W, v);
+  cv.width = CARD_W; cv.height = CARD_H;
+  const x = cv.getContext('2d');
+  /* Measure, then centre what was measured between the card's top edge and its
+     footer — a three-line card pinned to the top reads as a mistake. */
+  const h = paintCard(x, c, v, false, 0);
+  const boxTop = 64 + 70, boxBottom = CARD_H - 64 - 110;
+  const offset = Math.max(boxTop + 40, boxTop + Math.round(((boxBottom - boxTop) - h) / 2));
+  paintCard(x, c, v, true, offset);
 
-  // The same two-ended footer the sheet prints.
-  x.fillStyle = '#756f88'; x.font = '400 12px Barlow, sans-serif';
-  x.fillText(`Generated by ZIMPAN · ${v.geoLabel}`, 60, H - 40);
-  x.textAlign = 'right';
-  x.fillText(v.nowLabel, W - 60, H - 40);
-  x.textAlign = 'left';
+  const name = `zimpan-${v.isMoney ? 'money' : 'time'}-${c.key}.png`;
+  const blob = await new Promise((res) => cv.toBlob(res, 'image/png'));
+  if (!blob) return;
 
+  /* The phone's own share sheet where there is one — that is what makes this
+     worth sending. A download is the fallback, not the intent. */
+  const file = new File([blob], name, { type: 'image/png' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); return; } catch (err) { if (err && err.name === 'AbortError') return; }
+  }
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = cv.toDataURL('image/jpeg', 0.92);
-  a.download = `zimpan-report-${state.selectedDate}.jpg`;
-  a.click();
+  a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  flash('Card saved');
 }
 
 /* ─────────────────────────── boot ─────────────────────────── */
