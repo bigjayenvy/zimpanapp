@@ -362,6 +362,7 @@ function save() {
       categories: state.categories, purposes: state.purposes,
       currency: state.currency, currencyUpdatedAt: state.currencyUpdatedAt,
       steps: state.steps,
+      deckRange: state.deckRange,
       weightKg: state.weightKg, weightUpdatedAt: state.weightUpdatedAt,
       entryMode: state.entryMode,
       tombstones: state.tombstones, dirty: state.dirty,
@@ -523,6 +524,10 @@ const state = {
 
   /* Which wellbeing pillar has its activity list open: {key, scope}. */
   pillarOpen: null,
+
+  /* The report deck's own window, independent of the range the page is on:
+     switching it must not move the donut or the insight sections. */
+  deckRange: ['today', 'yesterday', 'week', 'fortnight', 'month'].includes(stored.deckRange) ? stored.deckRange : 'week',
 
   /* The date whose step count is being edited, or nothing. */
   stepsOpen: null,
@@ -4183,6 +4188,31 @@ function moneyCards(v) {
 
 const deckCards = (v) => (v.isMoney ? moneyCards(v) : timeCards(v));
 
+/* The deck's own windows. "Today" and "Yesterday" are both a single day and
+   differ only in which one, so a window is a length plus the day it ends on. */
+const DECK_RANGES = [
+  ['today', 'Today', 'day', 0],
+  ['yesterday', 'Yesterday', 'day', 1],
+  ['week', 'Week', 'week', 0],
+  ['fortnight', '2 Weeks', 'fortnight', 0],
+  ['month', 'Month', 'month', 0]
+];
+
+/* compute() reads the window off `state`, and the deck needs a different one
+   from the page it is covering. Rather than thread a window through every
+   derivation, the two fields are swapped for the length of the call and put
+   back in a finally — compute only ever reads state, so nothing else notices,
+   and the page's own range is untouched by whatever the deck is showing. */
+function deckView() {
+  const def = DECK_RANGES.find((r) => r[0] === state.deckRange) || DECK_RANGES[2];
+  const prevRange = state.range, prevDate = state.selectedDate;
+  const end = new Date();
+  end.setDate(end.getDate() - def[3]);
+  state.range = def[2];
+  state.selectedDate = iso(end);
+  try { return compute(); } finally { state.range = prevRange; state.selectedDate = prevDate; }
+}
+
 /* ── sharing ──
 
    A report has no URL to send: the data belongs to one account and is never
@@ -4247,8 +4277,10 @@ function reportActivities(v) {
 /* The deck. One card on screen at a time, snapping horizontally; the print
    stylesheet unrolls the same markup into a page each, followed by the detail
    pages below. */
-function reportSheet(v) {
+function reportSheet() {
   if (!state.reportOpen) return '';
+  // The deck reads its own window, not the page's.
+  const v = deckView();
   const cards = deckCards(v);
   if (!cards.length) return '';
 
@@ -4272,6 +4304,15 @@ function reportSheet(v) {
             </div>` : ''}
             ${c.note ? `<div class="deck-note">${esc(c.note)}</div>` : ''}
             </div>
+            <!-- The arrows carry the direction, not the words: "swipe left"
+                 beside a right-pointing arrow reads as a contradiction even
+                 though both describe the same gesture. Shown only where there
+                 is something to reach. -->
+            <div class="deck-hint no-print">
+              ${i > 0 ? '<span class="deck-hint-arrow">‹</span>' : ''}
+              <span>Swipe for more</span>
+              ${i < cards.length - 1 ? '<span class="deck-hint-arrow">›</span>' : ''}
+            </div>
             <div class="deck-mark">ZIMPAN<span>.</span> · ${esc(v.reportRange)}</div>
           </div>
         </section>`;
@@ -4284,6 +4325,12 @@ function reportSheet(v) {
           </div>
 
           <button class="deck-x no-print" data-act="close-report" aria-label="Close">×</button>
+
+          <div class="deck-ranges no-print">
+            ${DECK_RANGES.map(([key, label]) => `
+              <button class="deck-range${key === state.deckRange ? ' is-on' : ''}"
+                data-act="deck-range" data-key="${key}" aria-pressed="${key === state.deckRange}">${label}</button>`).join('')}
+          </div>
 
           <div class="deck-track" data-deck-track>
             ${cards.map(slide).join('')}
@@ -4388,7 +4435,7 @@ function render() {
   ${focusPanel(v)}
   ${pillarSheet(v)}
   ${stepsSheet()}
-  ${state.reportOpen ? reportSheet(v) : ''}
+  ${state.reportOpen ? reportSheet() : ''}
   ${notePromptDialog()}
   ${donateSheet()}
   ${aiConsentDialog()}
@@ -4990,6 +5037,15 @@ const ACTIONS = {
   'deck-prev': () => deckGo(deckIndex - 1),
   'deck-go': (el) => deckGo(Number(el.dataset.i)),
 
+  'deck-range': (el) => {
+    if (state.deckRange === el.dataset.key) return;
+    state.deckRange = el.dataset.key;
+    // A different window is a different set of cards; the track is rebuilt at
+    // the start rather than left pointing at a card that may no longer exist.
+    deckIndex = 0;
+    save(); render();
+  },
+
   'share-card': () => shareCard()
 };
 
@@ -5292,7 +5348,7 @@ function paintCard(x, c, v, draw, offsetY) {
 }
 
 async function shareCard() {
-  const v = compute();
+  const v = deckView();
   const cards = deckCards(v);
   const c = cards[Math.max(0, Math.min(cards.length - 1, deckIndex))];
   if (!c) return;
