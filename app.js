@@ -1715,6 +1715,11 @@ function foodReport(entries, money, days) {
   /* What would be sent for an AI estimate, and what the cache is keyed on. Only
      the food itself — no dates, no amounts, nothing identifying. */
   const detail = withNotes.map((r) => `${r.activity || ''}: ${r.note || ''}`.trim()).join('\n');
+  /* A refinement already asked for and answered, keyed by the text it was asked
+     about — so it survives a reload and is found again the moment the same
+     meals are on screen. */
+  const key = detail ? textKey(detail) : '';
+  const ai = key ? state.aiCache[key] || null : null;
   const perDay = days > 1 ? ` (about ${Math.round(n.kcal / days)} a day)` : '';
   /* Both kinds of gap are named: a meal that said nothing at all, and an item
      inside a readable meal that is not in the table. Saying so is what stops
@@ -1729,10 +1734,16 @@ function foodReport(entries, money, days) {
     observation: fitSentences(parts, 300),
     advice: clamp(advice, 300),
     nutrition: clamp(nutrition, 300),
-    kcal: n.kcal,
+    /* The effective figure, resolved here rather than at each reader. A refined
+       estimate replaces the local one everywhere or nowhere: the dial and the
+       sentence under it disagreeing is not a second opinion, it is a question
+       nobody on the page can answer. `local` keeps the original so the block
+       can still show what the reading was before. */
+    kcal: ai ? ai.kcal : n.kcal,
+    ai,
     local: { kcal: n.kcal, protein: n.protein, carbs: n.carbs, fat: n.fat },
     detail,
-    key: detail ? textKey(detail) : '',
+    key,
     hasFindings: true
   };
 }
@@ -3367,7 +3378,8 @@ function balanceGauges(food, burn, scope, stepDate) {
             ? `${burn.steps.toLocaleString('en-US')} steps${burn.fromSteps ? ` · about ${burn.fromSteps.toLocaleString('en-US')} kcal of the figure above` : ''}. `
             : ''}<button class="cal-link" data-act="steps-open" data-date="${esc(stepDate)}">${burn.steps ? 'Edit your steps' : 'Add your steps'}</button>.`
             : (burn.steps ? `Includes ${burn.steps.toLocaleString('en-US')} steps across the range.` : ''))}
-        ${dial(eaten, 'var(--zg-donate)', CAL_ICONS.food, 'Calories consumed (food)', '')}
+        ${dial(eaten, 'var(--zg-donate)', CAL_ICONS.food, 'Calories consumed (food)',
+          food.ai ? 'Refined by AI from what you wrote.' : '')}
         ${dial(rested, 'var(--color-accent-700)', CAL_ICONS.rest, 'Calories burned (at rest)',
           `Roughly burned at rest based on ${burn.assumedWeight
             ? `a default ${DEFAULT_WEIGHT_KG} kg`
@@ -3505,7 +3517,7 @@ function insightsCard(v) {
    already answers, and a much more expensive one. */
 function foodBlock(food, scope, canRefine) {
   if (!food) return '';
-  const ai = food.key ? state.aiCache[food.key] : null;
+  const ai = food.ai;
   const busy = state.aiBusy === scope;
 
   /* The AI figure replaces the local one rather than sitting beside it. Two
