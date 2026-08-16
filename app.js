@@ -1105,7 +1105,11 @@ const WELLBEING = [
   { re: /commute|traffic|jeep|train|\bbus\b|driving|fare/, w: {}, drain: true }
 ];
 
-function wellbeing(list) {
+/* `steps` is {count, date, days} for the window, or nothing. Steps fed the
+   calorie figure from the day they were added but never reached these
+   readings, which only ever looked at logged entries — so a day walked into
+   the ground still reported no movement at all. */
+function wellbeing(list, steps) {
   const mins = { physical: 0, emotional: 0, mental: 0, spiritual: 0 };
   /* What fed each figure. A reading like "22m of movement" is unarguable
      until you want to know which 22 minutes — and since most rules credit a
@@ -1129,6 +1133,23 @@ function wellbeing(list) {
       });
     });
   });
+  /* Steps count as the walking they were, at the cadence the calorie figure
+     already prices them at. Physical only: a walk with company earns its
+     emotional credit from the entry you logged, not from a pedometer.
+
+     Deliberately not added to `tracked` — that is logged time, and a step
+     count is not an entry. It would also inflate "X logged of the Y so far
+     today", which measures the same thing. */
+  const stepMins = steps && steps.count ? Math.round(steps.count / STEPS_PER_MINUTE) : 0;
+  if (stepMins) {
+    mins.physical += stepMins;
+    parts.physical.push({
+      activity: `${steps.count.toLocaleString('en-US')} steps${steps.days > 1 ? ` across ${steps.days} days` : ''}`,
+      category: 'Steps', date: steps.date,
+      mins: stepMins, weight: 1, credited: stepMins
+    });
+  }
+
   Object.keys(parts).forEach((k) => parts[k].sort((a, b) => b.credited - a.credited));
   return { mins, parts, tracked, still, drain, vague };
 }
@@ -1990,7 +2011,7 @@ function compute() {
        counts towards today's reading; the rest belongs to yesterday evening. */
     .map((e) => Object.assign({}, e, wraps(e) ? { from: 0, to: Math.min(e.to, nowMins) } : { to: Math.min(e.to, nowMins) }))
     .filter((e) => e.to > e.from);
-  const todayWb = wellbeing(todayList);
+  const todayWb = wellbeing(todayList, { count: stepsIn([todayIso]), date: todayIso, days: 1 });
   const todayTop = totalsByCategory(todayList)[0];
   const partOfDay = nowMins < 720 ? 'Morning' : nowMins < 1020 ? 'Afternoon' : nowMins < 1260 ? 'Evening' : 'Late';
   /* The window has to be the one the entries actually sit in. "Since 6 AM"
@@ -2043,7 +2064,7 @@ function compute() {
   // Money logged on the same finished days, so the food read covers both trackers.
   const pastDateSet = new Set(pastDates);
   const pastMoney = s.money.filter((e) => pastDateSet.has(e.date));
-  const pastWb = wellbeing(pastList);
+  const pastWb = wellbeing(pastList, { count: stepsIn(pastSpan), date: pastSpan[pastSpan.length - 1], days: pastSpan.length });
   const pastTotals = totalsByCategory(pastList);
   const byDay = {};
   pastList.forEach((e) => { byDay[e.date] = (byDay[e.date] || 0) + span(e); });
@@ -3466,7 +3487,7 @@ function sleepBlock(sleep, scope) {
   if (!sleep) return '';
   return `
           <div style="margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--color-divider);">
-            <div class="wb-kicker">${scope === 'past' ? 'How you slept' : 'Last night'}</div>
+            <div class="wb-kicker">${scope === 'past' ? 'How you slept' : "Last night's sleep"}</div>
             <div class="food-text">${esc(sleep.headline)}</div>
             ${sleep.detail ? `<div class="food-text" style="margin-top: 7px;">${esc(sleep.detail)}</div>` : ''}
             ${sleep.advice ? `<div class="food-text" style="margin-top: 7px;">${esc(sleep.advice)}</div>` : ''}
