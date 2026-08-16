@@ -741,6 +741,9 @@ async function refineFood(scope) {
   const v = compute();
   const food = scope === 'today' ? v.todayFood : v.pastFood;
   if (!food || !food.detail) return;
+  // Same gate the button is drawn behind, in case a click outlives the render
+  // that should have removed it.
+  if (scope === 'past' && !v.pastSingleDate) return;
 
   if (state.aiCache[food.key]) { render(); return; }
 
@@ -3417,7 +3420,12 @@ function insightsCard(v) {
 
 /* The food block sits between the wellbeing rows and the advice — it is the
    one part built from what you wrote rather than from the clock. */
-function foodBlock(food, scope) {
+/* `canRefine` gates the AI button, not the reading. It is offered only where a
+   single day is on screen — today, and Looking back when it is showing
+   Yesterday. Across a week the detail handed to the model is every meal of
+   every day run together, which is a worse question than the local reading
+   already answers, and a much more expensive one. */
+function foodBlock(food, scope, canRefine) {
   if (!food) return '';
   const ai = food.key ? state.aiCache[food.key] : null;
   const busy = state.aiBusy === scope;
@@ -3430,7 +3438,7 @@ function foodBlock(food, scope) {
     ? `Roughly ${ai.kcal.toLocaleString('en-US')} kcal — around ${ai.protein}g protein, ${ai.carbs}g carbs, ${ai.fat}g fat.`
     : food.nutrition;
 
-  const refine = !state.aiEstimates || !food.detail ? '' : `
+  const refine = !canRefine || !state.aiEstimates || !food.detail ? '' : `
             <div style="margin-top: 9px; display: flex; align-items: center; gap: 9px; flex-wrap: wrap;">
               <button class="drawer-btn btn-refine" data-act="refine-food" data-scope="${esc(scope)}"${busy ? ' disabled' : ''}>
                 ${busy ? '<span class="spinner"></span> Checking…' : (ai ? 'Check again' : 'Refine with AI')}
@@ -3505,7 +3513,7 @@ function todayCard(v) {
         ${v.todayEmpty || !state.drawers.today ? '' : `
           <div class="wb-grid">${dimensionCards(v.todayReadings, 'today')}</div>
           ${sleepBlock(v.todaySleep, 'today')}
-          ${foodBlock(v.todayFood, 'today')}
+          ${foodBlock(v.todayFood, 'today', true)}
           ${adviceBlock(v.todayAdvice)}`}
         ${v.todayEmpty ? '' : drawerToggle('today', 0, '', REPORT_LABELS)}
       </div>`;
@@ -3563,7 +3571,7 @@ function pastCard(v) {
         </div>
         <div class="wb-grid">${dimensionCards(v.pastReadings, 'past')}</div>
         ${sleepBlock(v.pastSleep, 'past')}
-        ${foodBlock(v.pastFood, 'past')}
+        ${foodBlock(v.pastFood, 'past', !!v.pastSingleDate)}
         ${adviceBlock(v.pastAdvice)}`}
         ${v.pastEmpty ? '' : drawerToggle('lookback', 0, '', REPORT_LABELS)}
       </div>`;
