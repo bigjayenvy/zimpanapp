@@ -1085,7 +1085,16 @@ const WELLBEING = [
   // and time reading are their own goods; counting them here would let the card
   // report quiet you never actually had.
   { re: /family|kids|anak|parent|lola|lolo|friend|barkada|date night|reunion|dinner with|lunch with|breakfast with|visit|catch up/, w: { emotional: 1 } },
-  { re: /sleep|nap|rest|siesta|recover/, w: { physical: .8, mental: .5 } },
+  /* Sleep credits nothing here. It used to take 80% of physical and 50% of
+     mental, which read as movement and as focused work — neither of which it
+     is. A night's sleep is roughly ten times the physical target on its own, so
+     it buried real exercise: eight hours in bed reported six and a half hours
+     "of movement" and pinned the reading at strong whatever else you did.
+
+     Sleep is not idle either, so it takes no `still` flag; it is simply
+     tracked time that no pillar worded in terms of activity should claim. */
+  { re: /sleep|nap|siesta/, w: {} },
+  { re: /\brest\b|recover/, w: {} },
   { re: /read|book|study|learn|class|school|course|tuition/, w: { mental: 1 } },
   { re: /focus|deep work|code|coding|program|writing|email|admin|meeting|research|project|client|work/, w: { mental: 1 } },
   { re: /chore|clean|linis|laundry|wash|cook|grocer|errand|repair|garden|tidy|dishes/, w: { physical: .5, mental: .2 } },
