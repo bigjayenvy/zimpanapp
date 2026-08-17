@@ -3366,8 +3366,6 @@ function pillarSheet(v) {
    drawn twice on the page, so the weight editor needs to know which copy was
    asked for and the fields inside it need keys that do not collide. */
 function balanceGauges(food, burn, scope, stepDate) {
-  if (!food.kcal && !burn.kcal) return '';
-
   /* A thirty-day total on a dial scaled for one day reads as wildly over-eaten
      every time, so a multi-day range is averaged and says so. Every figure is
      divided by the same span, which leaves the balance between them — the
@@ -3377,6 +3375,22 @@ function balanceGauges(food, burn, scope, stepDate) {
   const burned = per(burn.kcal);
   const eaten = per(food.kcal);
   const rested = per(burn.restKcal);
+
+  /* With nothing logged on either side there is no balance to draw, and
+     printing one anyway would report a ~1,650 deficit at breakfast time purely
+     because the day had not been logged yet. It says so rather than
+     disappearing: a panel that silently comes and goes reads as a bug. The
+     resting figure is still worth showing — it is true whatever you log. */
+  if (!food.kcal && !burn.kcal) {
+    return `
+      <div class="cal-kicker">${days > 1 ? `Average day across ${days} days` : 'Daily calorie balance'}</div>
+      <div class="cal-empty">
+        Nothing to weigh up yet. Your body spends roughly
+        <strong>${rested.toLocaleString('en-US')} kcal a day</strong> at rest, but a balance needs
+        something on the other side — log a meal or a workout${stepDate
+          ? `, or <button class="cal-link" data-act="steps-open" data-date="${esc(stepDate)}">add your steps</button>` : ''}.
+      </div>`;
+  }
 
   /* Everything out, less everything in. Positive is a deficit — more spent
      than eaten — which is the direction people are usually looking for, so it

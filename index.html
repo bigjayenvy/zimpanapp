@@ -839,6 +839,15 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase;
     color: var(--color-neutral-600); margin-top: 5px; line-height: 1.35;
   }
+  /* Stands in for the gauges when neither side of the balance has anything in
+     it, so the panel explains itself rather than vanishing. */
+  .cal-empty {
+    font-size: 13px; line-height: 1.6; color: var(--color-neutral-700);
+    background: var(--color-accent-100); border-radius: var(--radius-md);
+    padding: 13px 15px;
+  }
+  .cal-empty strong { color: var(--color-text); }
+
   /* The sentence under a dial that says where its figure came from. */
   .cal-sub { font-size: 11px; line-height: 1.5; color: var(--color-neutral-700); margin-top: 6px; }
   .cal-note { font-size: 11px; line-height: 1.5; color: var(--color-neutral-600); margin-top: 6px; }
