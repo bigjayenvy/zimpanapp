@@ -459,8 +459,26 @@ function textKey(s) {
 
 /* ─────────────────────────── state ─────────────────────────── */
 
-const today = new Date();
-const todayIso = iso(today);
+/* The date the app believes it is.
+   Not a constant. A phone keeps a tab alive for days, and a session that
+   outlived midnight went on filing everything against the day it was opened:
+   the "Today, as it happens" card described a day that had ended, and a step
+   count entered on Tuesday was stored under Monday — so Tuesday reported none
+   of it. Being a `const`, it could not even be corrected without a reload.
+   Refreshed by the same tick that moves the clock. */
+let todayIso = iso(new Date());
+
+/* Called every second. Returns whether the day actually turned. */
+function rollDay() {
+  const now = iso(new Date());
+  if (now === todayIso) return false;
+  const was = todayIso;
+  todayIso = now;
+  /* Someone watching today keeps watching today. Someone who navigated back to
+     an earlier day stays where they put themselves. */
+  if (state && state.selectedDate === was) state.selectedDate = now;
+  return true;
+}
 const storedRaw = load();
 /* A device with no store starts with the category and purpose lists but no
    entries. The demo history in seedState() belongs to the local-only era — now
@@ -488,7 +506,7 @@ const state = {
   // 'timer' or 'manual' — only one entry card is on screen at a time.
   entryMode: stored.entryMode === 'manual' ? 'manual' : 'timer',
 
-  form: { date: todayIso, activity: '', category: (stored.categories[0] || {}).name || 'Chores', from: hm(today.getHours() * 60 + today.getMinutes()), to: '' },
+  form: { date: todayIso, activity: '', category: (stored.categories[0] || {}).name || 'Chores', from: (() => { const n = new Date(); return hm(n.getHours() * 60 + n.getMinutes()); })(), to: '' },
   mForm: { date: todayIso, activity: '', purpose: 'Groceries', in: '', out: '' },
 
   newCatOpen: false, newCatName: '',
@@ -5400,6 +5418,10 @@ async function shareCard() {
 
 // The running clock and the "now" stamp tick without a full re-render.
 function tickLive() {
+  /* Before anything reads the date: past midnight the whole view is about the
+     wrong day, and a repaint of stale text would only make it look current. */
+  if (rollDay()) { render(); return; }
+
   const c = elapsedClock();
   root.querySelectorAll('[data-clock]').forEach((el) => { el.textContent = c; });
   const now = new Date();
