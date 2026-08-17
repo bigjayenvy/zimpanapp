@@ -1,0 +1,9 @@
+# ZIMPAN — https://zimpan.com/
+
+User-agent: *
+Allow: /
+
+# The API answers with data and requires a session; there are no pages under it.
+Disallow: /api/
+
+Sitemap: https://zimpan.com/sitemap.xml

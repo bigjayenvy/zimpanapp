@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ZIMPAN is a single-page app: one document, one URL. Privacy and Terms are
+  lightboxes over that page rather than routes of their own, so there is nothing
+  else to list — a sitemap naming URLs that do not exist is worse than a short
+  one. Bump <lastmod> when the page's content meaningfully changes.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://zimpan.com/</loc>
+    <lastmod>2026-08-17</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>

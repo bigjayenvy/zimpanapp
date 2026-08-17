@@ -15,7 +15,10 @@ deployment:
   tasks:
     - export DEPLOYPATH=/home/zimpxioc/zimpan
     - /bin/mkdir -p $DEPLOYPATH/ds $DEPLOYPATH/server
-    - /bin/cp -f app.js index.html $DEPLOYPATH/
+    # sitemap.xml and robots.txt are served from the project root by name, so
+    # they have to be copied like index.html — a file that never reaches
+    # $DEPLOYPATH is a 404 however correct it is in the repository.
+    - /bin/cp -f app.js index.html sitemap.xml robots.txt $DEPLOYPATH/
     # Whole directory, not *.css — the stylesheet was joined by favicon.svg and
     # will be joined by og-image.jpg, and an extension list silently drops both.
     - /bin/cp -Rf ds/. $DEPLOYPATH/ds/

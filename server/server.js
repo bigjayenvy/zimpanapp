@@ -383,6 +383,13 @@ const sendRoot = (file) => (req, res) => res.sendFile(join(ROOT, file));
 app.get('/', sendRoot('index.html'));
 app.get('/index.html', sendRoot('index.html'));
 app.get('/app.js', sendRoot('app.js'));
+
+/* Named explicitly, like everything else here: this is an allowlist, not a
+   directory, so a file existing at the project root is not enough to make it
+   reachable. Without these two routes a crawler asking for the sitemap gets the
+   404 below, which Search Console reports as "Couldn't fetch". */
+app.get('/sitemap.xml', sendRoot('sitemap.xml'));
+app.get('/robots.txt', sendRoot('robots.txt'));
 app.use('/ds', express.static(join(ROOT, 'ds'), { fallthrough: false }));
 
 app.use((req, res) => {
