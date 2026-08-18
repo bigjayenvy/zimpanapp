@@ -15,7 +15,7 @@ import {
 import { changesSince, applyChanges, Invalid, CURRENCIES } from './sync.js';
 import { verifyGoogleIdToken } from './google.js';
 import { sendResetEmail } from './mail.js';
-import { estimateNutrition, aiConfigured } from './ai.js';
+import { estimateNutrition, summariseDeck, aiConfigured } from './ai.js';
 
 const ROOT = join(HERE, '..');
 const PORT = Number(process.env.PORT) || 3000;
@@ -364,6 +364,31 @@ app.post('/api/estimate', requireUser, wrap(async (req, res) => {
     res.json({ estimate: await estimateNutrition(text) });
   } catch (err) {
     // The reason is already in the log; the message here is safe to show.
+    res.status(502).json({ error: err.message });
+  }
+}));
+
+/* The report deck's prose, one window at a time.
+
+   A tighter limit than the estimates: this is a much larger request, and the
+   client caches per window, so a person reading their own report honestly needs
+   a handful an hour rather than dozens. The body is the summarised figures the
+   cards already show — capped by size rather than parsed field by field, since
+   what it contains is the client's own output and the model sees it as data. */
+app.post('/api/deck-summary', requireUser, wrap(async (req, res) => {
+  if (!aiConfigured()) return res.status(503).json({ error: 'AI summaries are not configured on this server.' });
+
+  const limited = rateLimit({ key: `deck:${req.user.id}`, limit: 20, windowMs: 60 * 60 * 1000 });
+  if (!limited.ok) return res.status(429).json({ error: `That is a lot of reports. Try again ${retryLabel(limited.retryAfterMs)}.` });
+
+  const facts = (req.body || {}).facts;
+  if (!facts || typeof facts !== 'object') return res.status(400).json({ error: 'Nothing to summarise.' });
+  const size = JSON.stringify(facts).length;
+  if (size > 12000) return res.status(400).json({ error: 'That is too much to summarise in one go.' });
+
+  try {
+    res.json({ summaries: await summariseDeck(facts) });
+  } catch (err) {
     res.status(502).json({ error: err.message });
   }
 }));

@@ -441,7 +441,8 @@ const API = {
   forgot: (email) => api('/api/forgot', { method: 'POST', body: { email } }),
   reset: (token, password) => api('/api/reset', { method: 'POST', body: { token, password } }),
   push: (since, changes) => api('/api/sync', { method: 'POST', body: { since: since || 0, changes } }),
-  estimate: (text) => api('/api/estimate', { method: 'POST', body: { text } })
+  estimate: (text) => api('/api/estimate', { method: 'POST', body: { text } }),
+  deckSummary: (facts) => api('/api/deck-summary', { method: 'POST', body: { facts } })
 };
 
 /* ── AI nutrition estimates ──
@@ -554,6 +555,11 @@ const state = {
   aiCache: readJson(AI_CACHE_KEY, {}),
   aiAsking: null,   // scope awaiting consent
   aiBusy: null,     // scope with a request in flight
+
+  /* The report deck's written summaries, keyed by window. Session-only rather
+     than persisted: they are cheap to refetch and stale prose about a fortnight
+     you have since added to is worse than none. */
+  deckAi: {}, deckAiBusy: null, deckAiError: '',
   aiError: '',
 
   // Slice drill-down: the category/purpose the donut is focused on, and
@@ -869,6 +875,86 @@ async function refineFood(scope) {
     state.aiError = err.message || 'Could not get an estimate just now.';
   } finally {
     state.aiBusy = null;
+    render();
+  }
+}
+
+/* ── the report deck's written summaries ──
+
+   Everything the cards can say from arithmetic, they say from arithmetic. These
+   are the paragraphs between the figures, and they are the one part of the app
+   that has to be written rather than computed.
+
+   One request per window, cached against a fingerprint of what went into it, so
+   flicking between Week and Month costs one call each and flicking back costs
+   nothing. The fingerprint includes the totals rather than only the range, so
+   logging something new gets a summary that knows about it. */
+
+// Only what a summary needs. The raw log never leaves: the model is told the
+// window went to Family Time, not what was written in the notes.
+function deckFacts(v) {
+  const days = Math.max(1, v.rangeDayCount);
+  const b = v.rangeBurn, f = v.rangeFood;
+  const netDay = Math.round((b.kcal + b.restKcal - f.kcal) / days);
+  const kg = weekWeightKg(netDay);
+  const quiet = v.quietestDay;
+
+  return {
+    tracker: v.isMoney ? 'money' : 'time',
+    range: v.reportRange,
+    days,
+    daysLogged: v.reportDays.length,
+    dayStreak: v.streak,
+    entries: v.reportEntryCount,
+    totalTracked: v.rangeTotal,
+    averageDay: durShort(v.rangeTotalMins / days),
+    untrackedOnSelectedDay: v.untracked,
+    steps: v.rangeSteps || 0,
+    categories: v.reportRows.slice(0, 8).map((r) => ({ name: r.name, share: r.pct, time: r.time })),
+    busiestDay: v.rangeBusiest ? { day: v.rangeBusiest.label, tracked: v.rangeBusiest.value } : null,
+    lightestDay: quiet ? { day: dayLabel(quiet.date), tracked: durShort(quiet.total) } : null,
+    sleep: v.rangeSleep.nights ? {
+      nightsLogged: v.rangeSleep.nights,
+      averageNight: durShort(v.rangeSleep.avgMins),
+      bedtimeDrift: durShort(v.rangeSleep.drift),
+      perNight: v.rangeSleep.list.map((n) => ({ day: dayLabel(n.date), slept: durShort(n.mins) }))
+    } : null,
+    energy: (b.kcal || f.kcal) ? {
+      burnedMoving: Math.round(b.kcal / days),
+      burnedAtRest: Math.round(b.restKcal / days),
+      eaten: Math.round(f.kcal / days),
+      netPerDay: netDay,
+      // Worded here, not there. This is arithmetic someone may act on, so the
+      // model is given the sentence to repeat rather than the sum to do.
+      ifThisHeld: `about ${Math.abs(kg).toFixed(2)} kg ${kg >= 0 ? 'lost' : 'gained'} in a week`
+    } : null
+  };
+}
+
+// Cheap and sufficient: a different window, or the same window with anything
+// new logged in it, produces a different key.
+const deckKey = (v) => [
+  v.isMoney ? 'm' : 't', state.deckRange, v.reportRange,
+  v.reportEntryCount, v.rangeTotalMins, v.rangeSteps || 0
+].join('|');
+
+async function fetchDeckSummary(v) {
+  if (!state.aiEstimates || !state.auth) return;
+  const key = deckKey(v);
+  if (state.deckAi[key] || state.deckAiBusy === key) return;
+
+  state.deckAiBusy = key;
+  state.deckAiError = '';
+  render();
+  try {
+    const res = await API.deckSummary(deckFacts(v));
+    state.deckAi[key] = res.summaries || {};
+  } catch (err) {
+    /* Not cached: a summary that failed because the network was down should be
+       retried the next time the deck opens, not remembered as "no summary". */
+    state.deckAiError = err.message || 'Could not write the summary just now.';
+  } finally {
+    state.deckAiBusy = null;
     render();
   }
 }
@@ -4811,6 +4897,38 @@ function reportActivities(v) {
           </div>`;
 }
 
+/* One wording, two places: the card on screen and the card as an image. Kept
+   as a function rather than a constant because whether an AI wrote anything is
+   a question about this session, not about the app.
+
+   The AI is named only when an AI actually wrote the summaries. Saying
+   "analysed by an AI agent" under prose this app composed itself would be a
+   small lie told for flavour, and the whole point of a disclaimer is that it is
+   the one part of the page you can rely on. */
+function deckDisclaimer() {
+  const wrote = state.aiEstimates && Object.keys(state.deckAi).length > 0;
+  return 'Every figure in this report comes from what you chose to log, and the readings are estimates rather than measurements.'
+    + (wrote ? ' The written sections were composed by an AI agent from those figures.' : '')
+    + ' ZIMPAN is not a medical, nutritional or financial adviser — anything you act on, particularly with a health condition or medication involved, is worth putting to a qualified professional first.';
+}
+
+/* The tail of the closing card: where the reading came from, and the ask.
+
+   The disclaimer names the AI only when an AI actually wrote the summaries.
+   Saying "analysed by an AI agent" under prose this app composed itself would
+   be a small lie told for flavour, and the whole point of a disclaimer is that
+   it is the one part of the page you can rely on. */
+function deckClosing() {
+  return `
+            <div class="deck-close">
+              <p class="deck-disclaimer">${esc(deckDisclaimer())}</p>
+              <p class="deck-ask">ZIMPAN is free, has no ads, and sells nothing. If it has been worth something to you, a small gift keeps it being built.</p>
+              <a class="btn btn-donate deck-donate no-print" href="${DONATE_URL}" target="_blank" rel="noopener noreferrer">
+                ${NAV_ICONS.donate}<span>Chip in for what comes next</span>
+              </a>
+            </div>`;
+}
+
 /* The deck. One card on screen at a time, snapping horizontally; the print
    stylesheet unrolls the same markup into a page each, followed by the detail
    pages below. */
@@ -5598,7 +5716,11 @@ const ACTIONS = {
     save(); queueSync(0); render(); flash('Steps cleared');
   },
 
-  'open-report': () => { state.reportOpen = true; deckIndex = 0; render(); },
+  'open-report': () => {
+    state.reportOpen = true; deckIndex = 0; render();
+    // After the render, so the deck is on screen while the prose is written.
+    fetchDeckSummary(deckView());
+  },
   'close-report': () => { state.reportOpen = false; render(); },
   'export-pdf': () => window.print(),
 
@@ -5616,6 +5738,8 @@ const ACTIONS = {
     // the start rather than left pointing at a card that may no longer exist.
     deckIndex = 0;
     save(); render();
+    // Each window gets its own summaries, cached, so coming back is free.
+    fetchDeckSummary(deckView());
   },
 
   'share-card': () => shareCard(),

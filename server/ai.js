@@ -174,3 +174,133 @@ export async function estimateNutrition(text) {
   }
   return checked;
 }
+
+/* ── the report deck's written summaries ──
+
+   The deck used to say only what the arithmetic said. These are the sentences
+   between the figures: what the fortnight looked like, what the split says
+   about how someone spends their days, and a closing note worth reading.
+
+   One call returns every summary for a window at once. Seven separate requests
+   for seven cards would be seven times the latency and the bill for the same
+   context, and the cards would not agree with each other — the closing note
+   would be written without knowing what the sleep card had just said.
+
+   What arrives here is the same summarised figures the cards display, never the
+   raw log. Activity names come through, notes do not: the model needs to know
+   the window went to Family Time, not what was written about it.
+
+   Every number a reader might act on is computed before this is called and
+   passed in already worded. The model arranges and explains; it is never the
+   thing that worked out how much weight a deficit implies. */
+
+const DECK_SYSTEM = `You write the short prose sections of a personal time-and-wellbeing report. The reader is the person whose data it is, and they are reading about their own fortnight.
+
+Voice:
+- Second person, warm, plain. Speak to them, not about them.
+- Specific over generic: name their actual categories, days and figures.
+- Never scold. A thin week is a thin week, not a failure.
+- No emoji. No headings. No bullet points. Plain sentences.
+
+Honesty:
+- Use only the figures given to you. Never invent a number, a date or an activity.
+- The figures are estimates from what they chose to log, and gaps are common. Say "logged" rather than implying the record is complete.
+- You are not a doctor, a dietitian or a therapist. Do not diagnose, do not prescribe, do not tell anyone to eat less or exercise more as a medical instruction. Observations about their own logged data are fine.
+- If a figure is missing or zero, say so plainly rather than guessing around it.
+
+Length is a hard limit, not a target. Staying well under it is always fine.`;
+
+const DECK_SCHEMA = {
+  type: 'object',
+  properties: {
+    cover: { type: 'string', description: 'At most 100 words. What this window looked like overall — how much was tracked, how consistently, what dominated.' },
+    donut: { type: 'string', description: 'At most 60 words. What the split across categories says. Name the largest one or two.' },
+    profile: { type: 'string', description: 'At most 100 words. Given their top three categories, describe the kind of fortnight this was and what it suggests about how they spend their days. Generic is fine; flattering-but-empty is not.' },
+    pace: { type: 'string', description: 'At most 60 words. Compare their busiest day with their lightest, and say something useful about the range between them.' },
+    sleep: { type: 'string', description: 'At most 100 words. What the nights logged look like — the average, the consistency, any night that stands out.' },
+    energy: { type: 'string', description: 'At most 80 words. Restate the calorie balance in plain terms and repeat the supplied weight-per-week figure verbatim as an if-this-continues projection. Do not recompute it. Make clear it is a rough estimate from logged data.' },
+    closing: { type: 'string', description: 'At most 250 words. The closing card. Tell them specifically what they did well in this window, drawing on the real figures. Offer one or two concrete, gentle suggestions. End on genuine encouragement. Creative and warm, never saccharine, never a lecture.' }
+  },
+  required: ['cover', 'donut', 'profile', 'pace', 'sleep', 'energy', 'closing'],
+  additionalProperties: false
+};
+
+// The caps the prompt asks for, enforced here so a long reply is trimmed rather
+// than allowed to overflow the card it has to sit inside.
+const DECK_CAPS = { cover: 100, donut: 60, profile: 100, pace: 60, sleep: 100, energy: 80, closing: 250 };
+
+const clampWords = (text, max) => {
+  const words = String(text || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  if (words.length <= max) return words.join(' ');
+  // Cut at the last sentence that fits, so a trimmed summary still ends.
+  const cut = words.slice(0, max).join(' ');
+  const stop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '));
+  return stop > cut.length * 0.5 ? cut.slice(0, stop + 1) : `${cut}…`;
+};
+
+export async function summariseDeck(facts) {
+  if (!aiConfigured()) throw new Error('AI summaries are not configured on this server.');
+
+  let res;
+  try {
+    res = await anthropic().beta.messages.create({
+      model: MODEL,
+      max_tokens: 8192,
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      system: DECK_SYSTEM,
+      output_config: Object.assign(
+        { format: { type: 'json_schema', schema: DECK_SCHEMA } },
+        effortLevel() ? { effort: effortLevel() } : {}
+      ),
+      messages: [{ role: 'user', content: JSON.stringify(facts) }]
+    }, { timeout: TIMEOUT_MS });
+  } catch (err) {
+    if (err instanceof Anthropic.RateLimitError) {
+      console.error('[zimpan] deck summary rate limited');
+      throw new Error('The summary service is busy. Try again shortly.');
+    }
+    if (err instanceof Anthropic.AuthenticationError) {
+      console.error('[zimpan] deck summary rejected the API key');
+      throw new Error('The summary service refused our credentials.');
+    }
+    if (err instanceof Anthropic.APIConnectionError) {
+      console.error(`[zimpan] deck summary could not connect: ${err.message}`);
+      throw new Error('Could not reach the summary service.');
+    }
+    console.error(`[zimpan] deck summary failed${err.status ? ` (${err.status})` : ''}: ${err.message}`);
+    throw new Error('The summary service refused the request.');
+  }
+
+  if (res.stop_reason === 'refusal') {
+    console.error(`[zimpan] deck summary refused${res.stop_details ? `: ${res.stop_details.category}` : ''}`);
+    throw new Error('The summary service declined that request.');
+  }
+  if (res.stop_reason === 'max_tokens') {
+    console.error('[zimpan] deck summary hit the output cap');
+    throw new Error('That was too much to summarise in one go.');
+  }
+
+  const block = (res.content || []).find((b) => b.type === 'text');
+  let parsed = null;
+  try {
+    parsed = JSON.parse(block.text);
+  } catch {
+    console.error('[zimpan] deck summary returned something unusable');
+    throw new Error('The summary came back in a form we could not read.');
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('The summary came back in a form we could not read.');
+  }
+
+  const out = {};
+  for (const [key, cap] of Object.entries(DECK_CAPS)) {
+    if (typeof parsed[key] !== 'string') continue;
+    const text = clampWords(parsed[key], cap);
+    if (text) out[key] = text;
+  }
+  // A reply with nothing usable in it is a failure, not an empty success — the
+  // client would otherwise cache the emptiness and never ask again.
+  if (!Object.keys(out).length) throw new Error('The summary came back empty.');
+  return out;
+}
