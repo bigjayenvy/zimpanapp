@@ -2677,7 +2677,7 @@ function header(v) {
         </span>` : ''}
       <span class="appbar-cta" style="display:flex;align-items:center;gap:10px;">
         <a class="btn btn-donate" href="${DONATE_URL}" target="_blank" rel="noopener noreferrer">${NAV_ICONS.donate}<span>Donate</span></a>
-        <button class="btn btn-primary" data-act="open-report" style="position:relative">Export report</button>
+        <button class="btn btn-primary" data-act="open-report" style="position:relative">Your Report Cards</button>
       </span>
     </div>
   </div>`;
