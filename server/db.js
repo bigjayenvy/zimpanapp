@@ -89,6 +89,49 @@ export async function migrate() {
   }
 
   await alterExisting();
+  await seedAdmin();
+}
+
+/* The first superadmin, created on the boot that first knows about roles.
+
+   Seeded without a password by default: the account is reached through the
+   ordinary Forgot Password flow, so no credential is ever written into this
+   repository or into a log. That path needs SMTP configured — in production the
+   mailer refuses rather than printing reset links — so ADMIN_PASSWORD exists as
+   an escape hatch for a server without mail. It is read from the environment
+   and never stored anywhere but the hash.
+
+   Only ever promotes; never demotes. Someone who moved the role on to a
+   different account should not find it handed back on the next restart. */
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'admin@bigcavestudios.com').trim().toLowerCase();
+
+async function seedAdmin() {
+  if (!ADMIN_EMAIL) return;
+  const [[row]] = await pool.query('SELECT id, role FROM users WHERE email = ?', [ADMIN_EMAIL]);
+  const secret = (process.env.ADMIN_PASSWORD || '').trim();
+  /* Imported here rather than at the top of the file: auth.js imports from
+     this module, and a static import back would close the cycle at load time.
+     By the time this runs, db.js is fully evaluated and the cycle is moot. */
+  const hash = secret ? (await import('./auth.js')).hashPassword(secret) : null;
+  const t = Date.now();
+
+  if (!row) {
+    await pool.query(
+      "INSERT INTO users (email, password_hash, role, currency, created_at, updated_at) VALUES (?,?,'superadmin','PHP',?,?)",
+      [ADMIN_EMAIL, hash, t, t]);
+    console.log(`[zimpan] created superadmin ${ADMIN_EMAIL}${hash ? ' with the password from ADMIN_PASSWORD' : ' with no password — use Forgot Password to set one'}`);
+    return;
+  }
+  if (row.role !== 'superadmin') {
+    await pool.query("UPDATE users SET role = 'superadmin', updated_at = ? WHERE id = ?", [t, row.id]);
+    console.log(`[zimpan] promoted ${ADMIN_EMAIL} to superadmin`);
+  }
+  // Only when asked for explicitly, so a stray restart cannot reset a password
+  // the owner has since changed from the dashboard.
+  if (secret) {
+    await pool.query('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?', [hash, t, row.id]);
+    console.log(`[zimpan] reset ${ADMIN_EMAIL} password from ADMIN_PASSWORD`);
+  }
 }
 
 /* CREATE TABLE IF NOT EXISTS leaves an existing table exactly as it was, so a
@@ -112,6 +155,16 @@ async function alterExisting() {
   }
   if (!has('steps_json')) {
     await pool.query('ALTER TABLE users ADD COLUMN steps_json JSON NULL AFTER weight_kg');
+  }
+  if (!has('role')) {
+    await pool.query("ALTER TABLE users ADD COLUMN role VARCHAR(16) NOT NULL DEFAULT 'user' AFTER steps_json");
+  }
+  if (!has('last_seen_at')) {
+    await pool.query('ALTER TABLE users ADD COLUMN last_seen_at BIGINT NULL AFTER role');
+  }
+  if (!has('donate_clicks')) {
+    await pool.query('ALTER TABLE users ADD COLUMN donate_clicks INT UNSIGNED NOT NULL DEFAULT 0 AFTER last_seen_at');
+    await pool.query('ALTER TABLE users ADD COLUMN donated_click_at BIGINT NULL AFTER donate_clicks');
   }
   // A Google-only account stores no password, so the column must accept NULL.
   const pw = cols.find((c) => c.name === 'password_hash');

@@ -30,6 +30,16 @@ CREATE TABLE IF NOT EXISTS users (
   -- and merged per date on the client using the per-date stamp — which is what
   -- lets two devices each record a different day without either winning.
   steps_json    JSON         NULL,
+  -- 'user', 'manager' or 'superadmin'. Managers read the admin dashboard,
+  -- superadmins also write to it. Everyone else never sees it exists.
+  role          VARCHAR(16)  NOT NULL DEFAULT 'user',
+  -- Touched when a device syncs, which is the closest thing to "opened the
+  -- app" the server ever sees. Null for an account that has never synced.
+  last_seen_at  BIGINT       NULL,
+  -- Clicking Donate is not donating, and the two are counted separately on
+  -- purpose: this is interest, the donations table is money.
+  donate_clicks INT UNSIGNED NOT NULL DEFAULT 0,
+  donated_click_at BIGINT    NULL,
   created_at    BIGINT       NOT NULL,
   updated_at    BIGINT       NOT NULL,
   PRIMARY KEY (id),
@@ -126,4 +136,25 @@ CREATE TABLE IF NOT EXISTS money_entries (
   KEY idx_money_date (user_id, date),
   KEY idx_money_updated (user_id, updated_at),
   CONSTRAINT fk_money_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Recorded by hand from the payment provider's statement, because the donate
+-- link is a plain PayPal checkout that reports nothing back. `recorded_by` is
+-- kept so an entered figure can always be traced to whoever entered it, and
+-- survives that admin being removed.
+CREATE TABLE IF NOT EXISTS donations (
+  id          INT UNSIGNED  NOT NULL AUTO_INCREMENT,
+  user_id     INT UNSIGNED  NOT NULL,
+  amount      DECIMAL(15,2) NOT NULL,
+  currency    VARCHAR(8)    NOT NULL DEFAULT 'PHP',
+  -- When the money arrived, which is not when someone got round to typing it in.
+  received_at BIGINT        NOT NULL,
+  note        VARCHAR(255)  NULL,
+  recorded_by INT UNSIGNED  NULL,
+  created_at  BIGINT        NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_donations_user (user_id),
+  KEY idx_donations_received (received_at),
+  CONSTRAINT fk_donations_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_donations_admin FOREIGN KEY (recorded_by) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
