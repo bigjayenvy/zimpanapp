@@ -345,19 +345,25 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     border: 1px solid color-mix(in srgb, var(--color-accent-900) 15%, transparent);
     box-shadow: 0 14px 34px color-mix(in srgb, var(--color-accent-900) 22%, transparent);
   }
-  .pick-search { min-height: 32px; font-size: 13px; }
+  .pick-search { flex: none; min-height: 32px; font-size: 13px; }
   /* Capped rather than unbounded: the point of the search is that the list
      never has to be scrolled far, and a panel taller than the phone defeats it. */
   .pick-list { max-height: 210px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
   .pick-opt {
+    /* flex: none is load-bearing. A column flex container with a capped height
+       shrinks its children to fit rather than scrolling, so without this every
+       row is squeezed under its own line height and the overflow below clips
+       the text to a sliver — the taller the list, the thinner the slice. */
+    flex: none;
     border: 0; background: transparent; font: inherit; font-size: 13.5px;
     text-align: left; padding: 7px 9px; border-radius: 7px; cursor: pointer;
     color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .pick-opt:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
   .pick-opt.is-on { background: color-mix(in srgb, var(--color-accent) 16%, transparent); font-weight: 600; }
-  .pick-empty { padding: 8px 9px; font-size: 12.5px; color: var(--color-neutral-600); }
+  .pick-empty { flex: none; padding: 8px 9px; font-size: 12.5px; color: var(--color-neutral-600); }
   .pick-new {
+    flex: none;
     border: 0; border-top: 1px solid var(--color-divider); background: transparent;
     font: inherit; font-size: 12.5px; text-align: left; padding: 8px 9px 3px;
     color: var(--color-accent-700); cursor: pointer;
