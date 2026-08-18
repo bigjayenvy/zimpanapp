@@ -251,6 +251,18 @@ function followUpFor(kind, row) {
   return hit && !hit.silent ? hit : null;
 }
 
+/* Pickers list A–Z; ranked views do not.
+
+   `position` is only ever creation order — nothing here lets you arrange the
+   list by hand — so sorting a picker throws away no intent and answers the one
+   question a picker gets asked: where is the one I am looking for. Anything
+   that ranks (the donut, the legend, the leaderboard) stays biggest-first,
+   because that ordering is the information. localeCompare rather than < so
+   accented names land where a reader expects Vervé to be. */
+const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+const pickCategories = () => state.categories.slice().sort(byName);
+const pickPurposes = () => state.purposes.slice().sort(byName);
+
 const catIcon = (name) => iconFor(name, '⏱️');
 const purposeIcon = (name) => iconFor(name, '💸');
 // The tracker decides the fallback; everything else is shared.
@@ -2618,7 +2630,7 @@ const CHIPS_COLLAPSED = 6;
    hiding the one currently selected, which would leave the timer looking
    unset. */
 function timerChips() {
-  const all = state.categories;
+  const all = pickCategories();
   if (state.drawers.categories || all.length <= CHIPS_COLLAPSED) return all;
   const shown = all.slice(0, CHIPS_COLLAPSED);
   if (shown.some((c) => c.name === state.timerCategory)) return shown;
@@ -4184,7 +4196,7 @@ function addEntryCard(v) {
         <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: end;">
           <div class="field" style="flex: 1 1 150px; min-width: 140px;"><label>Date</label><input class="input" type="date" data-k="form-date" data-sync="form.date" value="${esc(state.form.date)}"></div>
           <div class="field" style="flex: 3 1 220px; min-width: 180px;"><label>Activity</label><input class="input" data-k="form-activity" data-sync="form.activity" placeholder="e.g. Wash car" value="${esc(state.form.activity)}"${state.formError.entry ? ' aria-invalid="true"' : ''}></div>
-          ${pickerField('category', 'Category', state.categories.map((c) => c.name), state.form.category, '+ New category…')}
+          ${pickerField('category', 'Category', pickCategories().map((c) => c.name), state.form.category, '+ New category…')}
           <!-- From and To share a wrapper so they wrap as a pair. Left as
                siblings they split across lines the moment the row runs out of
                width, which reads as two unrelated fields. -->
@@ -4251,7 +4263,7 @@ function timeTableCard(v) {
                   <input class="entry-name" data-k="r-${esc(e.id)}-a" data-change="entry-activity" data-id="${esc(e.id)}" value="${esc(e.activity)}" title="${esc(e.activity)}${e.note ? ` — ${esc(e.note)}` : ''}">
                   <div class="entry-controls">
                     <button class="cell-note" data-act="note-edit" data-kind="entries" data-id="${esc(e.id)}" title="${e.note ? esc(e.note) : 'Add a note for this entry'}"${e.note ? ' data-has-note' : ''}>${e.note ? 'Note' : 'Add note'}</button>
-                    <select class="entry-select" data-change="entry-category" data-id="${esc(e.id)}" style="${rowChipStyle(tint)}">${options(state.categories.map((c) => c.name), e.category)}</select>
+                    <select class="entry-select" data-change="entry-category" data-id="${esc(e.id)}" style="${rowChipStyle(tint)}">${options(pickCategories().map((c) => c.name), e.category)}</select>
                   </div>
                   <div class="entry-times">
                     <span class="entry-time"><span class="entry-leg">From</span><input class="cell-time" type="time" data-change="entry-from" data-id="${esc(e.id)}" value="${hm(e.from)}"></span>
@@ -4355,7 +4367,7 @@ function moneyDesktop(v) {
   const rows = v.mDayList.map((e) => `
               <tr>
                 <td data-col="activity"><input class="cell-input" data-k="mr-${esc(e.id)}-a" data-change="money-activity" data-id="${esc(e.id)}" value="${esc(e.activity)}"${e.note ? ` title="${esc(e.note)}"` : ''}><button class="cell-note" data-act="note-edit" data-kind="money" data-id="${esc(e.id)}" title="${e.note ? esc(e.note) : 'Add a note for this entry'}"${e.note ? ' data-has-note' : ''}>${e.note ? 'Note' : 'Add note'}</button></td>
-                <td data-col="purpose"><select data-change="money-purpose" data-id="${esc(e.id)}" style="${rowChipStyle(purposeColor(e.purpose))}">${options(state.purposes.map((p) => p.name), e.purpose)}</select></td>
+                <td data-col="purpose"><select data-change="money-purpose" data-id="${esc(e.id)}" style="${rowChipStyle(purposeColor(e.purpose))}">${options(pickPurposes().map((p) => p.name), e.purpose)}</select></td>
                 <td data-col="in" data-label="Received" style="text-align: right;"><input class="cell-num is-in" type="number" min="0" step="0.01" placeholder="0" data-change="money-in" data-id="${esc(e.id)}" value="${e.in || ''}"></td>
                 <td data-col="out" data-label="Spent" style="text-align: right;"><input class="cell-num" type="number" min="0" step="0.01" placeholder="0" data-change="money-out" data-id="${esc(e.id)}" value="${e.out || ''}"></td>
                 <td data-col="remove" style="text-align: right;"><button class="cell-del" data-act="money-remove" data-id="${esc(e.id)}" title="Delete entry">×</button></td>
@@ -4391,7 +4403,7 @@ function moneyDesktop(v) {
         <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: end;">
           <div class="field" style="flex: 1 1 150px; min-width: 140px;"><label>Date</label><input class="input" type="date" data-k="m-date" data-sync="mForm.date" value="${esc(state.mForm.date)}"></div>
           <div class="field" style="flex: 3 1 220px; min-width: 180px;"><label>Activity</label><input class="input" data-k="m-activity" data-sync="mForm.activity" placeholder="e.g. Grocery run" value="${esc(state.mForm.activity)}"${state.formError.money ? ' aria-invalid="true"' : ''}></div>
-          ${pickerField('purpose', 'Purpose', state.purposes.map((p) => p.name), state.mForm.purpose, '+ New purpose…')}
+          ${pickerField('purpose', 'Purpose', pickPurposes().map((p) => p.name), state.mForm.purpose, '+ New purpose…')}
           <div class="field" style="flex: 0 1 130px; min-width: 118px;"><label>Received</label><input class="input" type="number" min="0" step="0.01" placeholder="0" data-k="m-in" data-sync="mForm.in" value="${esc(state.mForm.in)}"></div>
           <div class="field" style="flex: 0 1 130px; min-width: 118px;"><label>Spent</label><input class="input" type="number" min="0" step="0.01" placeholder="0" data-k="m-out" data-sync="mForm.out" value="${esc(state.mForm.out)}"></div>
           <button class="btn btn-primary" data-act="add-money" style="height: 36px;">Add entry</button>
