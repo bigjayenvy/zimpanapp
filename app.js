@@ -1751,8 +1751,20 @@ function sleepReading(entries, days) {
     parts.push(`${r.nights} of ${days} nights logged, so this is an average of what you recorded rather than of the whole stretch.`);
   }
 
-  return { nights: r.nights, avgMins: r.avg, headline, detail: parts.join(' '), advice: '' };
+  return {
+    nights: r.nights, avgMins: r.avg, headline, detail: parts.join(' '), advice: '',
+    drift: r.drift,
+    // Per night, for the bar chart on the report card. Minutes rather than
+    // hours: every other duration in here is minutes, and one unit is enough.
+    list: r.list.map((n) => ({ date: n.date, mins: n.mins }))
+  };
 }
+
+/* Roughly 7,700 kcal to a kilogram of body fat — the figure most guidance uses.
+   It is an approximation resting on an approximation, which is why it is only
+   ever shown as "if this held" and always with the word about in front of it. */
+const KCAL_PER_KG = 7700;
+const weekWeightKg = (netKcalPerDay) => (netKcalPerDay * 7) / KCAL_PER_KG;
 
 /* ── net calories, day by day ──
    The gauges answer "how did the window go" with one figure. A window is not
@@ -2524,6 +2536,11 @@ function compute() {
 
     reportDays,
     reportEntryCount: reportSource.length,
+    /* The other end of the busiest day. Only meaningful once there are two days
+       to compare, and drawn from days that carry something — a day with nothing
+       logged is not a quiet day, it is a day the app cannot see. */
+    quietestDay: reportDays.length > 1
+      ? reportDays.reduce((a, d) => (d.total < a.total ? d : a), reportDays[0]) : null,
 
     /* Readings across the whole window, for the report deck. */
     rangeReadings: dimensionReadings(rangeWb, winDays),
@@ -3939,6 +3956,100 @@ function netRange(shown, best, worst) {
     ${esc(dayLabel(worst.date))} was the other end at ${side(worst)}.`;
 }
 
+/* ── the report deck's donut ──
+
+   Not the page's donut. That one is interactive, sits beside a legend and puts
+   the total in the hole; this one has to carry its own labels, because the card
+   it replaced was the legend.
+
+   Folded to six slices and an Other, for a reason that is about labelling
+   rather than tidiness: nineteen categories cannot each be named around a ring,
+   and a slice drawn without its number is the thing this card exists to fix.
+
+   Labels are placed at the mid-angle of their arc and then pushed apart down
+   each side until none overlap. Thin slices land next to each other by
+   definition — they are the small ones at the end of a sorted list — so
+   without the spread pass the last three labels sit on top of one another. */
+const DONUT_FOLD = 6;
+
+function deckDonut(rows, fmt) {
+  if (!rows || !rows.length) return '';
+  const total = rows.reduce((a, r) => a + r.mins, 0);
+  if (total <= 0) return '';
+
+  const head = rows.slice(0, DONUT_FOLD);
+  const tail = rows.slice(DONUT_FOLD);
+  const parts = head.map((r) => ({ name: r.name, color: r.color, mins: r.mins }));
+  if (tail.length) {
+    parts.push({
+      name: tail.length === 1 ? tail[0].name : `${tail.length} smaller`,
+      color: 'var(--color-neutral-400)',
+      mins: tail.reduce((a, r) => a + r.mins, 0)
+    });
+  }
+
+  /* The ring is smaller than it wants to be, deliberately: the labels sit
+     outside it and a name runs away from its anchor, so the space either side
+     is not decoration, it is what stops "Potato Couching" being drawn off the
+     card. Names are capped for the same reason — SVG text does not wrap, and a
+     very long category would clear any margin worth leaving. */
+  const CX = 190, CY = 124, R = 56, W = 24;
+  const C = 2 * Math.PI * R;
+  const VW = 380, VH = 252;
+  const shortName = (n) => (n.length > 18 ? `${n.slice(0, 17)}…` : n);
+
+  let acc = 0;
+  const laid = parts.map((p) => {
+    const frac = p.mins / total;
+    const mid = acc + frac / 2;
+    acc += frac;
+    // -90° puts the first slice at twelve o'clock, matching the page's donut.
+    const a = (-90 + 360 * mid) * Math.PI / 180;
+    return {
+      p, frac,
+      dash: `${(frac * C).toFixed(2)} ${C.toFixed(2)}`,
+      offset: (-(acc - frac) * C).toFixed(2),
+      right: Math.cos(a) >= 0,
+      tickX: CX + Math.cos(a) * (R + W / 2 - 2), tickY: CY + Math.sin(a) * (R + W / 2 - 2),
+      x: CX + Math.cos(a) * (R + W / 2 + 10), y: CY + Math.sin(a) * (R + W / 2 + 10)
+    };
+  });
+
+  // Push apart, each side independently, top to bottom.
+  const GAP = 26;
+  [true, false].forEach((side) => {
+    const col = laid.filter((l) => l.right === side).sort((a, b) => a.y - b.y);
+    for (let i = 1; i < col.length; i++) {
+      if (col[i].y - col[i - 1].y < GAP) col[i].y = col[i - 1].y + GAP;
+    }
+    // If the spread ran off the bottom, walk the whole column back up.
+    const over = col.length ? col[col.length - 1].y - (VH - 16) : 0;
+    if (over > 0) col.forEach((l) => { l.y = Math.max(16, l.y - over); });
+  });
+
+  const arcs = laid.map((l) => `
+        <circle cx="${CX}" cy="${CY}" r="${R}" fill="none" stroke="${esc(l.p.color)}" stroke-width="${W}"
+          stroke-dasharray="${l.dash}" stroke-dashoffset="${l.offset}" transform="rotate(-90 ${CX} ${CY})"/>`).join('');
+
+  const labels = laid.map((l) => {
+    const anchor = l.right ? 'start' : 'end';
+    const lx = l.right ? Math.min(l.x, VW - 4) : Math.max(l.x, 4);
+    return `
+        <line x1="${l.tickX.toFixed(1)}" y1="${l.tickY.toFixed(1)}" x2="${lx.toFixed(1)}" y2="${l.y.toFixed(1)}"
+          stroke="${esc(l.p.color)}" stroke-width="1.2" opacity=".55"/>
+        <text x="${lx.toFixed(1)}" y="${(l.y - 3).toFixed(1)}" text-anchor="${anchor}" class="dk-name">${esc(shortName(l.p.name))}<title>${esc(l.p.name)}</title></text>
+        <text x="${lx.toFixed(1)}" y="${(l.y + 10).toFixed(1)}" text-anchor="${anchor}" class="dk-val">${Math.round(l.frac * 100)}% · ${esc(fmt(l.p.mins))}</text>`;
+  }).join('');
+
+  return `
+      <div class="deck-donut">
+        <svg viewBox="0 0 ${VW} ${VH}" role="img" aria-label="Share of the window by category">
+          ${arcs}
+          ${labels}
+        </svg>
+      </div>`;
+}
+
 /* Bar labels have to fit in a column, and a column is the chart's width divided
    by however many days you asked for. Four digits do not fit in a month on a
    phone, so the number is shortened before it is ever asked to. */
@@ -3950,6 +4061,12 @@ const briefNum = (n) => {
   return String(v);
 };
 const briefCash = (n) => `${currency().symbol}${briefNum(n)}`;
+/* "8h 20m" on a bar is four characters of precision nobody reads and twice the
+   width that fits; "8.3h" says the same thing about a night's sleep and lets a
+   fortnight keep its labels. The exact figure is in the tooltip and the average
+   is spelled out under the chart. Module scope because the card hands the same
+   formatter to the canvas — the shared image has to say what the card says. */
+const briefHours = (m) => `${(m / 60).toFixed(1).replace(/\.0$/, '')}h`;
 
 /* ── the diverging bar chart ──
 
@@ -3983,9 +4100,14 @@ function barChart(series, o) {
      go silent, the two peaks keep their labels — the question a crowded chart
      still gets asked is "how big was the biggest", and there is always room for
      two. The phone threshold is separate because the same month is half the
-     width there. */
-  const dense = series.length > 16 ? ' is-dense' : '';
-  const densePhone = series.length > 9 ? ' is-dense-phone' : '';
+     width there.
+
+     The count at which that happens belongs to the caller, because it is really
+     a question about label width: "2.4k" fits where "8h 20m" does not, so a
+     chart of durations gives out at half as many columns as one of calories. */
+  const at = o.denseAt || [16, 9];
+  const dense = series.length > at[0] ? ' is-dense' : '';
+  const densePhone = series.length > at[1] ? ' is-dense-phone' : '';
   const peakUp = maxUp > 0 ? series.findIndex((d) => d.logged && d.up === maxUp) : -1;
   const peakDown = maxDown > 0 ? series.findIndex((d) => d.logged && d.down === maxDown) : -1;
 
@@ -4014,7 +4136,8 @@ function barChart(series, o) {
         </div>
         <div class="net-legend">
           <span><i class="net-key net-key-up"></i>${esc(o.upLabel)}</span>
-          <span><i class="net-key net-key-down"></i>${esc(o.downLabel)}</span>
+          <!-- A one-sided chart has no second colour to explain. -->
+          ${o.downLabel ? `<span><i class="net-key net-key-down"></i>${esc(o.downLabel)}</span>` : ''}
           <span class="net-avg">${esc(o.average)}</span>
         </div>
         <div class="net-note">
@@ -4047,6 +4170,28 @@ function netChart(series) {
       ? `${dayLabel(d.date)} · nothing logged`
       : `${dayLabel(d.date)} · ${(d.up || d.down).toLocaleString('en-US')} kcal ${d.up ? 'deficit' : 'surplus'}`),
     note: netRange(shown, best, worst)
+  });
+}
+
+/* Hours slept, night by night. One-sided rather than diverging — there is no
+   opposing quantity — so it reuses the bar chart with the down half empty and
+   the zero line pinned to the floor. */
+function sleepChart(nights, avgMins) {
+  if (!nights || nights.length < 2) return '';
+  const cols = nights.map((n) => ({ date: n.date, up: n.mins, down: 0, logged: true }));
+  const best = nights.reduce((a, n) => (n.mins > a.mins ? n : a), nights[0]);
+  const worst = nights.reduce((a, n) => (n.mins < a.mins ? n : a), nights[0]);
+
+  return barChart(cols, {
+    fmt: briefHours,
+    denseAt: [13, 7],
+    upLabel: 'Slept',
+    downLabel: '',
+    average: `${durShort(avgMins)} a night on average`,
+    title: (d) => `${dayLabel(d.date)} · ${durShort(d.up)} slept`,
+    note: best.mins === worst.mins
+      ? `Every night logged came out at ${durShort(best.mins)}.`
+      : `Longest was ${esc(dayLabel(best.date))} at ${durShort(best.mins)}; shortest ${esc(dayLabel(worst.date))} at ${durShort(worst.mins)}.`
   });
 }
 
@@ -4545,19 +4690,99 @@ function moneyDesktop(v) {
    the print stylesheet that turns it into a PDF, and the canvas that turns one
    card into a shareable image. One description means they cannot drift. */
 
-const card = (key, o) => Object.assign({ key, kicker: '', big: '', title: '', lines: [], rows: [], note: '', chart: null }, o);
+/* `summary` is the written paragraph — locally phrased, replaced by the AI one
+   when it lands. `donut` and `chart` are the two drawn things a card can hold;
+   no card holds both. */
+const card = (key, o) => Object.assign(
+  { key, kicker: '', big: '', title: '', lines: [], rows: [], note: '', chart: null, donut: null, summary: '', closing: null }, o);
+
+/* ── written summaries ──
+
+   Two sources, one shape. The locally written versions below are what the cards
+   say on their own: offline, signed out, AI switched off at the server, or in
+   the second before the request lands. They are not placeholders — they are the
+   floor, and a card is never allowed to be blank waiting for prose.
+
+   When the AI summary arrives it replaces them, because it can say things
+   arithmetic cannot: what a fortnight of Family Time and Focus Work suggests
+   about a person, and what is worth saying to them about it. */
+const deckSummaries = (v) => state.deckAi[deckKey(v)] || {};
+
+const listOf = (names) => (names.length === 1 ? names[0]
+  : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
+
+function localCover(v, days, lit) {
+  const bits = [`You logged ${v.rangeTotal} across ${lit} of ${days} ${days === 1 ? 'day' : 'days'}, in ${v.reportEntryCount} ${v.reportEntryCount === 1 ? 'entry' : 'entries'}.`];
+  if (v.reportRows[0]) bits.push(`${v.reportRows[0].name} took the largest share at ${v.reportRows[0].pct}.`);
+  if (v.streak > 1) bits.push(`You are ${v.streak} days into a tracking streak.`);
+  if (lit < days) bits.push(`${days - lit} ${days - lit === 1 ? 'day has' : 'days have'} nothing logged, so the totals describe what you recorded rather than the whole stretch.`);
+  return bits.join(' ');
+}
+
+function localDonut(v) {
+  const top = v.reportRows.slice(0, 2);
+  if (!top.length) return '';
+  const rest = v.reportRows.length - top.length;
+  return `${listOf(top.map((r) => `${r.name} at ${r.pct}`))} account for the bulk of the window`
+    + (rest > 0 ? `, with ${rest} other ${rest === 1 ? 'category' : 'categories'} making up the remainder.` : '.');
+}
+
+function localProfile(v) {
+  const three = v.reportRows.slice(0, 3);
+  if (!three.length) return '';
+  const share = Math.round(three.reduce((a, r) => a + r.mins, 0) / Math.max(1, v.rangeTotalMins) * 100);
+  return `${listOf(three.map((r) => r.name))} together take ${share}% of everything you logged. `
+    + (share >= 70
+      ? 'That is a concentrated window — most of your recorded time went to a handful of things, which is what a stretch with a clear priority looks like.'
+      : 'That is a fairly spread window — your recorded time went to a wide range of things rather than one dominant pursuit.');
+}
+
+function localPace(v, busyMins, quietest) {
+  const gap = Math.max(0, busyMins - quietest.total);
+  return `Your busiest logged day came to ${durShort(busyMins)}; your lightest, ${dayLabel(quietest.date)}, came to ${durShort(quietest.total)}. `
+    + (gap > 240
+      ? 'A wide gap between the two usually says more about which days you remembered to log than about which days were genuinely full.'
+      : 'The two ends sit close together, which reads as a steady stretch rather than a lurching one.');
+}
+
+function localSleep(v, days) {
+  const s = v.rangeSleep;
+  const bits = [`${s.nights} of ${days} nights logged, averaging ${durShort(s.avgMins)}.`];
+  if (s.nights > 1 && s.drift >= 120) bits.push(`Your bedtime moved by ${durShort(s.drift)} across the window.`);
+  else if (s.nights > 1) bits.push('Your bedtime held reasonably steady across the nights you logged.');
+  bits.push(s.headline);
+  return bits.join(' ');
+}
+
+function localEnergy(net) {
+  const kg = weekWeightKg(net);
+  const size = Math.abs(kg);
+  if (size < 0.05) {
+    return 'Your intake and your burn are close to level. Held at this rate, your weight would sit roughly where it is — these are rough estimates from what you logged and your weight, not measurements.';
+  }
+  return `At about ${Math.abs(net).toLocaleString('en-US')} calories a day ${net >= 0 ? 'under' : 'over'} what you burned, holding this rate for a week works out to roughly ${size.toFixed(2)} kg ${net >= 0 ? 'lost' : 'gained'}. `
+    + 'That is arithmetic on rough estimates from what you logged and your weight, not a measurement or a prediction.';
+}
+
+function localClosing(v, days, lit) {
+  const bits = [];
+  bits.push(lit === days
+    ? `You logged something on every one of these ${days} days. That is the hard part, and you did it.`
+    : `You logged something on ${lit} of ${days} days — every one of those is a day you chose to pay attention.`);
+  if (v.reportRows[0]) bits.push(`Most of it went to ${v.reportRows[0].name}, which is worth knowing whether or not it is where you meant it to go.`);
+  if (v.streak > 1) bits.push(`You are ${v.streak} days into a streak. Streaks are not the point, but they are good evidence that the habit is real.`);
+  bits.push('Nothing here is a verdict. It is a record of what you noticed, and noticing is the whole job — the next window is another chance to see something you would otherwise have missed.');
+  return bits.join(' ');
+}
 
 function timeCards(v) {
   const out = [];
   const top = v.reportRows[0];
+  const ai = deckSummaries(v);
 
-  /* Every card gets its supporting rows from figures the page already worked
-     out. A card with a headline and one line reads as a card that ran out of
-     things to say, which is the opposite of what a report is for. */
   const days = Math.max(1, v.rangeDayCount);
   const lit = v.reportDays.length;
-  const quietest = v.reportDays.length > 1
-    ? v.reportDays.reduce((a, d) => (d.total < a.total ? d : a), v.reportDays[0]) : null;
+  const quietest = v.quietestDay;
 
   out.push(card('cover', {
     kicker: v.reportRange,
@@ -4565,63 +4790,47 @@ function timeCards(v) {
     title: 'tracked',
     lines: [`${v.reportEntryCount} ${v.reportEntryCount === 1 ? 'entry' : 'entries'} logged`],
     rows: [
-      { label: 'Days with something logged', value: `${lit} of ${days}` },
-      { label: 'Tracked on an average day', value: durShort(v.rangeTotalMins / days) },
-      { label: v.reportRows.length === 1 ? 'Category in play' : 'Categories in play', value: String(v.reportRows.length) },
+      { label: 'Days Streak (actively time tracking)', value: v.streakLabel },
       v.rangeSteps ? { label: 'Steps walked', value: v.rangeSteps.toLocaleString('en-US') } : null
     ].filter(Boolean),
-    note: v.reportHeadline
+    note: v.reportHeadline,
+    summary: ai.cover || localCover(v, days, lit)
   }));
 
+  /* The donut replaces the list it used to sit next to. Every slice carries its
+     own share and figure, which is the whole reason the list is gone. */
   if (v.reportRows.length) out.push(card('where', {
     kicker: 'Where the time went',
-    rows: v.reportRows.slice(0, 6).map((r) => ({ label: withIcon(r.name), value: r.time, meta: r.pct, color: r.color })),
-    note: v.reportRows.length > 6
-      ? `Top six of ${v.reportRows.length} categories. The rest are in the day-by-day list behind this deck.`
-      : `Everything you logged, biggest first.`
+    donut: { rows: v.reportRows, fmt: durShort, html: deckDonut(v.reportRows, durShort) },
+    summary: ai.donut || localDonut(v)
   }));
 
   if (top) out.push(card('top', {
-    kicker: 'Your headline',
+    kicker: 'Your top three',
     big: top.pct,
     title: `of it went to ${top.name}`,
-    lines: [`${top.time} across ${top.count} ${top.count === 1 ? 'entry' : 'entries'}`],
-    rows: [
-      { label: 'Average entry', value: durShort(top.mins / Math.max(1, top.count)) },
-      { label: 'On an average day', value: durShort(top.mins / days) },
-      // Short form to match the two rows above it, not the long form the
-      // "where it went" list uses — a column of figures should read as one.
-      v.reportRows[1]
-        ? { label: `Next biggest · ${v.reportRows[1].name}`, value: durShort(v.reportRows[1].mins), meta: v.reportRows[1].pct }
-        : null
-    ].filter(Boolean),
-    accent: top.color
+    rows: v.reportRows.slice(0, 3).map((r) => ({
+      label: withIcon(r.name), value: durShort(r.mins), meta: r.pct, color: r.color
+    })),
+    accent: top.color,
+    summary: ai.profile || localProfile(v)
   }));
 
-  if (v.rangeBusiest && v.rangeBusiest.days > 1) out.push(card('busiest', {
-    kicker: 'Busiest day',
-    big: v.rangeBusiest.value,
-    title: `on ${v.rangeBusiest.label}`,
-    lines: [`${v.rangeBusiest.days} ${v.rangeBusiest.days === 1 ? 'day' : 'days'} carried something`],
-    rows: [
-      { label: 'Tracked on an average day', value: durShort(v.rangeTotalMins / days) },
-      quietest ? { label: `Lightest logged day · ${dayLabel(quietest.date)}`, value: durShort(quietest.total) } : null,
-      { label: 'Days with nothing at all', value: String(Math.max(0, days - lit)) }
-    ].filter(Boolean),
-    note: 'Measured on time actually accounted for, not on how the day felt.'
-  }));
-
-  out.push(card('streak', {
-    kicker: 'Streak',
-    big: v.streakLabel,
-    title: 'logged in a row',
-    rows: [
-      { label: 'Days logged in this window', value: `${lit} of ${days}` },
-      { label: 'Entries a day', value: (v.reportEntryCount / Math.max(1, lit)).toFixed(1) },
-      { label: 'Entries in total', value: String(v.reportEntryCount) }
-    ],
-    note: v.streakNote
-  }));
+  if (v.rangeBusiest && v.rangeBusiest.days > 1 && quietest) {
+    const busyMins = v.reportDays.reduce((a, d) => Math.max(a, d.total), 0);
+    const share = (m) => `${Math.round((m / Math.max(1, v.rangeTotalMins)) * 100)}%`;
+    out.push(card('busiest', {
+      kicker: 'Full tilt vs easy does it',
+      big: v.rangeBusiest.value,
+      title: `your busiest day, ${v.rangeBusiest.label}`,
+      rows: [
+        { label: `Busiest · ${v.rangeBusiest.label}`, value: durShort(busyMins), meta: share(busyMins) },
+        { label: `Easy does it · ${dayLabel(quietest.date)}`, value: durShort(quietest.total), meta: share(quietest.total) },
+        { label: 'Between the two', value: durShort(Math.max(0, busyMins - quietest.total)) }
+      ],
+      summary: ai.pace || localPace(v, busyMins, quietest)
+    }));
+  }
 
   const fed = v.rangeReadings.filter((r) => r.total > 0);
   if (fed.length) out.push(card('pillars', {
@@ -4632,17 +4841,19 @@ function timeCards(v) {
     note: 'Partial credit is deliberate — an hour of chores is not an hour of exercise.'
   }));
 
-  if (v.rangeSleep.nights) out.push(card('sleep', {
-    kicker: 'How you slept',
-    big: durShort(v.rangeSleep.avgMins),
-    title: v.rangeSleep.nights > 1 ? 'a night' : 'that night',
-    lines: v.rangeSleep.detail ? [v.rangeSleep.detail] : [],
-    rows: [
-      { label: 'Nights logged', value: `${v.rangeSleep.nights} of ${days}` },
-      { label: 'Across the window', value: durShort(v.rangeSleep.avgMins * v.rangeSleep.nights) }
-    ],
-    note: v.rangeSleep.headline
-  }));
+  if (v.rangeSleep.nights) {
+    const nights = v.rangeSleep.list;
+    out.push(card('sleep', {
+      kicker: 'How you slept',
+      big: durShort(v.rangeSleep.avgMins),
+      title: v.rangeSleep.nights > 1 ? 'a night' : 'that night',
+      chart: nights.length > 1
+        ? { cols: nights.map((n) => ({ date: n.date, up: n.mins, down: 0, logged: true })),
+            fmt: briefHours, denseAt: [13, 7], html: sleepChart(nights, v.rangeSleep.avgMins) }
+        : null,
+      summary: ai.sleep || localSleep(v, days)
+    }));
+  }
 
   const b = v.rangeBurn, f = v.rangeFood;
   if (b.kcal || f.kcal) {
@@ -4656,7 +4867,7 @@ function timeCards(v) {
         { label: 'Burned at rest', value: `~${Math.round(b.restKcal / Math.max(1, b.days)).toLocaleString('en-US')}` },
         { label: 'Eaten', value: `~${Math.round(f.kcal / Math.max(1, b.days)).toLocaleString('en-US')}` }
       ],
-      note: 'Rough estimates from what you logged and your weight.'
+      summary: ai.energy || localEnergy(net)
     }));
   }
 
@@ -4674,16 +4885,13 @@ function timeCards(v) {
     }
   }
 
-  out.push(card('untracked', {
-    kicker: 'What got away',
-    big: v.untracked,
-    title: 'unaccounted for on the selected day',
-    rows: [
-      { label: 'Tracked across the window', value: v.rangeTotal },
-      { label: 'Days with something logged', value: `${lit} of ${days}` },
-      { label: 'Longest single stretch', value: v.rangeBusiest ? v.rangeBusiest.value : '—' }
-    ],
-    note: `${v.untrackedNote} Gaps are not failures — they are just the hours this app cannot see.`
+  /* The last card is the one people actually finish on, so it is the one that
+     should say something worth finishing on. No figures of its own — every
+     number in it has already been shown on a card behind this one. */
+  out.push(card('closing', {
+    kicker: 'Before you go',
+    summary: ai.closing || localClosing(v, days, lit),
+    closing: true
   }));
 
   return out;
@@ -4947,6 +5155,7 @@ function reportSheet() {
             ${c.big ? `<div class="deck-big">${esc(c.big)}</div>` : ''}
             ${c.title ? `<div class="deck-title">${esc(c.title)}</div>` : ''}
             ${c.lines.length ? `<div class="deck-lines">${c.lines.map((l) => `<p>${esc(l)}</p>`).join('')}</div>` : ''}
+            ${c.donut ? c.donut.html : ''}
             ${c.chart ? `<div class="deck-chart">${c.chart.html}</div>` : ''}
             ${c.rows.length ? `
             <div class="deck-rows">
@@ -4958,7 +5167,9 @@ function reportSheet() {
                   <span class="deck-row-value">${esc(r.value)}</span>
                 </div>`).join('')}
             </div>` : ''}
+            ${c.summary ? `<div class="deck-summary">${esc(c.summary)}</div>` : ''}
             ${c.note ? `<div class="deck-note">${esc(c.note)}</div>` : ''}
+            ${c.closing ? deckClosing() : ''}
             </div>
             <!-- The arrows carry the direction, not the words: "swipe left"
                  beside a right-pointing arrow reads as a contradiction even
@@ -6108,6 +6319,73 @@ function paintCard(x, c, v, draw, offsetY) {
     y += H + 78;
   }
 
+  /* The donut, drawn rather than traced from the SVG. Same fold to six and an
+     Other, same labels pushed apart down each side — the card people send has
+     to be the card they were looking at, not a simplified stand-in. */
+  if (c.donut) {
+    const rows = c.donut.rows;
+    const fmt = c.donut.fmt || durShort;
+    const total = rows.reduce((a, r) => a + r.mins, 0) || 1;
+    const head = rows.slice(0, DONUT_FOLD);
+    const tail = rows.slice(DONUT_FOLD);
+    const parts = head.map((r) => ({ name: r.name, color: r.color, mins: r.mins }));
+    if (tail.length) {
+      parts.push({
+        name: tail.length === 1 ? tail[0].name : `${tail.length} smaller`,
+        color: '#b8b4c6', mins: tail.reduce((a, r) => a + r.mins, 0)
+      });
+    }
+
+    const H = 500, CX = L + RW / 2, CY = y + H / 2, R = 128, W = 44;
+    // A label is two lines: the name on its anchor and the figures 26px below.
+    // The floor has to leave room for the second line, or the bottom-most label
+    // is pushed exactly onto the paragraph underneath it.
+    const LAB2 = 26;
+    let acc = 0;
+    const laid = parts.map((p) => {
+      const frac = p.mins / total;
+      const a = (-90 + 360 * (acc + frac / 2)) * Math.PI / 180;
+      const seg = { p, frac, from: acc, to: acc + frac, right: Math.cos(a) >= 0,
+        tx: CX + Math.cos(a) * (R + W / 2 - 4), ty: CY + Math.sin(a) * (R + W / 2 - 4),
+        lx: CX + Math.cos(a) * (R + W / 2 + 26), y: CY + Math.sin(a) * (R + W / 2 + 26) };
+      acc += frac;
+      return seg;
+    });
+    const GAP = 74;
+    [true, false].forEach((side) => {
+      const col = laid.filter((l) => l.right === side).sort((a, b) => a.y - b.y);
+      for (let i = 1; i < col.length; i++) {
+        if (col[i].y - col[i - 1].y < GAP) col[i].y = col[i - 1].y + GAP;
+      }
+      const over = col.length ? col[col.length - 1].y - (y + H - LAB2 - 18) : 0;
+      if (over > 0) col.forEach((l) => { l.y = Math.max(y + 30, l.y - over); });
+    });
+
+    if (draw) {
+      x.lineWidth = W;
+      laid.forEach((l) => {
+        x.strokeStyle = l.p.color;
+        x.beginPath();
+        x.arc(CX, CY, R, (-90 + l.from * 360) * Math.PI / 180, (-90 + l.to * 360) * Math.PI / 180);
+        x.stroke();
+      });
+      x.lineWidth = 2;
+      laid.forEach((l) => {
+        const lx = l.right ? Math.min(l.lx, L + RW) : Math.max(l.lx, L);
+        x.strokeStyle = l.p.color; x.globalAlpha = 0.55;
+        x.beginPath(); x.moveTo(l.tx, l.ty); x.lineTo(lx, l.y); x.stroke();
+        x.globalAlpha = 1;
+        x.textAlign = l.right ? 'left' : 'right';
+        x.fillStyle = '#16131f'; x.font = '600 26px Barlow, sans-serif';
+        x.fillText(clipText(x, l.p.name, RW / 2 - 30), lx, l.y - 4);
+        x.fillStyle = '#756f88'; x.font = '400 24px Barlow, sans-serif';
+        x.fillText(`${Math.round(l.frac * 100)}% · ${fmt(l.p.mins)}`, lx, l.y + 26);
+      });
+      x.textAlign = 'left';
+    }
+    y += H;
+  }
+
   if (c.rows.length) {
     y += 14;
     c.rows.slice(0, 6).forEach((r) => {
@@ -6134,6 +6412,18 @@ function paintCard(x, c, v, draw, offsetY) {
       y += 40;
     });
   }
+  /* The written paragraph. Given more room than the note it sits above — the
+     closing card is nothing but this, and a 250-word send-off truncated at five
+     lines would be the one card that ends mid-sentence. */
+  if (c.summary) {
+    y += 12;
+    x.font = '400 27px Barlow, sans-serif';
+    wrapText(x, c.summary, RW).slice(0, c.closing ? 20 : 8).forEach((ln) => {
+      if (draw) { x.fillStyle = '#3b3648'; x.fillText(ln, L, y); }
+      y += 37;
+    });
+  }
+
   if (c.note) {
     y += 8;
     x.font = '400 27px Barlow, sans-serif';
@@ -6141,6 +6431,21 @@ function paintCard(x, c, v, draw, offsetY) {
       if (draw) { x.fillStyle = '#575168'; x.fillText(ln, L, y); }
       y += 37;
     });
+  }
+
+  /* The closing card's tail. The donate button is a link, and a link in a
+     picture is just words — so the image carries the address rather than
+     pretending to be a button that cannot be pressed. */
+  if (c.closing) {
+    y += 14;
+    if (draw) { x.strokeStyle = '#e8e6ef'; x.beginPath(); x.moveTo(L, y); x.lineTo(L + RW, y); x.stroke(); }
+    y += 30;
+    x.font = '400 22px Barlow, sans-serif';
+    wrapText(x, `${deckDisclaimer()} ZIMPAN is free and sells nothing; a small gift keeps it being built.`, RW)
+      .slice(0, 8).forEach((ln) => {
+        if (draw) { x.fillStyle = '#756f88'; x.fillText(ln, L, y); }
+        y += 30;
+      });
   }
 
   if (draw) {

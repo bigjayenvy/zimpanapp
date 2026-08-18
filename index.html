@@ -1389,6 +1389,36 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .deck-lines { margin-top: 12px; }
   .deck-lines p { margin: 0 0 7px; font-size: 14.5px; line-height: 1.55; color: var(--color-neutral-700); }
 
+  /* The deck's own donut. Labels live in the SVG so they scale with it — at
+     phone width the ring and its text shrink together rather than the text
+     staying put and colliding. */
+  .deck-donut { margin-top: 10px; }
+  .deck-donut svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .deck-donut .dk-name {
+    font-family: var(--font-body); font-size: 11px; font-weight: 600;
+    fill: var(--color-text);
+  }
+  .deck-donut .dk-val {
+    font-family: var(--font-body); font-size: 10.5px;
+    fill: var(--color-neutral-600); font-variant-numeric: tabular-nums;
+  }
+
+  /* The written paragraph. Sized to be read rather than scanned, which is why
+     it is looser than the rows above it. */
+  .deck-summary {
+    margin-top: 14px; font-size: 13px; line-height: 1.62;
+    color: var(--color-neutral-800);
+  }
+  .deck-summary:first-child { margin-top: 0; }
+
+  .deck-close { margin-top: 18px; }
+  .deck-disclaimer {
+    margin: 0; padding-top: 13px; border-top: 1px solid var(--color-divider);
+    font-size: 11px; line-height: 1.55; color: var(--color-neutral-600);
+  }
+  .deck-ask { margin: 12px 0 0; font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-800); }
+  .deck-donate { margin-top: 11px; display: inline-flex; }
+
   .deck-chart { margin-top: 16px; }
   /* Inside a card the chart carries its own captions, so the block's own
      kicker would say the same thing twice. */
