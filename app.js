@@ -442,8 +442,28 @@ const API = {
   reset: (token, password) => api('/api/reset', { method: 'POST', body: { token, password } }),
   push: (since, changes) => api('/api/sync', { method: 'POST', body: { since: since || 0, changes } }),
   estimate: (text) => api('/api/estimate', { method: 'POST', body: { text } }),
-  deckSummary: (facts) => api('/api/deck-summary', { method: 'POST', body: { facts } })
+  deckSummary: (facts) => api('/api/deck-summary', { method: 'POST', body: { facts } }),
+  donateClick: () => api('/api/donate-click', { method: 'POST', body: {} })
 };
+
+/* Someone opened the donate link. Not a donation — the checkout reports nothing
+   back — but it is the only signal this app has that anyone considered it, and
+   it is counted as interest rather than as money everywhere it appears.
+
+   Fire and forget, and silent on failure: the click's job is to open PayPal,
+   and nothing about recording it is worth delaying or interrupting that. */
+/* Only two roles reach the dashboard, and only accounts that hold one are ever
+   told it exists. The server decides — this is the role it reported for the
+   signed-in session, not something the browser can award itself. */
+const adminRole = () => {
+  const r = state.auth && state.auth.role;
+  return r === 'manager' || r === 'superadmin' ? r : null;
+};
+
+function noteDonateClick() {
+  if (!state.auth) return;
+  try { API.donateClick().catch(() => {}); } catch (err) { /* never in the way */ }
+}
 
 /* ── AI nutrition estimates ──
 
@@ -1214,9 +1234,11 @@ async function onGoogleCredential(response) {
 }
 
 async function boot() {
+  const params = new URLSearchParams(location.search);
+
   // A reset link lands here with ?reset=<token>; that screen wins over
   // everything, including an existing session on this device.
-  const token = new URLSearchParams(location.search).get('reset');
+  const token = params.get('reset');
   if (token) {
     state.resetToken = token;
     state.authMode = 'reset';
@@ -1224,6 +1246,11 @@ async function boot() {
     state.auth = null;
     render();
   }
+
+  /* ?signin=1 opens the panel on arrival. The dashboard sends people here when
+     they are not signed in, and landing on a marketing page with the sign-in a
+     scroll away is a poor answer to "you need to sign in". */
+  if (!token && params.get('signin')) state.authOpen = true;
 
   try {
     /* Retried once: this single call decides whether the Google button and the
@@ -2881,7 +2908,7 @@ function mobileNav(v) {
   <nav class="bottomnav no-print" aria-label="Main">
     ${item('app-time', 'time', 'Time', !v.isMoney)}
     ${item('app-money', 'money', 'Money', v.isMoney)}
-    <a class="bn-donate" href="${DONATE_URL}" target="_blank" rel="noopener noreferrer">
+    <a class="bn-donate" href="${DONATE_URL}" data-donate target="_blank" rel="noopener noreferrer">
       <span class="bn-icon">${NAV_ICONS.donate}</span><span class="bn-label">Donate</span>
     </a>
     ${item('scroll-insights', 'insights', 'Insights', false)}
@@ -2941,11 +2968,12 @@ function header(v) {
     <div class="appbar-actions" style="display:flex;align-items:center;gap:10px;">
       ${state.auth ? `
         <span class="appbar-account">
+          ${adminRole() ? `<a class="btn btn-ghost appbar-admin" href="/admin" style="font-size:12px;">Admin</a>` : ''}
           <span class="appbar-email">${esc(state.auth.email)}</span>
           <button class="btn btn-ghost" data-act="sign-out" style="font-size:12px;">Sign out</button>
         </span>` : ''}
       <span class="appbar-cta" style="display:flex;align-items:center;gap:10px;">
-        <a class="btn btn-donate" href="${DONATE_URL}" target="_blank" rel="noopener noreferrer">${NAV_ICONS.donate}<span>Donate</span></a>
+        <a class="btn btn-donate" href="${DONATE_URL}" data-donate target="_blank" rel="noopener noreferrer">${NAV_ICONS.donate}<span>Donate</span></a>
         <button class="btn btn-primary" data-act="open-report" style="position:relative">Your Report Cards</button>
       </span>
     </div>
@@ -5232,7 +5260,7 @@ function deckClosing() {
             <div class="deck-close">
               <p class="deck-disclaimer">${esc(deckDisclaimer())}</p>
               <p class="deck-ask">ZIMPAN is free, has no ads, and sells nothing. If it has been worth something to you, a small gift keeps it being built.</p>
-              <a class="btn btn-donate deck-donate no-print" href="${DONATE_URL}" target="_blank" rel="noopener noreferrer">
+              <a class="btn btn-donate deck-donate no-print" href="${DONATE_URL}" data-donate target="_blank" rel="noopener noreferrer">
                 ${NAV_ICONS.donate}<span>Chip in for what comes next</span>
               </a>
             </div>`;
@@ -5840,6 +5868,7 @@ const ACTIONS = {
 
   'donate-close': () => { state.donateOpen = false; render(); },
   'donate-go': () => {
+    noteDonateClick();
     window.open(DONATE_URL, '_blank', 'noopener');
     state.donateOpen = false; render();
   },
@@ -6111,6 +6140,14 @@ root.addEventListener('click', (ev) => {
     const fn = ACTIONS[back.dataset.backdrop];
     if (fn) { ev.preventDefault(); fn(back); }
   }
+});
+
+/* The donate links are ordinary anchors — they have to be, so the browser opens
+   PayPal in a new tab and a long-press still offers "copy link". That puts them
+   outside the action system, so the click is noticed here instead and the
+   navigation is left completely alone. */
+root.addEventListener('click', (ev) => {
+  if (ev.target.closest('[data-donate]')) noteDonateClick();
 });
 
 root.addEventListener('click', (ev) => {
