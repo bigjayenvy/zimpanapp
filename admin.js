@@ -289,7 +289,7 @@ function modalBlock() {
   const m = state.modal;
   if (m.kind === 'role') {
     return `
-      <div class="ad-back" data-act="close-modal">
+      <div class="ad-back" data-backdrop>
         <div class="ad-modal" role="dialog" aria-modal="true">
           <h3>Change role</h3>
           <p class="ad-sub">${esc(m.email)}</p>
@@ -311,7 +311,7 @@ function modalBlock() {
   }
   const today = new Date().toISOString().slice(0, 10);
   return `
-      <div class="ad-back" data-act="close-modal">
+      <div class="ad-back" data-backdrop>
         <div class="ad-modal" role="dialog" aria-modal="true">
           <h3>Record a gift</h3>
           <p class="ad-sub">${esc(m.email)} — from your payment statement.</p>
@@ -524,9 +524,12 @@ const ACTIONS = {
 };
 
 root.addEventListener('click', (ev) => {
-  // The backdrop closes only when it is itself the thing clicked, or every
-  // click inside the dialog would shut it.
-  const back = ev.target.closest('[data-act="close-modal"]');
+  /* The backdrop wraps the dialog, so it must not be a `data-act` at all.
+     As one, it was the nearest acting ancestor of every field inside the
+     dialog — clicking the amount box walked up, found the backdrop's
+     close-modal, and shut the thing you were trying to type into. Its own
+     attribute, matched only when it is itself the thing clicked. */
+  const back = ev.target.closest('[data-backdrop]');
   if (back && ev.target === back) { ev.preventDefault(); ACTIONS['close-modal'](); return; }
 
   const el = ev.target.closest('[data-act]');

@@ -295,16 +295,25 @@ app.post('/api/reset', wrap(async (req, res) => {
 
 /* ── sync ── */
 
+/* Both sync routes stamp the account as seen.
+
+   POST is the one that matters: the app pushes and pulls in a single call and
+   never issues the GET, so putting the stamp only there left every account
+   reading "never synced" no matter how much they used it. GET keeps it too —
+   it is a sync either way, and a stamp that depends on which verb a future
+   client picks is a stamp that will go wrong again.
+
+   Never awaited: this is bookkeeping for a dashboard, and a sync should not be
+   slower, or fail, because of it. */
 app.get('/api/sync', requireUser, wrap(async (req, res) => {
   const since = Number(req.query.since) || 0;
-  /* Not awaited: "when was this account last seen" is bookkeeping for a
-     dashboard, and a sync should never be slower or fail because of it. */
   touchSeen(req.user.id, req.user.lastSeenAt).catch(() => {});
   res.json({ serverTime: now(), changes: await changesSince(req.user.id, since) });
 }));
 
 app.post('/api/sync', requireUser, wrap(async (req, res) => {
   const since = Number((req.body && req.body.since) || 0);
+  touchSeen(req.user.id, req.user.lastSeenAt).catch(() => {});
   try {
     const applied = await applyChanges(req.user.id, req.body && req.body.changes);
     // Read after the write, so the client sees its own rows echoed back and can
