@@ -5105,6 +5105,27 @@ function reportActivities(v) {
           </div>`;
 }
 
+/* Says that the paragraph above is about to be replaced.
+
+   Without it the card sits there reading fine, and then rewrites itself half a
+   minute later with no warning — which reads as a glitch rather than as the
+   better answer arriving. The local summary stays on screen underneath, because
+   a card that blanks itself while it waits is worse than one that improves.
+
+   A failure says so in the same place rather than disappearing quietly: the
+   text on the card is still true, but "we tried and could not" is worth knowing
+   when you were expecting it to change. */
+function deckWriting(v) {
+  const key = deckKey(v);
+  if (state.deckAiBusy === key) {
+    return `<div class="deck-writing no-print"><span class="spinner"></span>Writing a closer reading…</div>`;
+  }
+  if (state.deckAiError && !state.deckAi[key]) {
+    return `<div class="deck-writing no-print is-off">${esc(state.deckAiError)} The reading above is the app's own.</div>`;
+  }
+  return '';
+}
+
 /* One wording, two places: the card on screen and the card as an image. Kept
    as a function rather than a constant because whether an AI wrote anything is
    a question about this session, not about the app.
@@ -5167,8 +5188,9 @@ function reportSheet() {
                   <span class="deck-row-value">${esc(r.value)}</span>
                 </div>`).join('')}
             </div>` : ''}
+            ${c.note ? `<div class="deck-note deck-note-lead">${esc(c.note)}</div>` : ''}
             ${c.summary ? `<div class="deck-summary">${esc(c.summary)}</div>` : ''}
-            ${c.note ? `<div class="deck-note">${esc(c.note)}</div>` : ''}
+            ${c.summary ? deckWriting(v) : ''}
             ${c.closing ? deckClosing() : ''}
             </div>
             <!-- The arrows carry the direction, not the words: "swipe left"
@@ -6412,23 +6434,26 @@ function paintCard(x, c, v, draw, offsetY) {
       y += 40;
     });
   }
-  /* The written paragraph. Given more room than the note it sits above — the
-     closing card is nothing but this, and a 250-word send-off truncated at five
-     lines would be the one card that ends mid-sentence. */
-  if (c.summary) {
-    y += 12;
-    x.font = '400 27px Barlow, sans-serif';
-    wrapText(x, c.summary, RW).slice(0, c.closing ? 20 : 8).forEach((ln) => {
-      if (draw) { x.fillStyle = '#3b3648'; x.fillText(ln, L, y); }
-      y += 37;
-    });
-  }
-
+  /* The note leads, the paragraph follows — the same order the card uses. The
+     note is the one-line headline the figures already imply; the summary is the
+     reading of it, and a reading before its headline is back to front. */
   if (c.note) {
     y += 8;
     x.font = '400 27px Barlow, sans-serif';
     wrapText(x, c.note, RW).slice(0, 5).forEach((ln) => {
       if (draw) { x.fillStyle = '#575168'; x.fillText(ln, L, y); }
+      y += 37;
+    });
+  }
+
+  /* Given more room than the note above it — the closing card is nothing but
+     this, and a 250-word send-off truncated at five lines would be the one card
+     that ends mid-sentence. */
+  if (c.summary) {
+    y += 12;
+    x.font = '400 27px Barlow, sans-serif';
+    wrapText(x, c.summary, RW).slice(0, c.closing ? 20 : 8).forEach((ln) => {
+      if (draw) { x.fillStyle = '#3b3648'; x.fillText(ln, L, y); }
       y += 37;
     });
   }
