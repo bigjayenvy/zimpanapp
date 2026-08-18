@@ -95,16 +95,21 @@ const nextDay = (isoDate) => {
   return iso(d);
 };
 
+/* Rounded here rather than at the call sites. Averages divide, division gives
+   fractions, and a fraction of a minute has no meaning on screen — one caller
+   forgetting to round is all it takes to print "4h 50.785714m". */
 function dur(mins) {
-  if (mins <= 0) return '—';
-  const h = Math.floor(mins / 60), m = mins % 60;
+  const n = Math.round(mins);
+  if (n <= 0) return '—';
+  const h = Math.floor(n / 60), m = n % 60;
   if (h && m) return `${h} hr ${m} min`;
   if (h) return h === 1 ? '1 Hour' : `${h} Hours`;
   return `${m} Minutes`;
 }
 function durShort(mins) {
-  if (mins <= 0) return '—';
-  const h = Math.floor(mins / 60), m = mins % 60;
+  const n = Math.round(mins);
+  if (n <= 0) return '—';
+  const h = Math.floor(n / 60), m = n % 60;
   return h ? (m ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
 }
 /* Currency is a display choice, not a conversion — picking a different one
@@ -2016,7 +2021,7 @@ function financialInsights(list, prevList, days) {
   /* ── observations: what the window says ── */
   const obs = [];
   if (outSum) {
-    obs.push(`${amount(outSum)} went out over ${d} ${d === 1 ? 'day' : 'days'} — about ${amount(perDay)} a day${topPurpose ? `, led by ${topPurpose.name.toLowerCase()}` : ''}.`);
+    obs.push(`${amount(outSum)} went out over ${d} ${d === 1 ? 'day' : 'days'} — about ${amount(Math.round(perDay))} a day${topPurpose ? `, led by ${topPurpose.name.toLowerCase()}` : ''}.`);
   }
   if (inSum && outSum) {
     obs.push(net >= 0
@@ -2053,7 +2058,7 @@ function financialInsights(list, prevList, days) {
     rec.push(`${amount(kinds.discretionary)} went to discretionary spending — ${pct(discShare)} of the window. That is the part you can actually move without rearranging your life.`);
   }
   if (repeat && repeat.count >= 5) {
-    rec.push(`${repeat.name} came up ${repeat.count} times, averaging ${amount(repeat.mins / repeat.count)}. Small repeats are easier to cut by frequency than by size — one fewer a week beats trying to spend less each time.`);
+    rec.push(`${repeat.name} came up ${repeat.count} times, averaging ${amount(Math.round(repeat.mins / repeat.count))}. Small repeats are easier to cut by frequency than by size — one fewer a week beats trying to spend less each time.`);
   }
   if (trend !== null && trend >= .2) {
     rec.push(`Spending is climbing period on period. Worth checking whether that is one unusual purchase or a new baseline, because the two call for very different responses.`);
@@ -2079,10 +2084,12 @@ function financialInsights(list, prevList, days) {
   }
 
   return {
+    // Rounded: an average carried to the centavo claims a precision that
+    // dividing a fortnight by fourteen does not have.
     headline: outSum
-      ? `${amount(perDay)} a day across ${d} ${d === 1 ? 'day' : 'days'}`
+      ? `${amount(Math.round(perDay))} a day across ${d} ${d === 1 ? 'day' : 'days'}`
       : `${amount(inSum)} in, nothing spent`,
-    perDay: amount(perDay),
+    perDay: amount(Math.round(perDay)),
     outLabel: amount(outSum),
     inLabel: amount(inSum),
     netLabel: signed(net),
@@ -2093,6 +2100,11 @@ function financialInsights(list, prevList, days) {
     rateLabel: rate === null || rate < 0 ? '—' : pct(rate),
     trendLabel: trend === null ? '' : `${trend > 0 ? '+' : '−'}${pct(Math.abs(trend))}`,
     trendUp: trend !== null && trend > 0,
+    // What the trend is measured against, so a card can show both ends of it.
+    prevOutLabel: amount(prevOut),
+    topPurposeLabel: topPurpose ? topPurpose.name : '',
+    discLabel: amount(kinds.discretionary),
+    essentialLabel: amount(kinds.essential),
     coverageLabel: `${coverage} of ${d} ${d === 1 ? 'day' : 'days'} logged`,
     days: d,
     observations: obs,
@@ -2218,6 +2230,9 @@ function compute() {
     const outSumDay = list.reduce((a, e) => a + (isMoney ? (Number(e.out) || 0) : dayMins(e)), 0);
     const inSumDay = isMoney ? list.reduce((a, e) => a + (Number(e.in) || 0), 0) : 0;
     return {
+      date: d,
+      // The number behind totalLabel, for the cards that compare days.
+      total: outSumDay,
       label: new Date(d + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
       totalLabel: isMoney ? amount(outSumDay) : dur(outSumDay),
       inLabel: inSumDay ? amount(inSumDay) : '',
@@ -2405,7 +2420,9 @@ function compute() {
     reportNote: totals[0]
       ? `${fmtLong(totals[0].mins)} of ${fmtLong(total)} tracked — ${Math.round((totals[0].mins / (total || 1)) * 100)}% of everything you logged. ${totals.length} ${isMoney ? 'purposes' : 'categories'} in play.`
       : 'Add a few entries and the picture fills in.',
-    reportRows: totals.map((t) => ({ name: t.name, color: t.color, count: t.count, time: fmtLong(t.mins), pct: `${Math.round((t.mins / (total || 1)) * 100)}%` })),
+    reportRows: totals.map((t) => ({ name: t.name, color: t.color, count: t.count, mins: t.mins, time: fmtLong(t.mins), pct: `${Math.round((t.mins / (total || 1)) * 100)}%` })),
+    // The unformatted total, for cards that need to divide it rather than print it.
+    rangeTotalMins: total,
 
     reportDays,
     reportEntryCount: reportSource.length,
@@ -4436,17 +4453,34 @@ function timeCards(v) {
   const out = [];
   const top = v.reportRows[0];
 
+  /* Every card gets its supporting rows from figures the page already worked
+     out. A card with a headline and one line reads as a card that ran out of
+     things to say, which is the opposite of what a report is for. */
+  const days = Math.max(1, v.rangeDayCount);
+  const lit = v.reportDays.length;
+  const quietest = v.reportDays.length > 1
+    ? v.reportDays.reduce((a, d) => (d.total < a.total ? d : a), v.reportDays[0]) : null;
+
   out.push(card('cover', {
     kicker: v.reportRange,
     big: v.rangeTotal,
     title: 'tracked',
     lines: [`${v.reportEntryCount} ${v.reportEntryCount === 1 ? 'entry' : 'entries'} logged`],
+    rows: [
+      { label: 'Days with something logged', value: `${lit} of ${days}` },
+      { label: 'Tracked on an average day', value: durShort(v.rangeTotalMins / days) },
+      { label: v.reportRows.length === 1 ? 'Category in play' : 'Categories in play', value: String(v.reportRows.length) },
+      v.rangeSteps ? { label: 'Steps walked', value: v.rangeSteps.toLocaleString('en-US') } : null
+    ].filter(Boolean),
     note: v.reportHeadline
   }));
 
   if (v.reportRows.length) out.push(card('where', {
     kicker: 'Where the time went',
-    rows: v.reportRows.slice(0, 6).map((r) => ({ label: withIcon(r.name), value: r.time, meta: r.pct, color: r.color }))
+    rows: v.reportRows.slice(0, 6).map((r) => ({ label: withIcon(r.name), value: r.time, meta: r.pct, color: r.color })),
+    note: v.reportRows.length > 6
+      ? `Top six of ${v.reportRows.length} categories. The rest are in the day-by-day list behind this deck.`
+      : `Everything you logged, biggest first.`
   }));
 
   if (top) out.push(card('top', {
@@ -4454,6 +4488,15 @@ function timeCards(v) {
     big: top.pct,
     title: `of it went to ${top.name}`,
     lines: [`${top.time} across ${top.count} ${top.count === 1 ? 'entry' : 'entries'}`],
+    rows: [
+      { label: 'Average entry', value: durShort(top.mins / Math.max(1, top.count)) },
+      { label: 'On an average day', value: durShort(top.mins / days) },
+      // Short form to match the two rows above it, not the long form the
+      // "where it went" list uses — a column of figures should read as one.
+      v.reportRows[1]
+        ? { label: `Next biggest · ${v.reportRows[1].name}`, value: durShort(v.reportRows[1].mins), meta: v.reportRows[1].pct }
+        : null
+    ].filter(Boolean),
     accent: top.color
   }));
 
@@ -4461,13 +4504,24 @@ function timeCards(v) {
     kicker: 'Busiest day',
     big: v.rangeBusiest.value,
     title: `on ${v.rangeBusiest.label}`,
-    lines: [`${v.rangeBusiest.days} ${v.rangeBusiest.days === 1 ? 'day' : 'days'} carried something`]
+    lines: [`${v.rangeBusiest.days} ${v.rangeBusiest.days === 1 ? 'day' : 'days'} carried something`],
+    rows: [
+      { label: 'Tracked on an average day', value: durShort(v.rangeTotalMins / days) },
+      quietest ? { label: `Lightest logged day · ${dayLabel(quietest.date)}`, value: durShort(quietest.total) } : null,
+      { label: 'Days with nothing at all', value: String(Math.max(0, days - lit)) }
+    ].filter(Boolean),
+    note: 'Measured on time actually accounted for, not on how the day felt.'
   }));
 
   out.push(card('streak', {
     kicker: 'Streak',
     big: v.streakLabel,
     title: 'logged in a row',
+    rows: [
+      { label: 'Days logged in this window', value: `${lit} of ${days}` },
+      { label: 'Entries a day', value: (v.reportEntryCount / Math.max(1, lit)).toFixed(1) },
+      { label: 'Entries in total', value: String(v.reportEntryCount) }
+    ],
     note: v.streakNote
   }));
 
@@ -4484,6 +4538,11 @@ function timeCards(v) {
     kicker: 'How you slept',
     big: durShort(v.rangeSleep.avgMins),
     title: v.rangeSleep.nights > 1 ? 'a night' : 'that night',
+    lines: v.rangeSleep.detail ? [v.rangeSleep.detail] : [],
+    rows: [
+      { label: 'Nights logged', value: `${v.rangeSleep.nights} of ${days}` },
+      { label: 'Across the window', value: durShort(v.rangeSleep.avgMins * v.rangeSleep.nights) }
+    ],
     note: v.rangeSleep.headline
   }));
 
@@ -4521,7 +4580,12 @@ function timeCards(v) {
     kicker: 'What got away',
     big: v.untracked,
     title: 'unaccounted for on the selected day',
-    note: v.untrackedNote
+    rows: [
+      { label: 'Tracked across the window', value: v.rangeTotal },
+      { label: 'Days with something logged', value: `${lit} of ${days}` },
+      { label: 'Longest single stretch', value: v.rangeBusiest ? v.rangeBusiest.value : '—' }
+    ],
+    note: `${v.untrackedNote} Gaps are not failures — they are just the hours this app cannot see.`
   }));
 
   return out;
@@ -4532,17 +4596,31 @@ function moneyCards(v) {
   const f = v.moneyInsight;
   const top = v.reportRows[0];
 
+  const days = Math.max(1, v.rangeDayCount);
+  const lit = v.reportDays.length;
+  const heaviest = v.reportDays.length > 1
+    ? v.reportDays.reduce((a, d) => (d.total > a.total ? d : a), v.reportDays[0]) : null;
+
   out.push(card('cover', {
     kicker: v.reportRange,
     big: v.moneyOut,
     title: 'went out',
     lines: [`${v.reportEntryCount} ${v.reportEntryCount === 1 ? 'entry' : 'entries'} logged`],
+    rows: [
+      { label: 'Days with an entry', value: `${lit} of ${days}` },
+      { label: 'Out on an average day', value: amount(Math.round(v.rangeTotalMins / days)) },
+      { label: v.reportRows.length === 1 ? 'Purpose in play' : 'Purposes in play', value: String(v.reportRows.length) },
+      heaviest ? { label: `Heaviest day · ${dayLabel(heaviest.date)}`, value: amount(heaviest.total) } : null
+    ].filter(Boolean),
     note: v.reportHeadline
   }));
 
   if (v.reportRows.length) out.push(card('where', {
     kicker: 'Where the money went',
-    rows: v.reportRows.slice(0, 6).map((r) => ({ label: withIcon(r.name), value: r.time, meta: r.pct, color: r.color }))
+    rows: v.reportRows.slice(0, 6).map((r) => ({ label: withIcon(r.name), value: r.time, meta: r.pct, color: r.color })),
+    note: v.reportRows.length > 6
+      ? `Top six of ${v.reportRows.length} purposes. The rest are in the day-by-day list behind this deck.`
+      : 'Everything you logged, biggest first.'
   }));
 
   if (top) out.push(card('top', {
@@ -4550,6 +4628,13 @@ function moneyCards(v) {
     big: top.pct,
     title: `of it went to ${top.name}`,
     lines: [`${top.time} across ${top.count} ${top.count === 1 ? 'entry' : 'entries'}`],
+    rows: [
+      { label: 'Average entry', value: amount(Math.round(top.mins / Math.max(1, top.count))) },
+      { label: 'On an average day', value: amount(Math.round(top.mins / days)) },
+      v.reportRows[1]
+        ? { label: `Next biggest · ${v.reportRows[1].name}`, value: v.reportRows[1].time, meta: v.reportRows[1].pct }
+        : null
+    ].filter(Boolean),
     accent: top.color
   }));
 
@@ -4558,12 +4643,21 @@ function moneyCards(v) {
   const biggest = v.mRangeList
     ? v.mRangeList.filter((e) => Number(e.out) > 0).sort((a, b) => Number(b.out) - Number(a.out))[0]
     : null;
-  if (biggest) out.push(card('biggest', {
-    kicker: 'Biggest single spend',
-    big: amount(biggest.out),
-    title: biggest.activity,
-    lines: [`${withIcon(biggest.purpose)} · ${dayLabel(biggest.date)}`]
-  }));
+  if (biggest) {
+    const home = v.reportRows.find((r) => r.name === biggest.purpose);
+    out.push(card('biggest', {
+      kicker: 'Biggest single spend',
+      big: amount(biggest.out),
+      title: biggest.activity,
+      lines: [`${withIcon(biggest.purpose)} · ${dayLabel(biggest.date)}`],
+      rows: [
+        { label: 'Share of everything spent', value: pct(biggest.out / Math.max(1, v.rangeTotalMins)) },
+        home ? { label: `All of ${home.name}`, value: home.time, meta: home.pct } : null,
+        { label: 'Entries in the window', value: String(v.moneyOutCount) }
+      ].filter(Boolean),
+      note: 'One purchase is not a pattern — but it is usually the one worth remembering.'
+    }));
+  }
 
   out.push(card('inout', {
     kicker: 'In, out, kept',
