@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZIMPAN — Admin</title>
+
+<!-- Nothing here should ever appear in a search result, and the page is not
+     for anyone who is not already signed in as an admin. -->
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" type="image/svg+xml" href="ds/favicon.svg">
+<link rel="stylesheet" href="ds/styles.css">
+
+<style>
+  /* The dashboard wears the app's design system rather than a second one.
+     Everything below is layout for surfaces that only exist here — the tiles,
+     the table, the two charts — and every colour comes from a token. */
+
+  body { background: var(--color-bg); color: var(--color-text); }
+
+  .ad-shell { max-width: 1240px; margin: 0 auto; padding: 0 22px 80px; }
+
+  .ad-bar {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 16px 0 18px; border-bottom: 1px solid var(--color-divider); margin-bottom: 24px;
+  }
+  .ad-mark {
+    display: flex; align-items: center; gap: 11px;
+    font-family: var(--font-heading); font-size: 21px; letter-spacing: -.01em;
+  }
+  .ad-mark i {
+    width: 32px; height: 32px; border-radius: 9px; background: var(--grad-brand);
+    display: grid; place-items: center; color: #fff; font-style: normal;
+    font-weight: 700; font-size: 16px; flex: none;
+  }
+  .ad-mark span { font-weight: 700; }
+  .ad-mark small {
+    display: block; font-family: var(--font-body); font-size: 9px;
+    letter-spacing: .16em; text-transform: uppercase; color: var(--color-neutral-600);
+  }
+  .ad-role {
+    font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+    padding: 5px 11px; border-radius: 999px;
+    background: var(--color-accent-200); color: var(--color-accent-800);
+  }
+  .ad-role[data-role="manager"] { background: var(--color-neutral-200); color: var(--color-neutral-800); }
+  .ad-who { margin-left: auto; display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--color-neutral-700); }
+
+  h2.ad-h { font-family: var(--font-heading); font-size: 19px; margin: 34px 0 14px; }
+  h2.ad-h:first-of-type { margin-top: 0; }
+
+  /* — the numbers across the top — */
+  .ad-tiles { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(178px, 1fr)); }
+  .ad-tile {
+    background: var(--color-surface); border-radius: var(--radius-md);
+    padding: 16px 18px; border: 1px solid var(--color-divider);
+  }
+  .ad-tile b {
+    display: block; font-family: var(--font-heading); font-size: 30px;
+    line-height: 1.1; font-weight: 700; font-variant-numeric: tabular-nums;
+  }
+  .ad-tile span {
+    display: block; margin-top: 5px; font-size: 11px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--color-neutral-600);
+  }
+  .ad-tile em { display: block; margin-top: 7px; font-size: 12px; font-style: normal; color: var(--color-neutral-700); }
+  .ad-tile.is-lead { background: var(--grad-brand); border-color: transparent; color: #fff; }
+  .ad-tile.is-lead span, .ad-tile.is-lead em { color: color-mix(in srgb, #fff 78%, transparent); }
+
+  /* — charts — */
+  .ad-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+  .ad-card {
+    background: var(--color-surface); border: 1px solid var(--color-divider);
+    border-radius: var(--radius-md); padding: 18px 20px 20px;
+  }
+  .ad-card h3 { font-family: var(--font-heading); font-size: 15px; margin: 0 0 3px; }
+  .ad-card p.ad-sub { margin: 0 0 16px; font-size: 12px; color: var(--color-neutral-600); }
+
+  /* Bars are backgrounds, so they need this to survive a print. */
+  .ad-bars { display: flex; align-items: flex-end; gap: 4px; height: 132px; print-color-adjust: exact; }
+  .ad-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; }
+  .ad-col i { display: block; width: 100%; border-radius: 3px 3px 0 0; background: var(--grad-brand); position: relative; }
+  .ad-col.is-money i { background: linear-gradient(180deg, #2bb8a5, #0f766e); }
+  .ad-col b {
+    position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+    margin-bottom: 3px; font-size: 9.5px; font-weight: 600; white-space: nowrap;
+    color: var(--color-neutral-700); font-variant-numeric: tabular-nums;
+  }
+  .ad-col:first-child b { left: 0; transform: none; }
+  .ad-col:last-child b { left: auto; right: 0; transform: none; }
+  .ad-axis {
+    display: flex; justify-content: space-between; margin-top: 8px;
+    font-size: 10.5px; color: var(--color-neutral-600);
+  }
+  .ad-empty { padding: 26px 0; font-size: 13px; color: var(--color-neutral-600); text-align: center; }
+
+  /* — the user table — */
+  .ad-tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .ad-tools .input { width: auto; flex: 1 1 240px; max-width: 340px; }
+  .ad-tools select.input { flex: 0 0 auto; width: auto; }
+  .ad-count { margin-left: auto; font-size: 12px; color: var(--color-neutral-600); }
+
+  .ad-scroll { overflow-x: auto; border: 1px solid var(--color-divider); border-radius: var(--radius-md); background: var(--color-surface); }
+  table.ad-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 900px; }
+  .ad-table th {
+    text-align: left; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--color-neutral-600); font-weight: 600;
+    padding: 12px 14px; border-bottom: 1px solid var(--color-divider); white-space: nowrap;
+  }
+  .ad-table td { padding: 12px 14px; border-bottom: 1px solid var(--color-neutral-200); vertical-align: middle; }
+  .ad-table tr:last-child td { border-bottom: 0; }
+  .ad-table tbody tr:hover { background: color-mix(in srgb, var(--color-accent) 6%, transparent); }
+  .ad-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ad-mail { font-weight: 600; word-break: break-word; }
+  /* The gifts table has room to breathe, so its addresses do not need to wrap
+     at all — the column simply takes what it needs. */
+  .ad-gifts td:first-child { width: 45%; word-break: normal; }
+
+  .ad-pill {
+    display: inline-block; font-size: 10.5px; font-weight: 600; padding: 3px 9px;
+    border-radius: 999px; white-space: nowrap;
+  }
+  .ad-pill.on { background: color-mix(in srgb, #0e9f6e 16%, transparent); color: #0a6b4a; }
+  .ad-pill.warm { background: color-mix(in srgb, #f59e0b 20%, transparent); color: #8a5a06; }
+  .ad-pill.off { background: var(--color-neutral-200); color: var(--color-neutral-700); }
+  .ad-pill.role { background: var(--color-accent-200); color: var(--color-accent-800); }
+
+  .ad-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .ad-mini {
+    border: 1px solid var(--color-divider); background: var(--color-bg); color: var(--color-text);
+    font: inherit; font-size: 11.5px; padding: 4px 10px; border-radius: 999px; cursor: pointer;
+  }
+  .ad-mini:hover { border-color: var(--color-accent); color: var(--color-accent-700); }
+
+  .ad-more { display: flex; justify-content: center; margin-top: 16px; }
+
+  /* — dialogs — */
+  .ad-back {
+    position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 20px;
+    background: color-mix(in srgb, var(--color-neutral-900) 58%, transparent);
+  }
+  .ad-modal {
+    width: min(440px, 100%); background: var(--color-bg); border-radius: var(--radius-lg);
+    padding: 22px 24px 24px; box-shadow: var(--shadow-lg);
+  }
+  .ad-modal h3 { font-family: var(--font-heading); font-size: 19px; margin: 0 0 4px; }
+  .ad-modal p.ad-sub { margin: 0 0 16px; font-size: 12.5px; color: var(--color-neutral-600); }
+  .ad-modal .field { margin-bottom: 12px; }
+  .ad-modal .ad-row { display: flex; gap: 10px; }
+  .ad-modal .ad-row .field { flex: 1; }
+  .ad-modal footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+
+  .ad-msg { margin: 12px 0 0; font-size: 12.5px; line-height: 1.5; }
+  .ad-msg.bad { color: #a4291f; }
+  .ad-msg.good { color: #0a6b4a; }
+
+  /* — the gate — */
+  .ad-gate { max-width: 400px; margin: 12vh auto; text-align: center; }
+  .ad-gate h1 { font-family: var(--font-heading); font-size: 27px; margin: 0 0 8px; }
+  .ad-gate p { font-size: 13.5px; line-height: 1.6; color: var(--color-neutral-700); margin: 0 0 20px; }
+
+  .ad-note {
+    margin-top: 10px; font-size: 11.5px; line-height: 1.55; color: var(--color-neutral-600);
+  }
+
+  @media (max-width: 640px) {
+    .ad-shell { padding: 0 14px 60px; }
+    .ad-who { width: 100%; margin-left: 0; }
+    .ad-tile b { font-size: 25px; }
+  }
+</style>
+</head>
+<body>
+<div id="admin"><div class="ad-shell"><p class="ad-note" style="padding-top:40px;">Loading…</p></div></div>
+<script src="admin.js"></script>
+</body>
+</html>

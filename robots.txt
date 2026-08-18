@@ -6,4 +6,7 @@ Allow: /
 # The API answers with data and requires a session; there are no pages under it.
 Disallow: /api/
 
+# The dashboard is behind a role and holds nothing worth indexing.
+Disallow: /admin
+
 Sitemap: https://zimpan.com/sitemap.xml
