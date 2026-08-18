@@ -1646,6 +1646,37 @@ function sleepReading(entries, days) {
   return { nights: r.nights, avgMins: r.avg, headline, detail: parts.join(' '), advice: '' };
 }
 
+/* ── net calories, day by day ──
+   The gauges answer "how did the window go" with one figure. A window is not
+   one day though, and an average hides the shape of it: five steady days and
+   two heavy ones average out to the same number as seven middling ones. Each
+   day is worked out on its own so the run of them can be drawn.
+
+   Deliberately built from the same burnFor / foodReport the gauges use rather
+   than from a quicker sum, so a bar and the dial above it can never disagree. */
+function netSeries(dates, entries, money, weightKg) {
+  const byDate = {};
+  entries.forEach((e) => { (byDate[e.date] = byDate[e.date] || []).push(e); });
+  const moneyByDate = {};
+  money.forEach((e) => { (moneyByDate[e.date] = moneyByDate[e.date] || []).push(e); });
+
+  return dates.map((date) => {
+    const rows = byDate[date] || [];
+    const burn = burnFor(rows, weightKg, 1, [date]);
+    const food = foodReport(rows, moneyByDate[date] || [], 1);
+    const net = burn.kcal + burn.restKcal - food.kcal;
+    return {
+      date,
+      net,
+      burned: burn.kcal,
+      rest: burn.restKcal,
+      eaten: food.kcal,
+      // A day with nothing logged is not a deficit, it is a day with no reading.
+      logged: !!(rows.length || burn.steps)
+    };
+  });
+}
+
 /* MET values — energy cost relative to sitting still. Burn is
    MET × kilograms × hours, the standard approximation. */
 const METS = [
@@ -2254,7 +2285,7 @@ function compute() {
       ? (pastFallback ? 'Yesterday · ' : '') + new Date(pastDates[0] + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })
       : `${dayLabel(pastDates[0])} – ${dayLabel(pastDates[pastDates.length - 1])} · ${pastDates.length} days tracked`;
 
-  return {
+  const out = {
     isMoney, fmtLong, fmtShort, dayList, mDayList, mRangeList, inSum, outSum,
     totals, total, slices, top, dayTracked, untrackedMins, streak,
 
@@ -2359,6 +2390,7 @@ function compute() {
     rangeReadings: dimensionReadings(rangeWb, winDays),
     rangeSleep: sleepReading(rangeList, winDays),
     rangeBurn: burnFor(rangeList, s.weightKg, winDays, windowDates),
+
     rangeFood: foodReport(rangeList, mRangeList, winDays),
     rangeSteps: stepsIn(windowDates),
     rangeDayCount: winDays,
@@ -2378,6 +2410,22 @@ function compute() {
       }).filter(Boolean);
     })
   };
+
+  /* Day-by-day nets are the most expensive thing here — a burn and a food read
+     per day of the window — and most renders never draw them. Defined as
+     getters that build once and cache, so compute() stays cheap for the many
+     calls that only want the totals, and a chart still just reads v.rangeNet. */
+  const lazy = (name, build) => {
+    let made = false, value = null;
+    Object.defineProperty(out, name, {
+      configurable: true, enumerable: false,
+      get() { if (!made) { value = build(); made = true; } return value; }
+    });
+  };
+  lazy('rangeNet', () => (winDays > 1 ? netSeries(windowDates, rangeList, mRangeList, s.weightKg) : null));
+  lazy('pastNet', () => (pastSpan.length > 1 ? netSeries(pastSpan, pastList, pastMoney, s.weightKg) : null));
+
+  return out;
 }
 
 /* The one genuinely real-time string: what is happening this second. Refreshed
@@ -3685,6 +3733,85 @@ function foodBlock(food, scope, canRefine) {
           </div>`;
 }
 
+/* ── net calories, drawn ──
+   Bars from a zero line: above it a deficit, below it a surplus. Two scales
+   rather than one, so the taller side fills its half and the shorter one is
+   still visible — a fortnight of small deficits against one enormous surplus
+   would otherwise be a flat line and a spike.
+
+   Days with nothing logged draw no bar at all. A blank day is not a deficit of
+   a whole day's resting burn; it is a day with no reading, and drawing it as
+   the best day of the week would be a lie the chart tells confidently. */
+/* The sentence naming the two ends of the run. Split out because there are
+   three shapes of it and inlining them made the template unreadable: one day is
+   not a range, and a run where every day came out the same has two ends that
+   are the same number — saying "best" and "the other end" about identical
+   figures reads as a bug rather than as a flat week. */
+function netRange(shown, best, worst) {
+  const side = (d) => `${Math.abs(d.net).toLocaleString('en-US')} ${d.net >= 0 ? 'deficit' : 'surplus'}`;
+  if (shown.length === 1) {
+    return `${esc(dayLabel(best.date))} is the only day with a reading, at ${side(best)}.`;
+  }
+  if (best.net === worst.net) {
+    return `Every day with a reading came out at ${side(best)}.`;
+  }
+  return `Best day ${esc(dayLabel(best.date))} at ${side(best)};
+    ${esc(dayLabel(worst.date))} was the other end at ${side(worst)}.`;
+}
+
+function netChart(series) {
+  if (!series || !series.length) return '';
+  const shown = series.filter((d) => d.logged);
+  if (!shown.length) return '';
+
+  const ups = shown.filter((d) => d.net > 0).map((d) => d.net);
+  const downs = shown.filter((d) => d.net < 0).map((d) => -d.net);
+  const maxUp = ups.length ? Math.max(...ups) : 0;
+  const maxDown = downs.length ? Math.max(...downs) : 0;
+  const total = maxUp + maxDown || 1;
+  const zeroPct = Math.round((maxUp / total) * 100);
+
+  const cols = series.map((d) => {
+    const up = d.logged && d.net > 0 ? Math.max(2, Math.round((d.net / (maxUp || 1)) * 100)) : 0;
+    const down = d.logged && d.net < 0 ? Math.max(2, Math.round((-d.net / (maxDown || 1)) * 100)) : 0;
+    const label = !d.logged
+      ? `${dayLabel(d.date)} · nothing logged`
+      : `${dayLabel(d.date)} · ${Math.abs(d.net).toLocaleString('en-US')} kcal ${d.net >= 0 ? 'deficit' : 'surplus'}`;
+    return `
+        <div class="net-col" title="${esc(label)}">
+          <div class="net-half net-up" style="height: ${zeroPct}%;">
+            ${up ? `<i style="height: ${up}%;"></i>` : ''}
+          </div>
+          <div class="net-half net-down" style="height: ${100 - zeroPct}%;">
+            ${down ? `<i style="height: ${down}%;"></i>` : ''}
+          </div>
+        </div>`;
+  }).join('');
+
+  const best = shown.reduce((a, d) => (d.net > a.net ? d : a), shown[0]);
+  const worst = shown.reduce((a, d) => (d.net < a.net ? d : a), shown[0]);
+  const avg = Math.round(shown.reduce((a, d) => a + d.net, 0) / shown.length);
+  const missing = series.length - shown.length;
+
+  return `
+      <div class="net-chart">
+        <div class="net-bars" style="--zero: ${zeroPct}%;">${cols}</div>
+        <div class="net-axis">
+          <span>${esc(dayLabel(series[0].date))}</span>
+          <span>${esc(dayLabel(series[series.length - 1].date))}</span>
+        </div>
+        <div class="net-legend">
+          <span><i class="net-key net-key-up"></i>Deficit</span>
+          <span><i class="net-key net-key-down"></i>Surplus</span>
+          <span class="net-avg">${avg >= 0 ? '+' : '−'}${Math.abs(avg).toLocaleString('en-US')} kcal a day on average</span>
+        </div>
+        <div class="net-note">
+          ${netRange(shown, best, worst)}
+          ${missing ? `${missing} ${missing === 1 ? 'day has' : 'days have'} nothing logged and ${missing === 1 ? 'is' : 'are'} left blank.` : ''}
+        </div>
+      </div>`;
+}
+
 /* The night behind the day. Sits with the other readings rather than among the
    four pillars: sleep is not an activity, and a fifth card in a grid built for
    four would say it was. */
@@ -3782,6 +3909,11 @@ function pastCard(v) {
         <div style="font-size: 13.5px; line-height: 1.6;">${esc(v.pastHeadline)}</div>
         ${v.pastBusiest ? `<div style="font-size: 12.5px; line-height: 1.6; color: var(--color-neutral-700); margin-top: 4px;">${esc(v.pastBusiest)}</div>` : ''}
         ${balanceGauges(v.pastFood, v.pastBurn, 'past', v.pastSingleDate)}
+        ${v.pastNet ? `
+        <div class="net-block">
+          <div class="cal-kicker">Net calories, day by day</div>
+          ${netChart(v.pastNet)}
+        </div>` : ''}
         ${v.pastEmpty || !state.drawers.lookback ? '' : `
         <div style="display: flex; flex-direction: column; gap: 8px; margin: 16px 0 18px;">
           ${v.pastTop.map((t) => `
@@ -4132,7 +4264,7 @@ function moneyDesktop(v) {
    the print stylesheet that turns it into a PDF, and the canvas that turns one
    card into a shareable image. One description means they cannot drift. */
 
-const card = (key, o) => Object.assign({ key, kicker: '', big: '', title: '', lines: [], rows: [], note: '' }, o);
+const card = (key, o) => Object.assign({ key, kicker: '', big: '', title: '', lines: [], rows: [], note: '', chart: null }, o);
 
 function timeCards(v) {
   const out = [];
@@ -4203,6 +4335,20 @@ function timeCards(v) {
       ],
       note: 'Rough estimates from what you logged and your weight.'
     }));
+  }
+
+  if (v.rangeNet) {
+    const shown = v.rangeNet.filter((d) => d.logged);
+    if (shown.length > 1) {
+      const avg = Math.round(shown.reduce((a, d) => a + d.net, 0) / shown.length);
+      out.push(card('netdaily', {
+        kicker: 'Net calories, day by day',
+        big: `${avg >= 0 ? '+' : '−'}${Math.abs(avg).toLocaleString('en-US')}`,
+        title: `a day on average · ${avg >= 0 ? 'deficit' : 'surplus'}`,
+        chart: v.rangeNet,
+        note: `${shown.length} of ${v.rangeNet.length} days carry a reading. Green above the line is a deficit, red below it a surplus.`
+      }));
+    }
   }
 
   out.push(card('untracked', {
@@ -4387,6 +4533,7 @@ function reportSheet() {
             ${c.big ? `<div class="deck-big">${esc(c.big)}</div>` : ''}
             ${c.title ? `<div class="deck-title">${esc(c.title)}</div>` : ''}
             ${c.lines.length ? `<div class="deck-lines">${c.lines.map((l) => `<p>${esc(l)}</p>`).join('')}</div>` : ''}
+            ${c.chart ? `<div class="deck-chart">${netChart(c.chart)}</div>` : ''}
             ${c.rows.length ? `
             <div class="deck-rows">
               ${c.rows.map((r) => `
@@ -5404,6 +5551,40 @@ function paintCard(x, c, v, draw, offsetY) {
     });
     y += 10;
   });
+  /* The chart card would otherwise share as a headline with nothing under it.
+     Same two-scale layout the DOM chart uses, so the image matches the card. */
+  if (c.chart) {
+    const H = 300, gap = 4;
+    const shown = c.chart.filter((d) => d.logged);
+    const ups = shown.filter((d) => d.net > 0).map((d) => d.net);
+    const downs = shown.filter((d) => d.net < 0).map((d) => -d.net);
+    const maxUp = ups.length ? Math.max(...ups) : 0;
+    const maxDown = downs.length ? Math.max(...downs) : 0;
+    const zeroY = y + Math.round((maxUp / ((maxUp + maxDown) || 1)) * H);
+    const cw = (RW - gap * (c.chart.length - 1)) / c.chart.length;
+
+    if (draw) {
+      c.chart.forEach((d, i) => {
+        if (!d.logged || !d.net) return;
+        const bx = L + i * (cw + gap);
+        if (d.net > 0) {
+          const h = Math.max(3, Math.round((d.net / (maxUp || 1)) * (zeroY - y)));
+          x.fillStyle = '#0e9f6e'; x.fillRect(bx, zeroY - h, cw, h);
+        } else {
+          const h = Math.max(3, Math.round((-d.net / (maxDown || 1)) * (y + H - zeroY)));
+          x.fillStyle = '#d92d20'; x.fillRect(bx, zeroY, cw, h);
+        }
+      });
+      x.strokeStyle = '#b8b4c6'; x.beginPath(); x.moveTo(L, zeroY); x.lineTo(L + RW, zeroY); x.stroke();
+      x.fillStyle = '#756f88'; x.font = '400 24px Barlow, sans-serif';
+      x.fillText(dayLabel(c.chart[0].date), L, y + H + 34);
+      x.textAlign = 'right';
+      x.fillText(dayLabel(c.chart[c.chart.length - 1].date), L + RW, y + H + 34);
+      x.textAlign = 'left';
+    }
+    y += H + 78;
+  }
+
   if (c.rows.length) {
     y += 14;
     c.rows.slice(0, 6).forEach((r) => {
