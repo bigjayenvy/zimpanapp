@@ -325,6 +325,50 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   [aria-invalid="true"] { border-color: #a4291f !important; }
   [aria-invalid="true"]:focus-visible { outline-color: #a4291f; }
 
+  /* — the searchable picker —
+     Sized to sit where the <select> it replaces sat, so the form row wraps the
+     same way it always did. The panel is absolute so opening it moves nothing;
+     a panel that pushed the row apart would shift the button out from under
+     the finger that just tapped it. */
+  .pick-field { flex: 2 1 185px; min-width: 165px; position: relative; }
+  .pick-btn {
+    display: flex; align-items: center; gap: 8px; text-align: left;
+    cursor: pointer; background: var(--color-surface);
+  }
+  .pick-current { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pick-caret { flex: none; font-size: 10px; color: var(--color-neutral-600); }
+  .pick-pop {
+    position: absolute; z-index: 40; top: calc(100% + 5px); left: 0; right: 0;
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 8px; border-radius: var(--radius-md);
+    background: var(--color-surface);
+    border: 1px solid color-mix(in srgb, var(--color-accent-900) 15%, transparent);
+    box-shadow: 0 14px 34px color-mix(in srgb, var(--color-accent-900) 22%, transparent);
+  }
+  .pick-search { min-height: 32px; font-size: 13px; }
+  /* Capped rather than unbounded: the point of the search is that the list
+     never has to be scrolled far, and a panel taller than the phone defeats it. */
+  .pick-list { max-height: 210px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+  .pick-opt {
+    border: 0; background: transparent; font: inherit; font-size: 13.5px;
+    text-align: left; padding: 7px 9px; border-radius: 7px; cursor: pointer;
+    color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .pick-opt:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+  .pick-opt.is-on { background: color-mix(in srgb, var(--color-accent) 16%, transparent); font-weight: 600; }
+  .pick-empty { padding: 8px 9px; font-size: 12.5px; color: var(--color-neutral-600); }
+  .pick-new {
+    border: 0; border-top: 1px solid var(--color-divider); background: transparent;
+    font: inherit; font-size: 12.5px; text-align: left; padding: 8px 9px 3px;
+    color: var(--color-accent-700); cursor: pointer;
+  }
+  /* Catches the tap that means "not this one". Behind the panel, over the page. */
+  .pick-shade { position: fixed; inset: 0; z-index: 30; }
+
+  @media (max-width: 720px) {
+    .pick-list { max-height: 38vh; }
+  }
+
   /* — legend —
      The rows have always been clickable; nothing on them said so.
 

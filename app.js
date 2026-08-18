@@ -515,6 +515,11 @@ const state = {
   newCatOpen: false, newCatName: '',
   newPurposeOpen: false, newPurposeName: '',
 
+  /* Which searchable picker is open — 'category', 'purpose', or null — and what
+     has been typed into it. Session state rather than persisted: an open
+     dropdown is not something to restore. */
+  pickOpen: null, pickQuery: '',
+
   /* Persisted, and that is the whole trick: a stopwatch needs a start time, not
      a running process. Phones freeze and reload background tabs freely, so
      anything held only in memory is gone the moment you lock the screen. With
@@ -2470,6 +2475,44 @@ function options(names, selected, extra) {
   return names.map((n) => `<option value="${esc(n)}"${n === selected ? ' selected' : ''}>${esc(withIcon(n))}</option>`).join('') + (extra || '');
 }
 
+/* ── the searchable picker ──
+
+   A native <select> is fine at six categories and unusable at twenty: the list
+   is only ever as long as your own invention, and the answer to "where is
+   Vervé" should not be scrolling. This is the same control both trackers use —
+   the button shows what is chosen, the panel filters as you type.
+
+   The filtering happens in the DOM rather than through state, because a render
+   per keystroke would rebuild the field the caret is sitting in. `data-pick`
+   names which picker a node belongs to so one handler serves both. */
+function pickerField(kind, label, names, selected, newLabel) {
+  const open = state.pickOpen === kind;
+  return `
+          <div class="field pick-field" data-pick-field="${esc(kind)}">
+            <label>${esc(label)}</label>
+            <button type="button" class="input pick-btn" data-act="pick-open" data-pick="${esc(kind)}"
+              aria-haspopup="listbox" aria-expanded="${open}">
+              <span class="pick-current">${esc(withIcon(selected))}</span>
+              <span class="pick-caret" aria-hidden="true">▾</span>
+            </button>
+            ${open ? `
+            <div class="pick-pop" role="listbox">
+              <input class="input pick-search" data-k="pick-search" data-pick-search="${esc(kind)}"
+                type="text" placeholder="Search ${esc(label.toLowerCase())}…" autocomplete="off"
+                aria-label="Search ${esc(label.toLowerCase())}">
+              <div class="pick-list" data-pick-list>
+                ${names.map((n) => `
+                <button type="button" class="pick-opt${n === selected ? ' is-on' : ''}" role="option"
+                  aria-selected="${n === selected}" data-act="pick-choose" data-pick="${esc(kind)}"
+                  data-name="${esc(n)}" data-find="${esc(n.toLowerCase())}">${esc(withIcon(n))}</button>`).join('')}
+                <div class="pick-empty" hidden>Nothing matches that.</div>
+              </div>
+              <button type="button" class="pick-new" data-act="pick-new" data-pick="${esc(kind)}">${esc(newLabel)}</button>
+            </div>
+            <div class="pick-shade" data-backdrop="pick-close"></div>` : ''}
+          </div>`;
+}
+
 /* ─────────────────────────── templates ─────────────────────────── */
 
 /* ── drawers ── */
@@ -3997,9 +4040,7 @@ function addEntryCard(v) {
         <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: end;">
           <div class="field" style="flex: 1 1 150px; min-width: 140px;"><label>Date</label><input class="input" type="date" data-k="form-date" data-sync="form.date" value="${esc(state.form.date)}"></div>
           <div class="field" style="flex: 3 1 220px; min-width: 180px;"><label>Activity</label><input class="input" data-k="form-activity" data-sync="form.activity" placeholder="e.g. Wash car" value="${esc(state.form.activity)}"${state.formError.entry ? ' aria-invalid="true"' : ''}></div>
-          <div class="field" style="flex: 2 1 180px; min-width: 160px;"><label>Category</label>
-            <select class="input" data-act="form-category">${options(state.categories.map((c) => c.name), state.form.category, '<option value="__new">+ New category…</option>')}</select>
-          </div>
+          ${pickerField('category', 'Category', state.categories.map((c) => c.name), state.form.category, '+ New category…')}
           <!-- From and To share a wrapper so they wrap as a pair. Left as
                siblings they split across lines the moment the row runs out of
                width, which reads as two unrelated fields. -->
@@ -4206,9 +4247,7 @@ function moneyDesktop(v) {
         <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: end;">
           <div class="field" style="flex: 1 1 150px; min-width: 140px;"><label>Date</label><input class="input" type="date" data-k="m-date" data-sync="mForm.date" value="${esc(state.mForm.date)}"></div>
           <div class="field" style="flex: 3 1 220px; min-width: 180px;"><label>Activity</label><input class="input" data-k="m-activity" data-sync="mForm.activity" placeholder="e.g. Grocery run" value="${esc(state.mForm.activity)}"${state.formError.money ? ' aria-invalid="true"' : ''}></div>
-          <div class="field" style="flex: 2 1 190px; min-width: 170px;"><label>Purpose</label>
-            <select class="input" data-act="m-purpose">${options(state.purposes.map((p) => p.name), state.mForm.purpose, '<option value="__new">+ New purpose…</option>')}</select>
-          </div>
+          ${pickerField('purpose', 'Purpose', state.purposes.map((p) => p.name), state.mForm.purpose, '+ New purpose…')}
           <div class="field" style="flex: 0 1 130px; min-width: 118px;"><label>Received</label><input class="input" type="number" min="0" step="0.01" placeholder="0" data-k="m-in" data-sync="mForm.in" value="${esc(state.mForm.in)}"></div>
           <div class="field" style="flex: 0 1 130px; min-width: 118px;"><label>Spent</label><input class="input" type="number" min="0" step="0.01" placeholder="0" data-k="m-out" data-sync="mForm.out" value="${esc(state.mForm.out)}"></div>
           <button class="btn btn-primary" data-act="add-money" style="height: 36px;">Add entry</button>
@@ -4704,6 +4743,32 @@ function render() {
     const want = root.querySelector(`[data-k="${state.focusField}"]`);
     state.focusField = null;
     if (want) want.focus();
+  }
+
+  /* The picker's query lives outside the template, so a render triggered by
+     something else — a sync landing, a timer stopping — would otherwise put
+     the full list back under a search box that still reads "ver". */
+  const search = root.querySelector('[data-pick-search]');
+  if (search) { search.value = state.pickQuery; filterPicker(search); }
+  if (pickJustOpened) { pickJustOpened = false; showPicker(); }
+}
+
+/* A panel that opens below the fold is a list you cannot see. Only the amount
+   that is actually off-screen is scrolled away, so the field stays where the
+   finger left it whenever there was already room. */
+function showPicker() {
+  const pop = root.querySelector('.pick-pop');
+  if (!pop) return;
+  /* The phone's bottom nav is fixed over the page, so the last rows of a panel
+     scrolled to the viewport edge sit underneath it — visible space ends where
+     the nav starts, not where the window does. */
+  const nav = root.querySelector('.bottomnav');
+  const floor = nav && getComputedStyle(nav).display !== 'none'
+    ? nav.getBoundingClientRect().top : window.innerHeight;
+  const gap = pop.getBoundingClientRect().bottom + 12 - floor;
+  if (gap > 0) {
+    const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    window.scrollBy({ top: gap, behavior: smooth ? 'smooth' : 'auto' });
   }
 }
 
@@ -5296,18 +5361,36 @@ const ACTIONS = {
     save(); render();
   },
 
-  'share-card': () => shareCard()
+  'share-card': () => shareCard(),
+
+  /* ── searchable picker ── */
+  'pick-open': (el) => {
+    const kind = el.dataset.pick;
+    state.pickOpen = state.pickOpen === kind ? null : kind;
+    state.pickQuery = '';
+    // Opening lands the caret in the search box, or the search is a step away.
+    if (state.pickOpen) { state.focusField = 'pick-search'; pickJustOpened = true; }
+    render();
+  },
+  'pick-close': () => { state.pickOpen = null; state.pickQuery = ''; render(); },
+  'pick-choose': (el) => {
+    const name = el.dataset.name;
+    if (el.dataset.pick === 'purpose') state.mForm = Object.assign({}, state.mForm, { purpose: name });
+    else state.form = Object.assign({}, state.form, { category: name });
+    state.pickOpen = null; state.pickQuery = '';
+    render();
+  },
+  /* Hands off to the existing create-a-name panel rather than growing a second
+     one inside the popover — there is already a place that names things. */
+  'pick-new': (el) => {
+    if (el.dataset.pick === 'purpose') { state.newPurposeOpen = true; state.focusField = 'new-purpose'; }
+    else { state.newCatOpen = true; state.focusField = 'new-cat'; }
+    state.pickOpen = null; state.pickQuery = '';
+    render();
+  }
 };
 
 const CHANGES = {
-  'form-category': (el) => {
-    if (el.value === '__new') { state.newCatOpen = true; render(); return; }
-    state.form = Object.assign({}, state.form, { category: el.value });
-  },
-  'm-purpose': (el) => {
-    if (el.value === '__new') { state.newPurposeOpen = true; render(); return; }
-    state.mForm = Object.assign({}, state.mForm, { purpose: el.value });
-  },
   'entry-activity': (el) => updateEntry(el.dataset.id, { activity: el.value }),
   'entry-category': (el) => updateEntry(el.dataset.id, { category: el.value }),
   'entry-from': (el) => updateEntry(el.dataset.id, { from: parseHm(el.value) }),
@@ -5355,6 +5438,34 @@ root.addEventListener('change', (ev) => {
    back down. */
 const ERROR_FIELD = { timerActivity: 'timer', 'form.activity': 'entry', 'mForm.activity': 'money' };
 
+/* The picker filters by hiding rows, not by re-rendering. A render per
+   keystroke would rebuild the very input the caret is in, and the list is
+   already in the DOM — there is nothing to fetch, only something to hide. */
+/* One-shot, like focusField: the scroll belongs to the tap that opened the
+   panel, not to every render that happens while it is open. */
+let pickJustOpened = false;
+
+function filterPicker(el) {
+  const q = el.value.trim().toLowerCase();
+  const list = el.parentElement.querySelector('[data-pick-list]');
+  if (!list) return;
+  let hits = 0;
+  list.querySelectorAll('.pick-opt').forEach((opt) => {
+    const match = !q || opt.dataset.find.includes(q);
+    opt.hidden = !match;
+    if (match) hits++;
+  });
+  const empty = list.querySelector('.pick-empty');
+  if (empty) empty.hidden = hits > 0;
+}
+
+root.addEventListener('input', (ev) => {
+  const el = ev.target;
+  if (!el.dataset || !el.dataset.pickSearch) return;
+  state.pickQuery = el.value;
+  filterPicker(el);
+});
+
 // Text fields feed state without re-rendering, so typing is never interrupted.
 root.addEventListener('input', (ev) => {
   const el = ev.target;
@@ -5393,6 +5504,17 @@ document.addEventListener('keydown', (ev) => {
     const fn = ACTIONS[el.dataset.enter];
     if (fn) fn(el);
     return;
+  }
+  /* Enter in the picker's search takes the first row still showing, which is
+     what typing three letters and pressing Enter is asking for. */
+  if (el.dataset && el.dataset.pickSearch) {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      const hit = el.parentElement.querySelector('.pick-opt:not([hidden])');
+      if (hit) ACTIONS['pick-choose'](hit);
+      return;
+    }
+    if (ev.key === 'Escape') { ev.preventDefault(); state.pickOpen = null; state.pickQuery = ''; render(); return; }
   }
   // Topmost first: the follow-up dialog sits above the report sheet.
   if (ev.key === 'Escape' && state.notePrompt) { closeFollowUp(false); return; }
