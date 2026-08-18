@@ -16,6 +16,10 @@ import { changesSince, applyChanges, Invalid, CURRENCIES } from './sync.js';
 import { verifyGoogleIdToken } from './google.js';
 import { sendResetEmail } from './mail.js';
 import { estimateNutrition, summariseDeck, aiConfigured } from './ai.js';
+import {
+  overview as adminOverview, users as adminUsers, donationsFor,
+  setRole, addDonation, removeDonation, noteDonateClick, touchSeen, isAdminRole, ROLES
+} from './admin.js';
 
 const ROOT = join(HERE, '..');
 const PORT = Number(process.env.PORT) || 3000;
@@ -124,6 +128,28 @@ const requireUser = wrap(async (req, res, next) => {
   next();
 });
 
+/* Roles are checked here rather than in the dashboard.
+
+   A page can hide a button; it cannot stop a request. Manager is read-only
+   because every writing route below asks for superadmin, not because the page
+   declines to draw the form.
+
+   404 rather than 403 for someone with no role at all: the dashboard is not
+   something an ordinary account should be able to detect the existence of. */
+const requireRole = (...allowed) => wrap(async (req, res, next) => {
+  const user = await currentUser(req);
+  if (!user || !isAdminRole(user.role)) {
+    return res.status(404).json({ error: 'No such endpoint.' });
+  }
+  if (!allowed.includes(user.role)) {
+    return res.status(403).json({ error: 'Your role can view this but not change it.' });
+  }
+  req.user = user;
+  next();
+});
+const requireAdmin = requireRole('manager', 'superadmin');
+const requireSuper = requireRole('superadmin');
+
 /* ── accounts ── */
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -166,12 +192,12 @@ app.post('/api/login', wrap(async (req, res) => {
   const reject = () => res.status(401).json({ error: 'Email or password is incorrect.' });
   if (creds.error) return reject();
 
-  const user = await one('SELECT id, email, password_hash, currency FROM users WHERE email = ?', [creds.email]);
+  const user = await one('SELECT id, email, password_hash, currency, role FROM users WHERE email = ?', [creds.email]);
   if (!user || !verifyPassword(creds.password, user.password_hash)) return reject();
 
   const { token, expiresAt } = await createSession(user.id);
   setSessionCookie(res, token, expiresAt, PROD);
-  res.json({ user: { email: user.email, currency: user.currency } });
+  res.json({ user: { email: user.email, currency: user.currency, role: user.role } });
 }));
 
 app.post('/api/logout', wrap(async (req, res) => {
@@ -187,7 +213,9 @@ app.get('/api/me', wrap(async (req, res) => {
     SELECT (SELECT COUNT(*) FROM entries WHERE user_id = ? AND deleted = 0) AS entries,
            (SELECT COUNT(*) FROM money_entries WHERE user_id = ? AND deleted = 0) AS money`,
     [user.id, user.id]);
-  res.json({ user: { email: user.email, currency: user.currency }, counts });
+  // The role is what lets the app offer the dashboard link at all; it says
+  // nothing an ordinary account could not already work out about itself.
+  res.json({ user: { email: user.email, currency: user.currency, role: user.role }, counts });
 }));
 
 /* ── password reset ── */
@@ -259,16 +287,19 @@ app.post('/api/reset', wrap(async (req, res) => {
   // existing session for the account is dropped.
   await query('DELETE FROM sessions WHERE user_id = ?', [row.user_id]);
 
-  const user = await one('SELECT id, email, currency FROM users WHERE id = ?', [row.user_id]);
+  const user = await one('SELECT id, email, currency, role FROM users WHERE id = ?', [row.user_id]);
   const { token: sessionToken, expiresAt } = await createSession(user.id);
   setSessionCookie(res, sessionToken, expiresAt, PROD);
-  res.json({ user: { email: user.email, currency: user.currency } });
+  res.json({ user: { email: user.email, currency: user.currency, role: user.role } });
 }));
 
 /* ── sync ── */
 
 app.get('/api/sync', requireUser, wrap(async (req, res) => {
   const since = Number(req.query.since) || 0;
+  /* Not awaited: "when was this account last seen" is bookkeeping for a
+     dashboard, and a sync should never be slower or fail because of it. */
+  touchSeen(req.user.id, req.user.lastSeenAt).catch(() => {});
   res.json({ serverTime: now(), changes: await changesSince(req.user.id, since) });
 }));
 
@@ -334,14 +365,14 @@ app.post('/api/auth/google', wrap(async (req, res) => {
     } catch (err) {
       // Two sign-ins racing on the same address: whoever lost just re-reads.
       if (err.code !== 'ER_DUP_ENTRY') throw err;
-      user = await one('SELECT id, email, currency FROM users WHERE email = ? OR google_sub = ?', [claims.email, claims.sub]);
+      user = await one('SELECT id, email, currency, role FROM users WHERE email = ? OR google_sub = ?', [claims.email, claims.sub]);
       if (!user) throw err;
     }
   }
 
   const { token, expiresAt } = await createSession(user.id);
   setSessionCookie(res, token, expiresAt, PROD);
-  res.json({ user: { email: user.email, currency: user.currency }, fresh });
+  res.json({ user: { email: user.email, currency: user.currency, role: user.role || 'user' }, fresh });
 }));
 
 /* ── nutrition estimates ──
@@ -393,6 +424,66 @@ app.post('/api/deck-summary', requireUser, wrap(async (req, res) => {
   }
 }));
 
+/* ── the admin dashboard ──
+
+   Every route is behind a role. Reading is manager or superadmin; writing is
+   superadmin only, checked here rather than trusted to the page.
+
+   Nothing below returns anything a user wrote. Counts, dates and email
+   addresses — the queries in admin.js do not select a single activity, note or
+   amount, so there is nothing for a mistake in the page to spill. */
+
+app.get('/api/admin/overview', requireAdmin, wrap(async (req, res) => {
+  res.json({ overview: await adminOverview(), role: req.user.role });
+}));
+
+app.get('/api/admin/users', requireAdmin, wrap(async (req, res) => {
+  const q = String(req.query.q || '').trim().slice(0, 120);
+  res.json(await adminUsers({
+    q, sort: String(req.query.sort || 'recent'),
+    limit: req.query.limit, offset: req.query.offset
+  }));
+}));
+
+app.get('/api/admin/users/:id/donations', requireAdmin, wrap(async (req, res) => {
+  res.json({ donations: await donationsFor(Number(req.params.id)) });
+}));
+
+app.post('/api/admin/role', requireSuper, wrap(async (req, res) => {
+  const { email, role } = req.body || {};
+  if (!ROLES.includes(role)) return res.status(400).json({ error: 'Unknown role.' });
+  try {
+    res.json({ ok: true, ...(await setRole(req.user.id, email, role)) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}));
+
+app.post('/api/admin/donations', requireSuper, wrap(async (req, res) => {
+  try {
+    res.json({ ok: true, ...(await addDonation(req.user.id, req.body || {})) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}));
+
+app.delete('/api/admin/donations/:id', requireSuper, wrap(async (req, res) => {
+  try {
+    await removeDonation(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}));
+
+/* Interest, recorded as interest. Fire-and-forget from the app, so it answers
+   with nothing worth waiting for and never blocks the click it describes. */
+app.post('/api/donate-click', requireUser, wrap(async (req, res) => {
+  const limited = rateLimit({ key: `donate:${req.user.id}`, limit: 30, windowMs: 60 * 60 * 1000 });
+  if (limited.ok) await noteDonateClick(req.user.id);
+  res.json({ ok: true });
+}));
+
 // Lets the client decide whether to draw the Google button and the refine
 // button at all. Says only whether the feature exists, never the key.
 app.get('/api/config', (req, res) => res.json({
@@ -415,6 +506,14 @@ app.get('/app.js', sendRoot('app.js'));
    404 below, which Search Console reports as "Couldn't fetch". */
 app.get('/sitemap.xml', sendRoot('sitemap.xml'));
 app.get('/robots.txt', sendRoot('robots.txt'));
+
+/* The admin dashboard is a separate page, so it needs its own entries here for
+   the same reason the sitemap did: a file at the project root is not reachable
+   until it is named. The page itself is public HTML — everything it displays
+   arrives from the API routes above, every one of which is behind a role. */
+app.get('/admin', sendRoot('admin.html'));
+app.get('/admin.html', sendRoot('admin.html'));
+app.get('/admin.js', sendRoot('admin.js'));
 app.use('/ds', express.static(join(ROOT, 'ds'), { fallthrough: false }));
 
 app.use((req, res) => {

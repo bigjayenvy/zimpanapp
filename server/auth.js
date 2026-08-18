@@ -46,12 +46,17 @@ export async function createSession(userId) {
 export async function userForToken(token) {
   if (!token) return null;
   const row = await one(`
-    SELECT u.id, u.email, u.currency, s.expires_at
+    SELECT u.id, u.email, u.currency, u.role, u.last_seen_at, s.expires_at
       FROM sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = ?`, [tokenHash(token)]);
   if (!row) return null;
   if (Number(row.expires_at) < now()) { await destroySession(token); return null; }
-  return { id: row.id, email: row.email, currency: row.currency };
+  // role rides along on every authenticated request, so the admin routes never
+  // need a second query to find out whether they are allowed to answer.
+  return {
+    id: row.id, email: row.email, currency: row.currency,
+    role: row.role || 'user', lastSeenAt: row.last_seen_at
+  };
 }
 
 export async function destroySession(token) {
