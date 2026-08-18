@@ -459,6 +459,16 @@ const API = {
 const AI_CACHE_KEY = 'zimpan.ai.v1';
 const AI_CONSENT_KEY = 'zimpan.ai.consent.v1';
 
+/* The report deck's prose, kept between visits. Persisted rather than held in
+   memory because the whole cost of this feature is the calls, and a page reload
+   was throwing away a summary that had just been paid for. */
+const DECK_CACHE_KEY = 'zimpan.deck.v1';
+// Whether this browser has ever opened the report — the gate on warming it up.
+const DECK_USED_KEY = 'zimpan.deck.used.v1';
+// Past half a day the world has moved on even if the log has not.
+const DECK_STALE_MS = 12 * 60 * 60 * 1000;
+const DECK_CACHE_MAX = 12;
+
 const readJson = (key, fallback) => {
   try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch (err) { return fallback; }
 };
@@ -556,10 +566,14 @@ const state = {
   aiAsking: null,   // scope awaiting consent
   aiBusy: null,     // scope with a request in flight
 
-  /* The report deck's written summaries, keyed by window. Session-only rather
-     than persisted: they are cheap to refetch and stale prose about a fortnight
-     you have since added to is worse than none. */
-  deckAi: {}, deckAiBusy: null, deckAiError: '',
+  /* The report deck's written summaries, keyed by window and kept on disk. Each
+     entry carries when it was written and what it was written from, so staleness
+     is a judgement made at read time rather than a key that misses on every new
+     entry. `deckUsed` is what stops the warm-up running for someone who has
+     never opened a report. */
+  deckAi: readJson(DECK_CACHE_KEY, {}),
+  deckUsed: readJson(DECK_USED_KEY, false) === true,
+  deckAiBusy: null, deckAiError: '',
   aiError: '',
 
   // Slice drill-down: the category/purpose the donut is focused on, and
@@ -931,32 +945,88 @@ function deckFacts(v) {
   };
 }
 
-// Cheap and sufficient: a different window, or the same window with anything
-// new logged in it, produces a different key.
-const deckKey = (v) => [
-  v.isMoney ? 'm' : 't', state.deckRange, v.reportRange,
-  v.reportEntryCount, v.rangeTotalMins, v.rangeSteps || 0
-].join('|');
+/* Which window a summary describes — and only that. The figures it was written
+   from are stored beside it rather than baked into the key, because they decide
+   something different: the key decides which summary to show, the figures decide
+   whether it is still worth showing.
+
+   Folding the entry count into the key, as this first did, meant every new
+   entry was a cache miss. Log four things and open the report and that is a
+   fresh call for prose that would have read almost identically. The window
+   itself already carries the date range, so a rolling window keys differently
+   tomorrow without anything extra. */
+const deckKey = (v) => [v.isMoney ? 'm' : 't', state.deckRange, v.reportRange].join('|');
+
+/* A summary is rewritten when the window has actually moved under it, not when
+   it has twitched. Five entries or a tenth of the log, whichever is larger:
+   below that the prose would say the same thing in different words, and the
+   figures on the card are computed locally and always live regardless. */
+const deckMoved = (hit, v) => {
+  const n = v.reportEntryCount;
+  return Math.abs((hit.entries || 0) - n) > Math.max(5, Math.round(n * 0.1));
+};
+const deckFresh = (hit, v) =>
+  !!(hit && hit.s && Date.now() - (hit.at || 0) < DECK_STALE_MS && !deckMoved(hit, v));
+
+/* Oldest out first, and only ever a dozen: this lives in the same localStorage
+   as the log itself, and a report cache that grows without limit would
+   eventually cost someone their entries. */
+function saveDeckCache() {
+  const keys = Object.keys(state.deckAi);
+  if (keys.length > DECK_CACHE_MAX) {
+    keys.sort((a, b) => (state.deckAi[a].at || 0) - (state.deckAi[b].at || 0))
+      .slice(0, keys.length - DECK_CACHE_MAX)
+      .forEach((k) => { delete state.deckAi[k]; });
+  }
+  writeJson(DECK_CACHE_KEY, state.deckAi);
+}
 
 async function fetchDeckSummary(v) {
   if (!state.aiEstimates || !state.auth) return;
   const key = deckKey(v);
-  if (state.deckAi[key] || state.deckAiBusy === key) return;
+  if (state.deckAiBusy === key) return;
+  if (deckFresh(state.deckAi[key], v)) return;
 
   state.deckAiBusy = key;
   state.deckAiError = '';
-  render();
+  // Only when someone is looking. A warm-up in the background has no business
+  // rebuilding the page it is not on.
+  if (state.reportOpen) render();
   try {
     const res = await API.deckSummary(deckFacts(v));
-    state.deckAi[key] = res.summaries || {};
+    state.deckAi[key] = { at: Date.now(), entries: v.reportEntryCount, s: res.summaries || {} };
+    saveDeckCache();
   } catch (err) {
     /* Not cached: a summary that failed because the network was down should be
        retried the next time the deck opens, not remembered as "no summary". */
     state.deckAiError = err.message || 'Could not write the summary just now.';
   } finally {
     state.deckAiBusy = null;
-    render();
+    if (state.reportOpen) render();
   }
+}
+
+/* ── warming it up ──
+
+   Written on the way in rather than on the way out, so the report is already
+   there when it is asked for. Two things keep that from turning into a bill:
+
+   It only runs for people who have opened the report before. Fetching a summary
+   on every app open for someone who never reads one would be pure waste, and
+   most opens are someone logging an entry and leaving.
+
+   It respects the cache like everything else, so a second visit on the same day
+   with nothing much logged in between costs nothing at all. The realistic
+   steady state is one call a day per window you actually look at. */
+let warmed = false;
+function warmDeckSummary() {
+  if (warmed || !state.deckUsed || !state.aiEstimates || !state.auth) return;
+  warmed = true;
+  // After the first paint and the first sync, not in competition with them.
+  setTimeout(() => {
+    if (!state.auth) return;
+    try { fetchDeckSummary(deckView()); } catch (err) { /* a warm-up never matters enough to throw */ }
+  }, 6000);
 }
 
 async function syncNow() {
@@ -1077,6 +1147,9 @@ async function afterSignIn(user) {
   if (!state.dirty.currency && user.currency) state.currency = user.currency;
   render();
   await syncNow();
+  /* After the sync, so the summary is written from the log this device has just
+     finished pulling rather than the one it woke up with. */
+  warmDeckSummary();
 }
 
 /* ── google sign-in ──
@@ -4706,7 +4779,14 @@ const card = (key, o) => Object.assign(
    When the AI summary arrives it replaces them, because it can say things
    arithmetic cannot: what a fortnight of Family Time and Focus Work suggests
    about a person, and what is worth saying to them about it. */
-const deckSummaries = (v) => state.deckAi[deckKey(v)] || {};
+/* Whatever is cached for this window, fresh or not. A summary a few entries
+   behind still reads true — the figures on the card around it are computed
+   locally and always current — and showing it beats showing nothing while the
+   replacement is written. */
+const deckSummaries = (v) => {
+  const hit = state.deckAi[deckKey(v)];
+  return (hit && hit.s) || {};
+};
 
 const listOf = (names) => (names.length === 1 ? names[0]
   : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
@@ -5951,6 +6031,10 @@ const ACTIONS = {
 
   'open-report': () => {
     state.reportOpen = true; deckIndex = 0; render();
+    /* Remembered so the next visit can have the summary ready before it is
+       asked for. Written on first use rather than assumed: the warm-up costs a
+       call, and it should only ever be spent on someone who reads these. */
+    if (!state.deckUsed) { state.deckUsed = true; writeJson(DECK_USED_KEY, true); }
     // After the render, so the deck is on screen while the prose is written.
     fetchDeckSummary(deckView());
   },
