@@ -890,7 +890,10 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .net-chart { margin-top: 4px; }
   .net-bars {
     display: flex; align-items: stretch; gap: 3px;
-    height: 132px; padding: 2px 0;
+    /* The top and bottom padding is where the outermost bar's number goes. The
+       halves are percentages of the content box, so reserving the room here
+       shortens the bars to make space rather than letting a label escape. */
+    height: 132px; padding: 15px 0;
     /* The zero line, drawn once across the whole row rather than per column. */
     background: linear-gradient(to bottom,
       transparent calc(var(--zero) - 1px),
@@ -907,9 +910,30 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .net-half { display: flex; }
   .net-up { align-items: flex-end; }
   .net-down { align-items: flex-start; }
-  .net-half i { width: 100%; border-radius: 2px; }
+  .net-half i { width: 100%; border-radius: 2px; position: relative; }
   .net-up i { background: var(--zg-strong); border-radius: 3px 3px 0 0; }
   .net-down i { background: var(--zg-alert); border-radius: 0 0 3px 3px; }
+
+  /* The number the bar is worth, printed at its outer end. Outside the bar
+     rather than inside it: a short bar has no room within itself, and a figure
+     that sometimes sits inside and sometimes above reads as two conventions. */
+  .net-half b {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    font-size: 9.5px; font-weight: 600; line-height: 1; white-space: nowrap;
+    font-variant-numeric: tabular-nums; pointer-events: none;
+  }
+  .net-up b { bottom: 100%; margin-bottom: 3px; color: var(--zg-strong); }
+  .net-down b { top: 100%; margin-top: 3px; color: var(--zg-alert); }
+  /* Centred on its column everywhere except the two ends, where centring would
+     hang half the number off the side of the chart. */
+  .net-col:first-child b { left: 0; transform: none; }
+  .net-col:last-child b { left: auto; right: 0; transform: none; }
+  /* Past this many columns the labels are wider than the bars they belong to,
+     and printing them all overlaps them into a smear. The two peaks stay: they
+     are the figures a crowded chart is still being asked for, and they are far
+     enough apart from everything else to have the room. */
+  .net-bars.is-dense b:not(.net-peak) { display: none; }
+  .net-peak { font-weight: 700; }
 
   .net-axis {
     display: flex; justify-content: space-between;
@@ -928,6 +952,9 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 
   @media (max-width: 560px) {
     .net-bars { height: 108px; gap: 2px; }
+    .net-half b { font-size: 8.5px; }
+    /* Half the width for the same month, so the labels give out sooner. */
+    .net-bars.is-dense-phone b:not(.net-peak) { display: none; }
     .net-avg { margin-left: 0; flex-basis: 100%; }
   }
 

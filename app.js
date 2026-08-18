@@ -1682,6 +1682,25 @@ function netSeries(dates, entries, money, weightKg) {
   });
 }
 
+/* The money tracker's equivalent, and much simpler: the two magnitudes are
+   already in the rows, so there is nothing to estimate. Shaped as up/down from
+   the start because unlike a calorie net, a day can genuinely have both — pay
+   day with the groceries done on the way home is one bar each way. */
+function moneySeries(dates, money) {
+  const byDate = {};
+  money.forEach((e) => { (byDate[e.date] = byDate[e.date] || []).push(e); });
+
+  return dates.map((date) => {
+    const rows = byDate[date] || [];
+    return {
+      date,
+      up: rows.reduce((a, e) => a + (Number(e.in) || 0), 0),
+      down: rows.reduce((a, e) => a + (Number(e.out) || 0), 0),
+      logged: rows.length > 0
+    };
+  });
+}
+
 /* MET values — energy cost relative to sitting still. Burn is
    MET × kilograms × hours, the standard approximation. */
 const METS = [
@@ -2429,6 +2448,8 @@ function compute() {
   };
   lazy('rangeNet', () => (winDays > 1 ? netSeries(windowDates, rangeList, mRangeList, s.weightKg) : null));
   lazy('pastNet', () => (pastSpan.length > 1 ? netSeries(pastSpan, pastList, pastMoney, s.weightKg) : null));
+  // Cheap by comparison, but lazy for the same reason: only two views read it.
+  lazy('rangeCash', () => (winDays > 1 ? moneySeries(windowDates, mRangeList) : null));
 
   return out;
 }
@@ -3701,6 +3722,7 @@ function insightsBody(v, forPrint) {
             ${tile('Kept', f.rateLabel, f.netUp ? good : 'var(--color-text)')}
           </div>
 
+          ${cashBlock(v)}
           ${list('What stands out', f.observations)}
           ${list('What might help', f.advice)}
           ${!f.advice.length && f.observations.length ? `
@@ -3802,57 +3824,162 @@ function netRange(shown, best, worst) {
     ${esc(dayLabel(worst.date))} was the other end at ${side(worst)}.`;
 }
 
-function netChart(series) {
+/* Bar labels have to fit in a column, and a column is the chart's width divided
+   by however many days you asked for. Four digits do not fit in a month on a
+   phone, so the number is shortened before it is ever asked to. */
+const briefNum = (n) => {
+  const v = Math.abs(Math.round(n));
+  if (v >= 100000) return `${Math.round(v / 1000)}k`;
+  if (v >= 10000) return `${(v / 1000).toFixed(0)}k`;
+  if (v >= 1000) return `${(v / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+  return String(v);
+};
+const briefCash = (n) => `${currency().symbol}${briefNum(n)}`;
+
+/* ── the diverging bar chart ──
+
+   One drawing, two readings: calories put a deficit above the line and a
+   surplus below it, money puts what came in above and what went out below.
+   Both are "two quantities that oppose each other, per day", which is why they
+   share a function rather than each growing their own.
+
+   Two scales rather than one, so the taller side fills its half and the shorter
+   one is still visible — a fortnight of small deficits against one enormous
+   surplus would otherwise be a flat line and a spike. The trade is that the two
+   halves are not comparable by height, which is what the printed numbers on the
+   bars are for.
+
+   Columns take `{date, up, down, logged}` with both magnitudes positive. Days
+   with nothing logged draw nothing at all: a blank day is not a deficit of a
+   whole day's resting burn, it is a day with no reading, and drawing it as the
+   best day of the week would be a lie the chart tells confidently. */
+function barChart(series, o) {
   if (!series || !series.length) return '';
   const shown = series.filter((d) => d.logged);
   if (!shown.length) return '';
 
-  const ups = shown.filter((d) => d.net > 0).map((d) => d.net);
-  const downs = shown.filter((d) => d.net < 0).map((d) => -d.net);
-  const maxUp = ups.length ? Math.max(...ups) : 0;
-  const maxDown = downs.length ? Math.max(...downs) : 0;
-  const total = maxUp + maxDown || 1;
-  const zeroPct = Math.round((maxUp / total) * 100);
+  const maxUp = Math.max(0, ...shown.map((d) => d.up));
+  const maxDown = Math.max(0, ...shown.map((d) => d.down));
+  const zeroPct = Math.round((maxUp / ((maxUp + maxDown) || 1)) * 100);
+  const fmt = o.fmt || briefNum;
 
-  const cols = series.map((d) => {
-    const up = d.logged && d.net > 0 ? Math.max(2, Math.round((d.net / (maxUp || 1)) * 100)) : 0;
-    const down = d.logged && d.net < 0 ? Math.max(2, Math.round((-d.net / (maxDown || 1)) * 100)) : 0;
-    const label = !d.logged
-      ? `${dayLabel(d.date)} · nothing logged`
-      : `${dayLabel(d.date)} · ${Math.abs(d.net).toLocaleString('en-US')} kcal ${d.net >= 0 ? 'deficit' : 'surplus'}`;
+  /* Past a certain count the columns are narrower than the numbers they would
+     carry, and printing every one just overlaps them into a smear. Rather than
+     go silent, the two peaks keep their labels — the question a crowded chart
+     still gets asked is "how big was the biggest", and there is always room for
+     two. The phone threshold is separate because the same month is half the
+     width there. */
+  const dense = series.length > 16 ? ' is-dense' : '';
+  const densePhone = series.length > 9 ? ' is-dense-phone' : '';
+  const peakUp = maxUp > 0 ? series.findIndex((d) => d.logged && d.up === maxUp) : -1;
+  const peakDown = maxDown > 0 ? series.findIndex((d) => d.logged && d.down === maxDown) : -1;
+
+  const cols = series.map((d, i) => {
+    const up = d.logged && d.up > 0 ? Math.max(2, Math.round((d.up / (maxUp || 1)) * 100)) : 0;
+    const down = d.logged && d.down > 0 ? Math.max(2, Math.round((d.down / (maxDown || 1)) * 100)) : 0;
+    const tag = (peak) => (peak ? ' class="net-peak"' : '');
     return `
-        <div class="net-col" title="${esc(label)}">
+        <div class="net-col" title="${esc(o.title(d))}">
           <div class="net-half net-up" style="height: ${zeroPct}%;">
-            ${up ? `<i style="height: ${up}%;"></i>` : ''}
+            ${up ? `<i style="height: ${up}%;"><b${tag(i === peakUp)}>${esc(fmt(d.up))}</b></i>` : ''}
           </div>
           <div class="net-half net-down" style="height: ${100 - zeroPct}%;">
-            ${down ? `<i style="height: ${down}%;"></i>` : ''}
+            ${down ? `<i style="height: ${down}%;"><b${tag(i === peakDown)}>${esc(fmt(d.down))}</b></i>` : ''}
           </div>
         </div>`;
   }).join('');
 
-  const best = shown.reduce((a, d) => (d.net > a.net ? d : a), shown[0]);
-  const worst = shown.reduce((a, d) => (d.net < a.net ? d : a), shown[0]);
-  const avg = Math.round(shown.reduce((a, d) => a + d.net, 0) / shown.length);
   const missing = series.length - shown.length;
-
   return `
       <div class="net-chart">
-        <div class="net-bars" style="--zero: ${zeroPct}%;">${cols}</div>
+        <div class="net-bars${dense}${densePhone}" style="--zero: ${zeroPct}%;">${cols}</div>
         <div class="net-axis">
           <span>${esc(dayLabel(series[0].date))}</span>
           <span>${esc(dayLabel(series[series.length - 1].date))}</span>
         </div>
         <div class="net-legend">
-          <span><i class="net-key net-key-up"></i>Deficit</span>
-          <span><i class="net-key net-key-down"></i>Surplus</span>
-          <span class="net-avg">${avg >= 0 ? '+' : '−'}${Math.abs(avg).toLocaleString('en-US')} kcal a day on average</span>
+          <span><i class="net-key net-key-up"></i>${esc(o.upLabel)}</span>
+          <span><i class="net-key net-key-down"></i>${esc(o.downLabel)}</span>
+          <span class="net-avg">${esc(o.average)}</span>
         </div>
         <div class="net-note">
-          ${netRange(shown, best, worst)}
+          ${o.note}
           ${missing ? `${missing} ${missing === 1 ? 'day has' : 'days have'} nothing logged and ${missing === 1 ? 'is' : 'are'} left blank.` : ''}
         </div>
       </div>`;
+}
+
+// Signed net folded into the two magnitudes the chart draws.
+const netCols = (series) => series.map((d) => ({
+  date: d.date, logged: d.logged,
+  up: d.net > 0 ? d.net : 0, down: d.net < 0 ? -d.net : 0
+}));
+
+function netChart(series) {
+  if (!series || !series.length) return '';
+  const shown = series.filter((d) => d.logged);
+  if (!shown.length) return '';
+
+  const best = shown.reduce((a, d) => (d.net > a.net ? d : a), shown[0]);
+  const worst = shown.reduce((a, d) => (d.net < a.net ? d : a), shown[0]);
+  const avg = Math.round(shown.reduce((a, d) => a + d.net, 0) / shown.length);
+
+  return barChart(netCols(series), {
+    upLabel: 'Deficit',
+    downLabel: 'Surplus',
+    average: `${avg >= 0 ? '+' : '−'}${Math.abs(avg).toLocaleString('en-US')} kcal a day on average`,
+    title: (d) => (!d.logged
+      ? `${dayLabel(d.date)} · nothing logged`
+      : `${dayLabel(d.date)} · ${(d.up || d.down).toLocaleString('en-US')} kcal ${d.up ? 'deficit' : 'surplus'}`),
+    note: netRange(shown, best, worst)
+  });
+}
+
+/* Money in against money out, day by day. Same drawing as the calories, and
+   deliberately so: the question "which days did more leave than arrive" has the
+   same shape as "which days did I eat more than I burned". */
+function moneyChart(series) {
+  if (!series || !series.length) return '';
+  const shown = series.filter((d) => d.logged);
+  if (!shown.length) return '';
+
+  const outSum = shown.reduce((a, d) => a + d.down, 0);
+  const inSum = shown.reduce((a, d) => a + d.up, 0);
+  const heaviest = shown.reduce((a, d) => (d.down > a.down ? d : a), shown[0]);
+  const net = inSum - outSum;
+
+  const note = heaviest.down > 0
+    ? `Heaviest day was ${esc(dayLabel(heaviest.date))} at ${esc(amount(heaviest.down))} out.
+       Across the days with entries that is ${esc(amount(inSum))} in against ${esc(amount(outSum))} out,
+       ${net >= 0 ? `leaving ${esc(amount(net))}` : `${esc(amount(-net))} short`}.`
+    : `${esc(amount(inSum))} came in over these days and nothing went out.`;
+
+  return barChart(series, {
+    fmt: briefCash,
+    upLabel: 'In',
+    downLabel: 'Out',
+    // Rounded: cents on an average across a fortnight are noise pretending to
+    // be precision, and they cost the headline four characters it needs.
+    average: `${amount(Math.round(outSum / shown.length))} a day out on average`,
+    title: (d) => (!d.logged
+      ? `${dayLabel(d.date)} · nothing logged`
+      : `${dayLabel(d.date)} · ${amount(d.up)} in, ${amount(d.down)} out`),
+    note
+  });
+}
+
+/* The shape of the window, between the four totals and the prose. The tiles
+   above it say what the fortnight came to; this says which days it came from,
+   which is the part a single number cannot carry. Hidden on a one-day window,
+   where a chart of one column is just the tile again. */
+function cashBlock(v) {
+  const chart = v.rangeCash ? moneyChart(v.rangeCash) : '';
+  if (!chart) return '';
+  return `
+          <div class="net-block" style="margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--color-divider);">
+            <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 8px;">In and out, day by day</div>
+            ${chart}
+          </div>`;
 }
 
 /* The night behind the day. Sits with the other readings rather than among the
@@ -4384,7 +4511,7 @@ function timeCards(v) {
         kicker: 'Net calories, day by day',
         big: `${avg >= 0 ? '+' : '−'}${Math.abs(avg).toLocaleString('en-US')}`,
         title: `a day on average · ${avg >= 0 ? 'deficit' : 'surplus'}`,
-        chart: v.rangeNet,
+        chart: { cols: netCols(v.rangeNet), fmt: briefNum, html: netChart(v.rangeNet) },
         note: `${shown.length} of ${v.rangeNet.length} days carry a reading. Green above the line is a deficit, red below it a surplus.`
       }));
     }
@@ -4449,17 +4576,41 @@ function moneyCards(v) {
     note: v.netNote
   }));
 
+  if (v.rangeCash) {
+    const shown = v.rangeCash.filter((d) => d.logged);
+    if (shown.length > 1) {
+      const outSum = shown.reduce((a, d) => a + d.down, 0);
+      out.push(card('cashdaily', {
+        kicker: 'In and out, day by day',
+        big: amount(Math.round(outSum / shown.length)),
+        title: 'a day out, across the days you logged',
+        chart: { cols: v.rangeCash, fmt: briefCash, html: moneyChart(v.rangeCash) },
+        note: `${shown.length} of ${v.rangeCash.length} days carry an entry. Green above the line came in, red below it went out.`
+      }));
+    }
+  }
+
   if (f && f.trendLabel) out.push(card('trend', {
     kicker: 'Against the window before',
     big: f.trendLabel,
     title: f.trendUp ? 'more than the previous stretch' : 'less than the previous stretch',
     lines: [f.headline],
+    rows: [
+      { label: `These ${f.days} days`, value: f.outLabel },
+      { label: `The ${f.days} before them`, value: f.prevOutLabel },
+      f.essentialLabel && f.discLabel
+        ? { label: 'Essential vs discretionary', value: `${f.essentialLabel} · ${f.discLabel}` } : null
+    ].filter(Boolean),
     note: f.coverageLabel
   }));
 
   if (f && f.observations && f.observations.length) out.push(card('stands', {
     kicker: 'What stands out',
-    lines: f.observations.slice(0, 3),
+    lines: f.observations.slice(0, 4),
+    rows: f.advice && f.advice.length ? [] : [
+      { label: 'Kept', value: f.rateLabel },
+      { label: 'Net', value: f.netLabel }
+    ],
     note: f.advice && f.advice.length ? f.advice[0] : ''
   }));
 
@@ -4572,7 +4723,7 @@ function reportSheet() {
             ${c.big ? `<div class="deck-big">${esc(c.big)}</div>` : ''}
             ${c.title ? `<div class="deck-title">${esc(c.title)}</div>` : ''}
             ${c.lines.length ? `<div class="deck-lines">${c.lines.map((l) => `<p>${esc(l)}</p>`).join('')}</div>` : ''}
-            ${c.chart ? `<div class="deck-chart">${netChart(c.chart)}</div>` : ''}
+            ${c.chart ? `<div class="deck-chart">${c.chart.html}</div>` : ''}
             ${c.rows.length ? `
             <div class="deck-rows">
               ${c.rows.map((r) => `
@@ -5674,34 +5825,54 @@ function paintCard(x, c, v, draw, offsetY) {
     y += 10;
   });
   /* The chart card would otherwise share as a headline with nothing under it.
-     Same two-scale layout the DOM chart uses, so the image matches the card. */
+     Same two-scale layout and the same printed numbers the DOM chart uses, so
+     the image and the card on screen say the same thing. */
   if (c.chart) {
-    const H = 300, gap = 4;
-    const shown = c.chart.filter((d) => d.logged);
-    const ups = shown.filter((d) => d.net > 0).map((d) => d.net);
-    const downs = shown.filter((d) => d.net < 0).map((d) => -d.net);
-    const maxUp = ups.length ? Math.max(...ups) : 0;
-    const maxDown = downs.length ? Math.max(...downs) : 0;
-    const zeroY = y + Math.round((maxUp / ((maxUp + maxDown) || 1)) * H);
-    const cw = (RW - gap * (c.chart.length - 1)) / c.chart.length;
+    const cols = c.chart.cols;
+    const fmt = c.chart.fmt || briefNum;
+    const H = 300, gap = 4, LAB = 26;
+    const shown = cols.filter((d) => d.logged);
+    const maxUp = Math.max(0, ...shown.map((d) => d.up));
+    const maxDown = Math.max(0, ...shown.map((d) => d.down));
+    /* Inset by a label's height at each end, the way the DOM chart's padding
+       does it — otherwise the tallest bar's number is drawn off the card. */
+    const top = y + LAB, floor = y + H - LAB;
+    const zeroY = top + Math.round((maxUp / ((maxUp + maxDown) || 1)) * (floor - top));
+    const cw = (RW - gap * (cols.length - 1)) / cols.length;
+    /* Same judgement the CSS makes, in the one unit the canvas actually knows.
+       Too tight for every label still leaves room for the two peaks. */
+    const all = cw >= 44;
+    const peakUp = maxUp > 0 ? cols.findIndex((d) => d.logged && d.up === maxUp) : -1;
+    const peakDown = maxDown > 0 ? cols.findIndex((d) => d.logged && d.down === maxDown) : -1;
 
     if (draw) {
-      c.chart.forEach((d, i) => {
-        if (!d.logged || !d.net) return;
-        const bx = L + i * (cw + gap);
-        if (d.net > 0) {
-          const h = Math.max(3, Math.round((d.net / (maxUp || 1)) * (zeroY - y)));
+      x.textAlign = 'center';
+      cols.forEach((d, i) => {
+        if (!d.logged) return;
+        const bx = L + i * (cw + gap), mid = bx + cw / 2;
+        if (d.up > 0) {
+          const h = Math.max(3, Math.round((d.up / (maxUp || 1)) * (zeroY - top)));
           x.fillStyle = '#0e9f6e'; x.fillRect(bx, zeroY - h, cw, h);
-        } else {
-          const h = Math.max(3, Math.round((-d.net / (maxDown || 1)) * (y + H - zeroY)));
+          if (all || i === peakUp) {
+            x.font = `${all ? 600 : 700} 19px Barlow, sans-serif`;
+            x.fillText(fmt(d.up), mid, zeroY - h - 7);
+          }
+        }
+        if (d.down > 0) {
+          const h = Math.max(3, Math.round((d.down / (maxDown || 1)) * (floor - zeroY)));
           x.fillStyle = '#d92d20'; x.fillRect(bx, zeroY, cw, h);
+          if (all || i === peakDown) {
+            x.font = `${all ? 600 : 700} 19px Barlow, sans-serif`;
+            x.fillText(fmt(d.down), mid, zeroY + h + 21);
+          }
         }
       });
+      x.textAlign = 'left';
       x.strokeStyle = '#b8b4c6'; x.beginPath(); x.moveTo(L, zeroY); x.lineTo(L + RW, zeroY); x.stroke();
       x.fillStyle = '#756f88'; x.font = '400 24px Barlow, sans-serif';
-      x.fillText(dayLabel(c.chart[0].date), L, y + H + 34);
+      x.fillText(dayLabel(cols[0].date), L, y + H + 34);
       x.textAlign = 'right';
-      x.fillText(dayLabel(c.chart[c.chart.length - 1].date), L + RW, y + H + 34);
+      x.fillText(dayLabel(cols[cols.length - 1].date), L + RW, y + H + 34);
       x.textAlign = 'left';
     }
     y += H + 78;
