@@ -361,7 +361,7 @@ function save() {
       entries: state.entries, money: state.money,
       categories: state.categories, purposes: state.purposes,
       currency: state.currency, currencyUpdatedAt: state.currencyUpdatedAt,
-      steps: state.steps,
+      steps: state.steps, stepsAt: state.stepsAt,
       deckRange: state.deckRange,
       weightKg: state.weightKg, weightUpdatedAt: state.weightUpdatedAt,
       entryMode: state.entryMode,
@@ -496,10 +496,13 @@ const state = {
   categories: stored.categories,
   purposes: stored.purposes,
   currency: CURRENCIES.some((c) => c.code === stored.currency) ? stored.currency : 'PHP',
-  /* Steps walked, keyed by date. Held on this device only: the sync protocol
-     carries entries, money, categories, purposes, currency and weight, and
-     adding a kind to it needs a table on the server that does not exist yet. */
+  /* Steps walked, keyed by date. Travels with everything else now, merged a
+     day at a time on the stamps in `stepsAt` below. */
   steps: (stored.steps && typeof stored.steps === 'object') ? stored.steps : {},
+  /* When each date's count was last written, so two devices can each record a
+     different day and both survive the merge. Days stored before steps could
+     sync carry no stamp; they are treated as older than anything that arrives. */
+  stepsAt: (stored.stepsAt && typeof stored.stepsAt === 'object') ? stored.stepsAt : {},
 
   weightKg: Number(stored.weightKg) || null,
   weightUpdatedAt: Number(stored.weightUpdatedAt) || 0,
@@ -563,7 +566,10 @@ const state = {
   /* ── sync bookkeeping (persisted) ── */
   currencyUpdatedAt: Number(stored.currencyUpdatedAt) || 0,
   tombstones: Object.assign(EMPTY_KEYED(), stored.tombstones),
-  dirty: Object.assign(EMPTY_KEYED(), stored.dirty, { currency: !!(stored.dirty && stored.dirty.currency) }),
+  dirty: Object.assign(EMPTY_KEYED(), stored.dirty, {
+    currency: !!(stored.dirty && stored.dirty.currency),
+    steps: !!(stored.dirty && stored.dirty.steps)
+  }),
   lastSyncAt: Number(stored.lastSyncAt) || 0,
   account: stored.account || null,
 
@@ -594,6 +600,21 @@ const state = {
 
 // First run: persist the starting taxonomy so it is stable across reloads.
 if (!storedRaw) save();
+
+/* Steps predate this device knowing how to sync them, so days recorded back
+   then carry no stamp. Left at zero they would tie with the same day on another
+   device and neither would ever win, so the counts already here are stamped on
+   the first load that finds them unstamped and queued for a push. Whichever
+   device opens first therefore sets the shared value for those old days; every
+   day written from here on carries its own stamp and merges properly. */
+(() => {
+  const unstamped = Object.keys(state.steps).filter((d) => !state.stepsAt[d]);
+  if (!unstamped.length) return;
+  const at = Date.now();
+  unstamped.forEach((d) => { state.stepsAt[d] = at; });
+  state.dirty.steps = true;
+  save();
+})();
 
 /* ─────────────────────────── sync ───────────────────────────
 
@@ -650,6 +671,18 @@ function collectChanges() {
   });
   if (state.dirty.currency) out.currency = { value: state.currency, updatedAt: state.currencyUpdatedAt };
   if (state.dirty.weight) out.weightKg = { value: state.weightKg, updatedAt: state.weightUpdatedAt };
+  /* Sent whole rather than as a diff. The map is one small object, the server
+     stores it verbatim, and sending all of it is what lets a device that has
+     been away contribute its days without having to work out which are new. */
+  if (state.dirty.steps) {
+    out.steps = {};
+    /* Every date either map knows about, not only the ones still carrying a
+       count: a day that was cleared exists solely as a stamp, and leaving it
+       out would let another device's copy of it come straight back. */
+    new Set(Object.keys(state.steps).concat(Object.keys(state.stepsAt))).forEach((d) => {
+      out.steps[d] = { v: Number(state.steps[d]) || 0, t: Number(state.stepsAt[d]) || 0 };
+    });
+  }
   return out;
 }
 
@@ -685,6 +718,27 @@ function mergeChanges(changes) {
     state.weightUpdatedAt = changes.weightKg.updatedAt;
     state.dirty.weight = false;
   }
+
+  /* Merged a day at a time on its own stamp rather than the whole map at once:
+     a phone that recorded Monday and a laptop that recorded Tuesday should end
+     up holding both, which taking the newer map wholesale would not do. */
+  if (changes.steps && typeof changes.steps === 'object') {
+    let gained = false;
+    Object.keys(changes.steps).forEach((d) => {
+      const row = changes.steps[d] || {};
+      const t = Number(row.t) || 0;
+      const mine = Number(state.stepsAt[d]) || 0;
+      if (t < mine) return;
+      // Equal stamps: nothing to choose between them, so leave what is here.
+      if (t === mine && state.steps[d] != null) return;
+      const v = Number(row.v) || 0;
+      if (v > 0) { state.steps[d] = v; state.stepsAt[d] = t; }
+      else { delete state.steps[d]; delete state.stepsAt[d]; }
+      gained = true;
+    });
+    // The outbox is only cleared when nothing arrived that this device lacked.
+    if (!gained) state.dirty.steps = false;
+  }
 }
 
 /* Clears the outbox only for rows untouched since they were collected — an
@@ -700,6 +754,11 @@ function clearPushed(sent) {
   });
   if (sent.currency && state.currencyUpdatedAt === sent.currency.updatedAt) state.dirty.currency = false;
   if (sent.weightKg && state.weightUpdatedAt === sent.weightKg.updatedAt) state.dirty.weight = false;
+  /* Cleared only when nothing was written while the request was in flight —
+     the same rule the rows above follow, applied to the whole map at once. */
+  if (sent.steps && !Object.keys(sent.steps).some((d) => (Number(state.stepsAt[d]) || 0) > (Number(sent.steps[d].t) || 0))) {
+    state.dirty.steps = false;
+  }
 }
 
 /* Resolves the row the server complained about back to something nameable, by
@@ -715,9 +774,13 @@ function describeBlockedRow() {
   return { kind: at.kind, key, label: (live && live.activity) || (live && live.name) || row.activity || row.name || key };
 }
 
+/* Steps count here too, or a day whose only edit was the step field would sit in
+   the outbox forever: this number is what the minute timer and the flush on the
+   way out both test before they bother calling syncNow. */
 const pendingCount = () =>
   KINDS.reduce((n, k) => n + Object.keys(state.dirty[k]).length, 0)
-  + (state.dirty.currency ? 1 : 0) + (state.dirty.weight ? 1 : 0);
+  + (state.dirty.currency ? 1 : 0) + (state.dirty.weight ? 1 : 0)
+  + (state.dirty.steps ? 1 : 0);
 
 function setNet(netState, message) {
   state.netState = netState;
@@ -3323,7 +3386,7 @@ function stepsSheet() {
             </div>
             <div class="steps-note">
               A rough estimate from step count and your weight${state.weightKg ? '' : ` (${DEFAULT_WEIGHT_KG} kg assumed)`}.
-              Kept on this device — steps do not sync between devices yet.
+              Syncs to your other devices with everything else.
             </div>
           </div>
           <div class="focus-foot">
@@ -5048,14 +5111,22 @@ const ACTIONS = {
     // goes back to offering to add one.
     if (Number.isFinite(n) && n > 0) state.steps[date] = Math.min(200000, n);
     else delete state.steps[date];
+    state.stepsAt[date] = Date.now();
+    state.dirty.steps = true;
     state.stepsOpen = null; state.stepsDraft = '';
-    save(); render();
+    save(); queueSync(0); render();
     flash(state.steps[date] ? `Saved · ${state.steps[date].toLocaleString('en-US')} steps` : 'Steps cleared');
   },
   'steps-clear': () => {
-    if (state.stepsOpen) delete state.steps[state.stepsOpen];
+    if (state.stepsOpen) {
+      delete state.steps[state.stepsOpen];
+      // Stamped rather than forgotten: a deletion has to be able to win over
+      // the count another device is still holding.
+      state.stepsAt[state.stepsOpen] = Date.now();
+      state.dirty.steps = true;
+    }
     state.stepsOpen = null; state.stepsDraft = '';
-    save(); render(); flash('Steps cleared');
+    save(); queueSync(0); render(); flash('Steps cleared');
   },
 
   'open-report': () => { state.reportOpen = true; deckIndex = 0; render(); },

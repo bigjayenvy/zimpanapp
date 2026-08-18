@@ -73,7 +73,7 @@ export async function changesSince(userId, since) {
              FROM categories WHERE user_id = ? AND updated_at > ?`, [userId, since]),
     query(`SELECT name, color, position, updated_at, deleted
              FROM purposes WHERE user_id = ? AND updated_at > ?`, [userId, since]),
-    one('SELECT currency, weight_kg, updated_at FROM users WHERE id = ?', [userId])
+    one('SELECT currency, weight_kg, steps_json, updated_at FROM users WHERE id = ?', [userId])
   ]);
 
   const named = (rows) => rows.map((r) => ({
@@ -99,6 +99,13 @@ export async function changesSince(userId, since) {
       : null,
     weightKg: user && Number(user.updated_at) > since
       ? { value: user.weight_kg == null ? null : Number(user.weight_kg), updatedAt: Number(user.updated_at) }
+      : null,
+    /* Sent whole rather than filtered by `since`: the map carries a stamp per
+       date and the client merges on those, so it needs every day it has not
+       seen, not only the days touched since it last asked. mysql2 hands back
+       JSON already parsed on some versions and as a string on others. */
+    steps: user && user.steps_json
+      ? (typeof user.steps_json === 'string' ? JSON.parse(user.steps_json) : user.steps_json)
       : null
   };
 }
@@ -180,6 +187,26 @@ export async function applyChanges(userId, changes) {
     currency = [value, stamp(c.currency.updatedAt, 'currency.updatedAt')];
   }
 
+  /* Steps arrive as {date: {v, t}}. Validated key by key — this is the one
+     payload the client can grow without bound, and a map of junk would be
+     stored verbatim and handed back to every device. */
+  let steps = null;
+  if (c.steps && typeof c.steps === 'object' && !Array.isArray(c.steps)) {
+    const clean = {};
+    const keys = Object.keys(c.steps);
+    if (keys.length > 3660) fail('steps carries more days than a decade');
+    for (const key of keys) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) fail(`steps key ${key} is not a date`);
+      const row = c.steps[key];
+      if (!row || typeof row !== 'object') fail(`steps.${key} is not an object`);
+      clean[key] = {
+        v: int(row.v, `steps.${key}.v`, 0, 200000),
+        t: stamp(row.t, `steps.${key}.t`)
+      };
+    }
+    steps = clean;
+  }
+
   let weight = null;
   if (c.weightKg && typeof c.weightKg === 'object') {
     const raw = c.weightKg.value;
@@ -201,6 +228,25 @@ export async function applyChanges(userId, changes) {
     if (weight) {
       await conn.execute('UPDATE users SET weight_kg = ?, updated_at = ? WHERE id = ? AND updated_at <= ?',
         [weight[0], weight[1], userId, weight[1]]);
+    }
+    /* Merged here rather than overwritten. A device only sends the days it
+       knows about, so writing its map wholesale would erase any day recorded
+       on another device that this one has not pulled yet — and with the outbox
+       already clear, nothing would ever push it back. Locked for the read so
+       two devices pushing at once cannot each merge onto the same stale copy. */
+    if (steps) {
+      const [[row]] = await conn.execute('SELECT steps_json FROM users WHERE id = ? FOR UPDATE', [userId]);
+      const held = row && row.steps_json
+        ? (typeof row.steps_json === 'string' ? JSON.parse(row.steps_json) : row.steps_json)
+        : {};
+      const merged = Object.assign({}, held);
+      for (const [date, incoming] of Object.entries(steps)) {
+        const mine = merged[date];
+        // Ties keep what is already stored; there is nothing to choose between them.
+        if (!mine || Number(incoming.t) > Number(mine.t)) merged[date] = incoming;
+      }
+      await conn.execute('UPDATE users SET steps_json = ?, updated_at = GREATEST(updated_at, ?) WHERE id = ?',
+        [JSON.stringify(merged), Date.now(), userId]);
     }
   });
 

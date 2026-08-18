@@ -25,6 +25,11 @@ CREATE TABLE IF NOT EXISTS users (
   -- Optional. Only used to scale the calorie-burn estimate; blank falls back
   -- to an average build.
   weight_kg     SMALLINT UNSIGNED NULL,
+  -- Steps walked, keyed by date: {"2026-08-16": {"v": 5300, "t": 1755300000000}}.
+  -- A column rather than a table because the map is small, always read whole,
+  -- and merged per date on the client using the per-date stamp — which is what
+  -- lets two devices each record a different day without either winning.
+  steps_json    JSON         NULL,
   created_at    BIGINT       NOT NULL,
   updated_at    BIGINT       NOT NULL,
   PRIMARY KEY (id),

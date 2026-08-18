@@ -110,6 +110,9 @@ async function alterExisting() {
   if (!has('weight_kg')) {
     await pool.query('ALTER TABLE users ADD COLUMN weight_kg SMALLINT UNSIGNED NULL AFTER currency');
   }
+  if (!has('steps_json')) {
+    await pool.query('ALTER TABLE users ADD COLUMN steps_json JSON NULL AFTER weight_kg');
+  }
   // A Google-only account stores no password, so the column must accept NULL.
   const pw = cols.find((c) => c.name === 'password_hash');
   if (pw && pw.nullable === 'NO') {
