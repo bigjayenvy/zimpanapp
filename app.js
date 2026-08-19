@@ -4060,44 +4060,68 @@ function netRange(shown, best, worst) {
 /* ── the report deck's donut ──
 
    Not the page's donut. That one is interactive, sits beside a legend and puts
-   the total in the hole; this one has to carry its own labels, because the card
-   it replaced was the legend.
+   the total in the hole; this one stands alone above its own legend.
 
-   Folded to six slices and an Other, for a reason that is about labelling
-   rather than tidiness: nineteen categories cannot each be named around a ring,
-   and a slice drawn without its number is the thing this card exists to fix.
+   The names live in the legend rather than around the ring. Radial labels need
+   leader lines, a collision pass and a margin wide enough for the longest
+   category, all of which shrink the ring to make room for text that reads
+   better in a list anyway. Freed of them, the ring gets the whole width.
 
-   Labels are placed at the mid-angle of their arc and then pushed apart down
-   each side until none overlap. Thin slices land next to each other by
-   definition — they are the small ones at the end of a sorted list — so
-   without the spread pass the last three labels sit on top of one another. */
+   The slices keep their share, printed on the arc — but only where the arc is
+   wide enough to hold it. A number half off its own slice is worse than no
+   number, and the legend below carries every figure regardless.
+
+   Still folded to six and an "others": twelve slices means six slivers, and a
+   sliver is not a share anybody can read whatever is written next to it. */
 const DONUT_FOLD = 6;
 
-function deckDonut(rows, fmt) {
-  if (!rows || !rows.length) return '';
+/* White on a pale slice is barely there. The share is printed on the slice's
+   own colour, and the palette runs from near-black violet to pale pink, so the
+   ink is chosen from the background's luminance rather than assumed. Anything
+   that is not a plain hex — a CSS variable, say — falls back to white, which is
+   right for every colour this actually gets handed. */
+function inkOn(color) {
+  const h = String(color || '').replace('#', '');
+  const v = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  if (!/^[0-9a-f]{6}$/i.test(v)) return '#ffffff';
+  const [r, g, b] = [0, 2, 4]
+    .map((i) => parseInt(v.slice(i, i + 2), 16) / 255)
+    .map((c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.42 ? '#16131f' : '#ffffff';
+}
+// Below this share the arc is narrower than the number it would carry.
+const DONUT_LABEL_MIN = 0.07;
+
+function donutParts(rows) {
   const total = rows.reduce((a, r) => a + r.mins, 0);
-  if (total <= 0) return '';
+  if (total <= 0) return null;
 
   const head = rows.slice(0, DONUT_FOLD);
   const tail = rows.slice(DONUT_FOLD);
   const parts = head.map((r) => ({ name: r.name, color: r.color, mins: r.mins }));
   if (tail.length) {
     parts.push({
-      name: tail.length === 1 ? tail[0].name : `${tail.length} smaller`,
-      color: 'var(--color-neutral-400)',
-      mins: tail.reduce((a, r) => a + r.mins, 0)
+      // One folded category keeps its own name; folding it into "1 others"
+      // would hide a name to save nothing.
+      name: tail.length === 1 ? tail[0].name : `${tail.length} others`,
+      color: '#b8b4c6',
+      mins: tail.reduce((a, r) => a + r.mins, 0),
+      folded: tail.length
     });
   }
+  return { parts, total };
+}
 
-  /* The ring is smaller than it wants to be, deliberately: the labels sit
-     outside it and a name runs away from its anchor, so the space either side
-     is not decoration, it is what stops "Potato Couching" being drawn off the
-     card. Names are capped for the same reason — SVG text does not wrap, and a
-     very long category would clear any margin worth leaving. */
-  const CX = 190, CY = 124, R = 56, W = 24;
+function deckDonut(rows, fmt) {
+  if (!rows || !rows.length) return '';
+  const built = donutParts(rows);
+  if (!built) return '';
+  const { parts, total } = built;
+
+  /* Square and tight. With nothing printed outside the ring there is no margin
+     to reserve, so the whole box is the donut. */
+  const S = 220, CX = 110, CY = 110, R = 82, W = 34;
   const C = 2 * Math.PI * R;
-  const VW = 380, VH = 252;
-  const shortName = (n) => (n.length > 18 ? `${n.slice(0, 17)}…` : n);
 
   let acc = 0;
   const laid = parts.map((p) => {
@@ -4110,44 +4134,36 @@ function deckDonut(rows, fmt) {
       p, frac,
       dash: `${(frac * C).toFixed(2)} ${C.toFixed(2)}`,
       offset: (-(acc - frac) * C).toFixed(2),
-      right: Math.cos(a) >= 0,
-      tickX: CX + Math.cos(a) * (R + W / 2 - 2), tickY: CY + Math.sin(a) * (R + W / 2 - 2),
-      x: CX + Math.cos(a) * (R + W / 2 + 10), y: CY + Math.sin(a) * (R + W / 2 + 10)
+      // Sat on the middle of the stroke band, where the slice is widest.
+      x: CX + Math.cos(a) * R, y: CY + Math.sin(a) * R
     };
-  });
-
-  // Push apart, each side independently, top to bottom.
-  const GAP = 26;
-  [true, false].forEach((side) => {
-    const col = laid.filter((l) => l.right === side).sort((a, b) => a.y - b.y);
-    for (let i = 1; i < col.length; i++) {
-      if (col[i].y - col[i - 1].y < GAP) col[i].y = col[i - 1].y + GAP;
-    }
-    // If the spread ran off the bottom, walk the whole column back up.
-    const over = col.length ? col[col.length - 1].y - (VH - 16) : 0;
-    if (over > 0) col.forEach((l) => { l.y = Math.max(16, l.y - over); });
   });
 
   const arcs = laid.map((l) => `
         <circle cx="${CX}" cy="${CY}" r="${R}" fill="none" stroke="${esc(l.p.color)}" stroke-width="${W}"
-          stroke-dasharray="${l.dash}" stroke-dashoffset="${l.offset}" transform="rotate(-90 ${CX} ${CY})"/>`).join('');
+          stroke-dasharray="${l.dash}" stroke-dashoffset="${l.offset}" transform="rotate(-90 ${CX} ${CY})">
+          <title>${esc(l.p.name)} · ${Math.round(l.frac * 100)}% · ${esc(fmt(l.p.mins))}</title>
+        </circle>`).join('');
 
-  const labels = laid.map((l) => {
-    const anchor = l.right ? 'start' : 'end';
-    const lx = l.right ? Math.min(l.x, VW - 4) : Math.max(l.x, 4);
-    return `
-        <line x1="${l.tickX.toFixed(1)}" y1="${l.tickY.toFixed(1)}" x2="${lx.toFixed(1)}" y2="${l.y.toFixed(1)}"
-          stroke="${esc(l.p.color)}" stroke-width="1.2" opacity=".55"/>
-        <text x="${lx.toFixed(1)}" y="${(l.y - 3).toFixed(1)}" text-anchor="${anchor}" class="dk-name">${esc(shortName(l.p.name))}<title>${esc(l.p.name)}</title></text>
-        <text x="${lx.toFixed(1)}" y="${(l.y + 10).toFixed(1)}" text-anchor="${anchor}" class="dk-val">${Math.round(l.frac * 100)}% · ${esc(fmt(l.p.mins))}</text>`;
-  }).join('');
+  const onSlice = laid.filter((l) => l.frac >= DONUT_LABEL_MIN).map((l) => `
+        <text class="dk-share" x="${l.x.toFixed(1)}" y="${l.y.toFixed(1)}" fill="${inkOn(l.p.color)}"
+          text-anchor="middle" dominant-baseline="central">${Math.round(l.frac * 100)}%</text>`).join('');
+
+  const legend = laid.map((l) => `
+        <li${l.p.folded ? ' class="is-folded"' : ''}>
+          <i style="background: ${esc(l.p.color)};"></i>
+          <span class="dk-key">${esc(l.p.name)}</span>
+          <b>${Math.round(l.frac * 100)}%</b>
+          <em>${esc(fmt(l.p.mins))}</em>
+        </li>`).join('');
 
   return `
       <div class="deck-donut">
-        <svg viewBox="0 0 ${VW} ${VH}" role="img" aria-label="Share of the window by category">
+        <svg viewBox="0 0 ${S} ${S}" role="img" aria-label="Share of the window by category">
           ${arcs}
-          ${labels}
+          ${onSlice}
         </svg>
+        <ul class="dk-legend">${legend}</ul>
       </div>`;
 }
 
@@ -4827,12 +4843,17 @@ function localCover(v, days, lit) {
   return bits.join(' ');
 }
 
+/* Deliberately gives no count of its own. The legend above it already says
+   exactly how many were folded together, and this sentence used to count
+   everything outside the top two — so a card could read "11 other categories"
+   directly beneath a row labelled "7 others". Both were true and the pair was
+   nonsense. One place states the number now. */
 function localDonut(v) {
   const top = v.reportRows.slice(0, 2);
   if (!top.length) return '';
   const rest = v.reportRows.length - top.length;
   return `${listOf(top.map((r) => `${r.name} at ${r.pct}`))} account for the bulk of the window`
-    + (rest > 0 ? `, with ${rest} other ${rest === 1 ? 'category' : 'categories'} making up the remainder.` : '.');
+    + (rest > 0 ? '; the legend above breaks down the rest.' : '.');
 }
 
 function localProfile(v) {
@@ -6462,71 +6483,73 @@ function paintCard(x, c, v, draw, offsetY) {
     y += H + 78;
   }
 
-  /* The donut, drawn rather than traced from the SVG. Same fold to six and an
-     Other, same labels pushed apart down each side — the card people send has
-     to be the card they were looking at, not a simplified stand-in. */
+  /* The donut, drawn rather than traced from the SVG. Same fold, same share on
+     each slice, same legend underneath — the card people send has to be the
+     card they were looking at, not a simplified stand-in. */
   if (c.donut) {
-    const rows = c.donut.rows;
     const fmt = c.donut.fmt || durShort;
-    const total = rows.reduce((a, r) => a + r.mins, 0) || 1;
-    const head = rows.slice(0, DONUT_FOLD);
-    const tail = rows.slice(DONUT_FOLD);
-    const parts = head.map((r) => ({ name: r.name, color: r.color, mins: r.mins }));
-    if (tail.length) {
-      parts.push({
-        name: tail.length === 1 ? tail[0].name : `${tail.length} smaller`,
-        color: '#b8b4c6', mins: tail.reduce((a, r) => a + r.mins, 0)
-      });
-    }
+    const built = donutParts(c.donut.rows);
+    if (built) {
+      const { parts, total } = built;
+      const R = 150, W = 62, CX = L + RW / 2;
+      const RING = R * 2 + W;            // the ring's full outer diameter
+      const ROW = 46;                    // one legend line
+      const CY = y + RING / 2;
+      const legendTop = y + RING + 44;
 
-    const H = 500, CX = L + RW / 2, CY = y + H / 2, R = 128, W = 44;
-    // A label is two lines: the name on its anchor and the figures 26px below.
-    // The floor has to leave room for the second line, or the bottom-most label
-    // is pushed exactly onto the paragraph underneath it.
-    const LAB2 = 26;
-    let acc = 0;
-    const laid = parts.map((p) => {
-      const frac = p.mins / total;
-      const a = (-90 + 360 * (acc + frac / 2)) * Math.PI / 180;
-      const seg = { p, frac, from: acc, to: acc + frac, right: Math.cos(a) >= 0,
-        tx: CX + Math.cos(a) * (R + W / 2 - 4), ty: CY + Math.sin(a) * (R + W / 2 - 4),
-        lx: CX + Math.cos(a) * (R + W / 2 + 26), y: CY + Math.sin(a) * (R + W / 2 + 26) };
-      acc += frac;
-      return seg;
-    });
-    const GAP = 74;
-    [true, false].forEach((side) => {
-      const col = laid.filter((l) => l.right === side).sort((a, b) => a.y - b.y);
-      for (let i = 1; i < col.length; i++) {
-        if (col[i].y - col[i - 1].y < GAP) col[i].y = col[i - 1].y + GAP;
+      let acc = 0;
+      const laid = parts.map((p) => {
+        const frac = p.mins / total;
+        const a = (-90 + 360 * (acc + frac / 2)) * Math.PI / 180;
+        const seg = { p, frac, from: acc, to: acc + frac,
+          x: CX + Math.cos(a) * R, ty: CY + Math.sin(a) * R };
+        acc += frac;
+        return seg;
+      });
+
+      if (draw) {
+        x.lineWidth = W;
+        laid.forEach((l) => {
+          x.strokeStyle = l.p.color;
+          x.beginPath();
+          x.arc(CX, CY, R, (-90 + l.from * 360) * Math.PI / 180, (-90 + l.to * 360) * Math.PI / 180);
+          x.stroke();
+        });
+
+        // The share, on the arc, wherever the arc is wide enough to hold it.
+        x.textAlign = 'center';
+        x.textBaseline = 'middle';
+        x.font = '700 26px Barlow, sans-serif';
+        laid.forEach((l) => {
+          if (l.frac < DONUT_LABEL_MIN) return;
+          x.fillStyle = inkOn(l.p.color);
+          x.fillText(`${Math.round(l.frac * 100)}%`, l.x, l.ty);
+        });
+        x.textBaseline = 'alphabetic';
+        x.textAlign = 'left';
+
+        // The legend: swatch, name, share, figure — one line each.
+        let ly = legendTop;
+        laid.forEach((l) => {
+          x.fillStyle = l.p.color;
+          x.fillRect(L, ly - 15, 18, 18);
+          x.font = '400 27px Barlow, sans-serif';
+          const share = `${Math.round(l.frac * 100)}%`;
+          const figure = fmt(l.p.mins);
+          const fw = x.measureText(figure).width;
+          x.fillStyle = '#16131f';
+          x.fillText(clipText(x, l.p.name, RW - fw - 130), L + 30, ly);
+          x.textAlign = 'right';
+          x.fillStyle = '#756f88'; x.fillText(figure, L + RW, ly);
+          x.fillStyle = '#3b3648'; x.font = '600 27px Barlow, sans-serif';
+          x.fillText(share, L + RW - fw - 22, ly);
+          x.textAlign = 'left';
+          ly += ROW;
+        });
       }
-      const over = col.length ? col[col.length - 1].y - (y + H - LAB2 - 18) : 0;
-      if (over > 0) col.forEach((l) => { l.y = Math.max(y + 30, l.y - over); });
-    });
-
-    if (draw) {
-      x.lineWidth = W;
-      laid.forEach((l) => {
-        x.strokeStyle = l.p.color;
-        x.beginPath();
-        x.arc(CX, CY, R, (-90 + l.from * 360) * Math.PI / 180, (-90 + l.to * 360) * Math.PI / 180);
-        x.stroke();
-      });
-      x.lineWidth = 2;
-      laid.forEach((l) => {
-        const lx = l.right ? Math.min(l.lx, L + RW) : Math.max(l.lx, L);
-        x.strokeStyle = l.p.color; x.globalAlpha = 0.55;
-        x.beginPath(); x.moveTo(l.tx, l.ty); x.lineTo(lx, l.y); x.stroke();
-        x.globalAlpha = 1;
-        x.textAlign = l.right ? 'left' : 'right';
-        x.fillStyle = '#16131f'; x.font = '600 26px Barlow, sans-serif';
-        x.fillText(clipText(x, l.p.name, RW / 2 - 30), lx, l.y - 4);
-        x.fillStyle = '#756f88'; x.font = '400 24px Barlow, sans-serif';
-        x.fillText(`${Math.round(l.frac * 100)}% · ${fmt(l.p.mins)}`, lx, l.y + 26);
-      });
-      x.textAlign = 'left';
+      // Last baseline, plus room for the paragraph that follows to breathe.
+      y = legendTop + ROW * (laid.length - 1) + 44;
     }
-    y += H;
   }
 
   if (c.rows.length) {

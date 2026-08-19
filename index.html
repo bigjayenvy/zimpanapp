@@ -1389,19 +1389,45 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .deck-lines { margin-top: 12px; }
   .deck-lines p { margin: 0 0 7px; font-size: 14.5px; line-height: 1.55; color: var(--color-neutral-700); }
 
-  /* The deck's own donut. Labels live in the SVG so they scale with it — at
-     phone width the ring and its text shrink together rather than the text
-     staying put and colliding. */
+  /* The deck's own donut: the ring, then a legend under it.
+
+     The ring is capped rather than full-width — a donut the width of a desktop
+     card is a hoop, and the card has a legend to get to. */
   .deck-donut { margin-top: 10px; }
-  .deck-donut svg { display: block; width: 100%; height: auto; overflow: visible; }
-  .deck-donut .dk-name {
-    font-family: var(--font-body); font-size: 11px; font-weight: 600;
-    fill: var(--color-text);
+  .deck-donut svg { display: block; width: 100%; max-width: 236px; height: auto; margin: 0 auto; }
+  /* Printed on the arc, so it is white on the slice's own colour. Only the
+     slices wide enough to hold it get one; the legend has the rest. */
+  /* The fill is set per slice, from that slice's own luminance. */
+  .deck-donut .dk-share {
+    font-family: var(--font-body); font-size: 11.5px; font-weight: 700;
+    font-variant-numeric: tabular-nums;
   }
-  .deck-donut .dk-val {
-    font-family: var(--font-body); font-size: 10.5px;
-    fill: var(--color-neutral-600); font-variant-numeric: tabular-nums;
+
+  /* Two columns where there is room for two, one where there is not. Each row
+     is swatch, name, share, figure — the name gives way, the numbers never do. */
+  .dk-legend {
+    list-style: none; margin: 14px 0 0; padding: 0;
+    display: grid; gap: 2px 20px; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
   }
+  .dk-legend li {
+    display: flex; align-items: baseline; gap: 8px;
+    padding: 4px 0; font-size: 12.5px; line-height: 1.35;
+  }
+  .dk-legend i {
+    width: 9px; height: 9px; flex: none; border-radius: 2px;
+    align-self: center; print-color-adjust: exact;
+  }
+  .dk-legend .dk-key {
+    flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--color-text);
+  }
+  .dk-legend b { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .dk-legend em {
+    flex: none; font-style: normal; min-width: 62px; text-align: right;
+    color: var(--color-neutral-600); font-variant-numeric: tabular-nums;
+  }
+  /* The rolled-up row is a summary of the others, not one of them. */
+  .dk-legend li.is-folded .dk-key { color: var(--color-neutral-600); font-style: italic; }
 
   /* The written paragraph. Sized to be read rather than scanned, which is why
      it is looser than the rows above it. */
