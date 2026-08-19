@@ -1566,11 +1566,23 @@ const FOOD_GROUPS = [
   { key: 'alcohol', watch: true, label: 'alcohol', re: /beer|wine|whisky|vodka|gin|rum|cocktail|alcohol|inuman/ }
 ];
 
-const isFoodRow = (row) => {
-  // The raw match, not the question: cooking is claimed by a silent rule that
-  // has no question, and must still be kept out of the day's intake.
+/* Eating and buying food are different events, and only one of them is intake.
+
+   They used to share a predicate, so a palengke run noted "rice, chicken,
+   vegetables, milk" was read as a meal and put a thousand calories into the day
+   it was bought on. Nobody eats the week's shop on the day they carry it home.
+   What you buy still informs the pattern reading — it is a real signal about
+   how you eat — but it contributes nothing to the day's intake.
+
+   The raw match rather than the question, because cooking is claimed by a
+   silent rule that has no question and must still be kept out of both. */
+const isEatenRow = (row) => {
   const q = matchFollowUp(row);
-  return !!q && (q.key === 'food' || q.key === 'shopping-food');
+  return !!q && q.key === 'food';
+};
+const isGroceryRow = (row) => {
+  const q = matchFollowUp(row);
+  return !!q && q.key === 'shopping-food';
 };
 
 /* ── rough energy maths ──
@@ -1961,7 +1973,8 @@ function entryEnergy(e) {
     return kcal ? { kind: 'burn', kcal, label: `~${kcal.toLocaleString('en-US')} kcal burned` } : null;
   }
 
-  if (isFoodRow(e)) {
+  // Eaten, not bought: a grocery run has no business wearing a "kcal eaten" chip.
+  if (isEatenRow(e)) {
     const kcal = nutritionFor([e]).kcal;
     return kcal ? { kind: 'food', kcal, label: `~${kcal.toLocaleString('en-US')} kcal eaten` } : null;
   }
@@ -2026,9 +2039,25 @@ function burnFor(entries, weightKg, days, dates) {
 }
 
 function foodReport(entries, money, days) {
-  const rows = entries.filter(isFoodRow).concat(money.filter(isFoodRow));
+  /* One tracker owns intake: the time tracker.
+
+     A meal is one event that can leave two traces — a block of time and a
+     payment — and counting both read lunch as two lunches. Rather than guess
+     which payment belongs to which meal, the line is drawn where it needs no
+     guessing at all: the time tracker records what you ate, the money tracker
+     records what it cost, and only the first feeds the calorie count.
+
+     Nothing is thrown away. What you bought and what you paid to eat both still
+     shape the pattern reading below, because where the food comes from says as
+     much about how you eat as what you sat down to. They just add no calories. */
+  const rows = entries.filter(isEatenRow);
+  const paidFor = money.filter(isEatenRow);
+  const bought = entries.filter(isGroceryRow).concat(money.filter(isGroceryRow));
+  const uncounted = paidFor.concat(bought);
+
   const withNotes = rows.filter((r) => (r.note || '').trim());
-  const text = rows.map((r) => `${r.activity || ''} ${r.note || ''}`).join(' ').toLowerCase();
+  const text = rows.concat(uncounted)
+    .map((r) => `${r.activity || ''} ${r.note || ''}`).join(' ').toLowerCase();
   const found = FOOD_GROUPS.filter((g) => g.re.test(text));
   const list = (arr) => arr.map((g) => g.label).join(', ').replace(/, ([^,]*)$/, ' and $1');
 
@@ -2040,7 +2069,9 @@ function foodReport(entries, money, days) {
   if (!rows.length) {
     return {
       meals: 0,
-      observation: `No meals logged${per}. Food is the easiest thing to eat without noticing, and the hardest to remember accurately a week later — logging even roughly is what makes any of this readable.`,
+      observation: uncounted.length
+        ? `No meals logged in the time tracker${per}, though ${uncounted.length} food ${uncounted.length === 1 ? 'entry is' : 'entries are'} in the money tracker. Calories are read from the time tracker only — paying for a meal, or shopping for one, is not the same as eating it — so log what you ate there and this fills in.`
+        : `No meals logged${per}. Food is the easiest thing to eat without noticing, and the hardest to remember accurately a week later — logging even roughly is what makes any of this readable.`,
       advice: 'Log a meal or two and answer the “What did you eat?” question. Two or three days is enough for a pattern to show.',
       nutrition: '', kcal: 0,
       hasFindings: false
@@ -2058,6 +2089,17 @@ function foodReport(entries, money, days) {
   }
 
   const parts = [`${rows.length} food ${rows.length === 1 ? 'entry' : 'entries'} logged${per}, ${withNotes.length} with details.`];
+  /* Said out loud, always. Money quietly left out of a calorie count is how
+     this comes back as "why is my lunch missing" — and the sentence doubles as
+     the instruction for getting it counted. */
+  if (paidFor.length) {
+    // Not "only" — the same meal may well be logged in both, and this sentence
+    // has to read true either way. What it states is that money adds no calories.
+    parts.push(`${paidFor.length} food ${paidFor.length === 1 ? 'payment is' : 'payments are'} logged too. Calories are read from the time tracker alone, so anything you ate needs an entry there to count.`);
+  }
+  if (bought.length) {
+    parts.push(`${bought.length} food ${bought.length === 1 ? 'shop' : 'shops'} logged too — read for what you buy, not counted as eaten.`);
+  }
   if (good.length) parts.push(`Working for you: ${list(good)}.`);
   if (risk.length) parts.push(`Worth watching: ${list(risk)} — regular rather than occasional, these are what tend to move weight, blood pressure and blood sugar.`);
   if (!risk.length && good.length) parts.push('Nothing logged stands out as a concern.');
