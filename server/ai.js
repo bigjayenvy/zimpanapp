@@ -204,6 +204,13 @@ Voice:
 
 Honesty:
 - Use only the figures given to you. Never invent a number, a date or an activity.
+- Do not print figures. No calorie counts, no totals, no hours, no percentages, no
+  weights. The card prints its own numbers directly above your paragraph, and yours
+  is written once and then cached, so a quoted figure goes stale beside a live one
+  and the two disagree on screen. Say "most of it", "a little over half", "a wide
+  gap" — describe the shape, and let the rows carry the arithmetic.
+- Naming a day, a category or a count of days is fine; those do not drift the way
+  a total does.
 - The figures are estimates from what they chose to log, and gaps are common. Say "logged" rather than implying the record is complete.
 - You are not a doctor, a dietitian or a therapist. Do not diagnose, do not prescribe, do not tell anyone to eat less or exercise more as a medical instruction. Observations about their own logged data are fine.
 - If a figure is missing or zero, say so plainly rather than guessing around it.
@@ -218,7 +225,7 @@ const DECK_SCHEMA = {
     profile: { type: 'string', description: 'At most 100 words. Given their top three categories, describe the kind of fortnight this was and what it suggests about how they spend their days. Generic is fine; flattering-but-empty is not.' },
     pace: { type: 'string', description: 'At most 60 words. Compare their busiest day with their lightest, and say something useful about the range between them.' },
     sleep: { type: 'string', description: 'At most 100 words. What the nights logged look like — the average, the consistency, any night that stands out.' },
-    energy: { type: 'string', description: 'At most 80 words. Restate the calorie balance in plain terms and repeat the supplied weight-per-week figure verbatim as an if-this-continues projection. Do not recompute it. Make clear it is a rough estimate from logged data.' },
+    energy: { type: 'string', description: 'At most 80 words. Say in plain terms which way the calorie balance is leaning and what that means at this rate, without printing any figure — the card shows the numbers and the projected weight change on its own rows. Make clear it is a rough estimate from what was logged.' },
     closing: { type: 'string', description: 'At most 250 words. The closing card. Tell them specifically what they did well in this window, drawing on the real figures. Offer one or two concrete, gentle suggestions. End on genuine encouragement. Creative and warm, never saccharine, never a lecture.' }
   },
   required: ['cover', 'donut', 'profile', 'pace', 'sleep', 'energy', 'closing'],

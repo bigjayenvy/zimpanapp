@@ -930,7 +930,6 @@ function deckFacts(v) {
   const days = Math.max(1, v.rangeDayCount);
   const b = v.rangeBurn, f = v.rangeFood;
   const netDay = Math.round((b.kcal + b.restKcal - f.kcal) / days);
-  const kg = weekWeightKg(netDay);
   const quiet = v.quietestDay;
 
   return {
@@ -958,9 +957,11 @@ function deckFacts(v) {
       burnedAtRest: Math.round(b.restKcal / days),
       eaten: Math.round(f.kcal / days),
       netPerDay: netDay,
-      // Worded here, not there. This is arithmetic someone may act on, so the
-      // model is given the sentence to repeat rather than the sum to do.
-      ifThisHeld: `about ${Math.abs(kg).toFixed(2)} kg ${kg >= 0 ? 'lost' : 'gained'} in a week`
+      /* Context for the model, not something for it to print — it is told to
+         quote no figures, and this one is on the card's own row where it is
+         recomputed every render. Sent so the prose can describe the pace
+         correctly without having to work it out. */
+      ifThisHeld: weekWeightLabel(netDay)
     } : null
   };
 }
@@ -4883,14 +4884,26 @@ function localSleep(v, days) {
   return bits.join(' ');
 }
 
+/* Quotes no figures, for the same reason the AI is told not to: the rows above
+   carry the arithmetic and are recomputed every render, while a paragraph might
+   be the cached one from this morning. Two numbers for the same thing, one of
+   them stale, is worse than one number and a sentence explaining it. */
 function localEnergy(net) {
-  const kg = weekWeightKg(net);
-  const size = Math.abs(kg);
+  const size = Math.abs(weekWeightKg(net));
   if (size < 0.05) {
-    return 'Your intake and your burn are close to level. Held at this rate, your weight would sit roughly where it is — these are rough estimates from what you logged and your weight, not measurements.';
+    return 'What you ate and what you burned came out close to level. Held at this rate your weight would sit roughly where it is. These are rough estimates from what you logged and your weight, not measurements.';
   }
-  return `At about ${Math.abs(net).toLocaleString('en-US')} calories a day ${net >= 0 ? 'under' : 'over'} what you burned, holding this rate for a week works out to roughly ${size.toFixed(2)} kg ${net >= 0 ? 'lost' : 'gained'}. `
-    + 'That is arithmetic on rough estimates from what you logged and your weight, not a measurement or a prediction.';
+  const pace = size >= 1 ? 'a brisk pace' : size >= 0.4 ? 'a steady pace' : 'a gentle pace';
+  return `You were ${net >= 0 ? 'burning more than you ate' : 'eating more than you burned'} across these days — ${pace} if it held, as the row above works out. `
+    + 'That is arithmetic on estimates drawn from what you logged, not a measurement or a promise.';
+}
+
+// Worded once, used by the card row and by the figures handed to the model.
+function weekWeightLabel(netKcalPerDay) {
+  const kg = weekWeightKg(netKcalPerDay);
+  const size = Math.abs(kg);
+  if (size < 0.05) return 'about level';
+  return `~${size.toFixed(2)} kg ${kg >= 0 ? 'lost' : 'gained'}`;
 }
 
 function localClosing(v, days, lit) {
@@ -4994,7 +5007,12 @@ function timeCards(v) {
       rows: [
         { label: 'Burned, workout and movement', value: `~${Math.round(b.kcal / Math.max(1, b.days)).toLocaleString('en-US')}` },
         { label: 'Burned at rest', value: `~${Math.round(b.restKcal / Math.max(1, b.days)).toLocaleString('en-US')}` },
-        { label: 'Eaten', value: `~${Math.round(f.kcal / Math.max(1, b.days)).toLocaleString('en-US')}` }
+        { label: 'Eaten', value: `~${Math.round(f.kcal / Math.max(1, b.days)).toLocaleString('en-US')}` },
+        /* On the card rather than in the paragraph. It is the one figure here
+           that appears nowhere else, and the paragraph is written once and then
+           cached — a projection quoted there would drift out of step with the
+           three rows above it. This is recomputed every render. */
+        { label: 'If this rate held for a week', value: weekWeightLabel(net) }
       ],
       summary: ai.energy || localEnergy(net)
     }));
