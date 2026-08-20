@@ -607,7 +607,7 @@ const state = {
   timerCategory: stored.timerCategory || (stored.categories[0] || {}).name || 'Chores',
   reportOpen: false,
   // Session only: a search is something you are doing, not a preference.
-  searchOpen: false, searchQuery: '',
+  searchQuery: '',
   donateOpen: false,
   resyncArmed: false,
 
@@ -3090,7 +3090,6 @@ function header(v) {
         </span>` : ''}
       <span class="appbar-cta" style="display:flex;align-items:center;gap:10px;">
         <a class="btn btn-donate" href="${DONATE_URL}" data-donate target="_blank" rel="noopener noreferrer">${NAV_ICONS.donate}<span>Donate</span></a>
-        <button class="btn btn-secondary" data-act="search-open" title="Search everything you have logged" style="font-size:13px;">⌕ Search</button>
         <button class="btn btn-primary" data-act="open-report" style="position:relative">Your Report Cards</button>
       </span>
     </div>
@@ -4786,7 +4785,11 @@ function timeDesktop(v) {
     <div class="col">
       <div data-sec="entry">${entryModeBar()}</div>
       <div data-sec="entrycard">${state.entryMode === 'manual' ? addEntryCard(v) : timerCard(v)}</div>
-      <div data-sec="log">${timeTableCard(v)}</div>
+      <div data-sec="log">
+        <div style="max-width:640px;margin:0 0 14px;">${searchField()}</div>
+        <div id="search-body">${String(state.searchQuery || '').trim() ? searchBody() : ''}</div>
+        ${String(state.searchQuery || '').trim() ? '' : timeTableCard(v)}
+      </div>
       <div data-sec="ins-head">${insightsHeading()}</div>
       <div data-sec="ins-today">${todayCard(v)}</div>
       <div data-sec="ins-past">${pastCard(v)}</div>
@@ -5613,7 +5616,6 @@ function render() {
   ${pillarSheet(v)}
   ${stepsSheet()}
   ${state.reportOpen ? reportSheet() : ''}
-  ${searchPanel()}
   ${notePromptDialog()}
   ${donateSheet()}
   ${aiConsentDialog()}
@@ -6988,9 +6990,7 @@ function mBrandBar() {
     <span style="font-family:var(--font-heading);font-weight:600;font-size:19px;letter-spacing:.02em;line-height:1;color:#16131f;">ZIMPAN<span style="color:#5f3ac9;">.</span></span>
   </span>
   <span style="display:flex;align-items:center;gap:8px;">
-    <button data-act="search-open" aria-label="Search entries"
-      style="width:38px;height:38px;flex:none;border:0;border-radius:50%;background:#f2eefe;display:grid;place-items:center;font-size:16px;color:#5f3ac9;cursor:pointer;">⌕</button>
-    <button data-act="m-account-open" aria-label="Account"
+<button data-act="m-account-open" aria-label="Account"
       style="width:38px;height:38px;flex:none;border:0;border-radius:50%;background:#e4dcfd;display:grid;place-items:center;font-family:var(--font-body);font-weight:600;font-size:14px;color:#472b97;cursor:pointer;">${esc(mInitials())}</button>
   </span>
 </div>`;
@@ -7021,6 +7021,9 @@ function mHome() {
      the review it opens belong to the two single-day windows only. */
   const gaps = single ? mGaps(day) : [];
   const capacity = dates.length * 1440;
+  // A query takes the section over: the results answer what is on screen, so
+  // showing the day underneath them would be two lists at once.
+  const searching = !!String(state.searchQuery || '').trim();
   return `
 <div style="padding:6px 22px 108px;">
   ${mBrandBar()}
@@ -7073,12 +7076,16 @@ function mHome() {
     <span style="font-size:17px;color:#7450e4;">→</span>
   </button>` : ''}
 
+  ${searchField()}
+
   <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;">
-    <h4 style="margin:0;font-family:var(--font-heading);font-weight:700;font-size:19px;color:#16131f;">${single ? 'Your day' : 'Your entries'}</h4>
-    <span style="font-size:12.5px;color:#756f88;">${list.length} ${list.length === 1 ? 'entry' : 'entries'}</span>
+    <h4 style="margin:0;font-family:var(--font-heading);font-weight:700;font-size:19px;color:#16131f;">${searching ? 'Found' : single ? 'Your day' : 'Your entries'}</h4>
+    <span style="font-size:12.5px;color:#756f88;">${searching ? '' : `${list.length} ${list.length === 1 ? 'entry' : 'entries'}`}</span>
   </div>
 
-  ${list.length ? (single
+  <div id="search-body">${searching ? searchBody() : ''}</div>
+
+  ${searching ? '' : list.length ? (single
     ? `<div style="display:flex;flex-direction:column;gap:9px;">${list.map(mEntryRow).join('')}</div>`
     : mGroupedList(dates).map((g) => `
       <div style="margin-bottom:18px;">
@@ -7651,7 +7658,6 @@ function mobileApp() {
   ${s.accountOpen ? mAccountSheet() : ''}
   ${s.donateOpen ? mDonateSheet() : ''}
   ${state.reportOpen ? reportSheet() : ''}
-  ${searchPanel()}
 </div>`;
 }
 
@@ -8275,26 +8281,20 @@ function searchBody() {
   </div>`;
 }
 
-/* The panel. One markup for both layouts: a phone fills it edge to edge, a
-   desktop gets a 560px dialog against the same backdrop. Top-aligned rather
-   than centred, because results grow downwards and a centred panel would walk
-   up the screen as they arrive. */
-function searchPanel() {
-  if (!state.searchOpen) return '';
+/* The field, sitting directly above the entries it searches rather than in
+   the header. Unfocused until tapped: it is on screen at all times now, and a
+   field that grabbed the caret on every render would put a keyboard over the
+   list on the way past. */
+function searchField() {
+  const q = state.searchQuery || '';
   return `
-<div class="dialog-backdrop" data-backdrop="search-close"
-  style="align-items:start;justify-content:center;padding:0;z-index:60;overflow-y:auto;">
-  <div class="dialog" style="width:min(560px,100%);max-width:560px;margin:0;border-radius:0 0 20px 20px;
-    padding:16px 18px 22px;gap:0;box-shadow:0 18px 44px rgba(47,28,102,.24);">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
-      <input class="input" type="text" data-k="search-q" value="${esc(state.searchQuery || '')}"
-        placeholder="Search everything you have logged" autocomplete="off"
-        style="flex:1;min-height:46px;padding:10px 14px;font-size:15.5px;border-radius:14px;">
-      <button data-act="search-close" aria-label="Close search"
-        style="flex:none;border:0;background:transparent;cursor:pointer;font-size:19px;color:#575168;min-width:44px;min-height:44px;">✕</button>
-    </div>
-    <div id="search-body">${searchBody()}</div>
-  </div>
+<div style="position:relative;margin-bottom:12px;">
+  <input class="input" type="text" data-k="search-q" value="${esc(q)}"
+    placeholder="Search everything you have logged" autocomplete="off"
+    style="width:100%;min-height:46px;padding:10px 42px 10px 38px;font-size:15px;border-radius:14px;">
+  <span aria-hidden="true" style="position:absolute;left:13px;top:50%;transform:translateY(-50%);font-size:15px;color:#9995ab;pointer-events:none;">⌕</span>
+  ${q ? `<button data-act="search-clear" aria-label="Clear search"
+    style="position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;cursor:pointer;font-size:16px;color:#756f88;width:34px;height:34px;border-radius:50%;">✕</button>` : ''}
 </div>`;
 }
 
@@ -8307,14 +8307,7 @@ function paintSearch() {
 }
 
 const SEARCH_ACTIONS = {
-  'search-open': () => {
-    state.searchOpen = true;
-    state.searchQuery = '';
-    // The one field in the app that exists to be typed into.
-    state.focusField = 'search-q';
-    render();
-  },
-  'search-close': () => { state.searchOpen = false; state.searchQuery = ''; render(); },
+  'search-clear': () => { state.searchQuery = ''; render(); },
   'search-suggest': (el) => {
     state.searchQuery = el.dataset.term || '';
     const field = root.querySelector('[data-k="search-q"]');
@@ -8326,7 +8319,6 @@ const SEARCH_ACTIONS = {
   'search-result': (el) => {
     const id = el.dataset.id, kind = el.dataset.kind;
     const row = findRow(kind === 'money' ? 'money' : 'entries', id);
-    state.searchOpen = false;
     state.searchQuery = '';
     if (!row) { render(); return; }
     state.selectedDate = row.date;
@@ -8422,7 +8414,16 @@ root.addEventListener('input', (ev) => {
 root.addEventListener('input', (ev) => {
   const el = ev.target;
   if (!el.dataset || el.dataset.k !== 'search-q') return;
+  const was = !!String(state.searchQuery || '').trim();
   state.searchQuery = el.value;
+  const now = !!String(state.searchQuery || '').trim();
+  /* The section changes shape the moment a query starts or ends — the heading
+     renames and the day's own list steps aside — and neither of those lives
+     inside the block a targeted repaint replaces. Only that first and last
+     keystroke needs the whole tree; every one in between repaints the results
+     alone, so the caret is left where it is. render() puts focus and selection
+     back on the way through. */
+  if (was !== now) { render(); return; }
   paintSearch();
 });
 
@@ -8479,7 +8480,7 @@ document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') { ev.preventDefault(); state.pickOpen = null; state.pickQuery = ''; render(); return; }
   }
   // Topmost first: the follow-up dialog sits above the report sheet.
-  if (ev.key === 'Escape' && state.searchOpen) { ACTIONS['search-close'](); return; }
+  if (ev.key === 'Escape' && String(state.searchQuery || '').trim()) { ACTIONS['search-clear'](); return; }
   if (ev.key === 'Escape' && state.notePrompt) { closeFollowUp(false); return; }
   if (ev.key === 'Escape' && state.donateOpen) { state.donateOpen = false; render(); return; }
   if (ev.key === 'Escape' && state.legalOpen) { state.legalOpen = null; render(); return; }
