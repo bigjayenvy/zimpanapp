@@ -6706,7 +6706,7 @@ const mDefaultStart = () => {
 state.m = {
   screen: 'home', step: 1, setupStep: 1,
   // draft
-  kind: null, day: 'today', earlierIso: '', calMonth: '',
+  kind: null, day: 'today', earlierIso: '', calMonth: '', skip: [],
   cat: null, activity: null, typing: false, activityText: '',
   dir: 'out', amount: '', startMin: mDefaultStart(), durMin: 60,
   note: '', noteOpen: false,
@@ -7191,6 +7191,14 @@ const mDraftLabel = () => {
 
 const mIsMoney = () => state.m.kind === 'money';
 
+/* Which steps this particular draft has to walk. Normally all four; a draft
+   handed over by a running timer already knows its kind and already measured
+   its start and length, so those two steps are dropped rather than asked over
+   again. The numbering and the progress bar follow the sequence, so a flow
+   that skips two steps says "1 of 2" instead of opening on "step 2 of 4". */
+const mFlowSteps = () => [1, 2, 3, 4].filter((n) => (state.m.skip || []).indexOf(n) < 0);
+const mStepAt = () => Math.max(0, mFlowSteps().indexOf(state.m.step));
+
 function mCanAdvance() {
   const s = state.m;
   if (s.step === 1) return !!s.kind;
@@ -7525,11 +7533,14 @@ function mFlow() {
     : M_FLOW_COPY[s.step]);
   const can = mCanAdvance();
   const done = s.step === 5;
+  const seq = mFlowSteps();
+  const at = mStepAt();
+  const last = at === seq.length - 1;
   return `
 <div style="min-height:100vh;padding-bottom:140px;">
 ${mStepChrome({
-    step: s.step, total: 4, label: done ? 'Saved' : `Step ${s.step} of 4`,
-    back: 'm-flow-back', hideBack: s.step === 1 || done, close: 'm-flow-close'
+    step: at + 1, total: seq.length, label: done ? 'Saved' : `Step ${at + 1} of ${seq.length}`,
+    back: 'm-flow-back', hideBack: at === 0 || done, close: 'm-flow-close'
   })}
 <div style="padding:18px 22px 12px;">
   <div style="animation:zStep .28s ease both;">
@@ -7539,8 +7550,8 @@ ${mStepChrome({
 </div>
 ${mFooter({
     act: 'm-flow-next', can: can || done,
-    label: done ? 'Back to today' : s.step === 4 ? 'Save entry' : 'Continue',
-    skip: s.step === 4 && !s.noteOpen ? 'm-flow-skip' : '', skipLabel: 'Skip for now'
+    label: done ? 'Back to today' : last ? 'Save entry' : 'Continue',
+    skip: last && !done && !s.noteOpen ? 'm-flow-skip' : '', skipLabel: 'Skip for now'
   })}
 </div>`;
 }
@@ -7836,7 +7847,7 @@ const mDraftDayFromRange = () => (mRangeKey() === 'yesterday' ? 'yesterday' : 't
 
 function mResetDraft() {
   Object.assign(state.m, {
-    step: 1, kind: null, day: 'today', earlierIso: '', calMonth: '',
+    step: 1, kind: null, day: 'today', earlierIso: '', calMonth: '', skip: [],
     cat: null, activity: null, typing: false, activityText: '',
     dir: 'out', amount: '', startMin: mDefaultStart(), durMin: 60,
     note: '', noteOpen: false, editId: null, editKind: null
@@ -8124,23 +8135,31 @@ const M_ACTIONS = {
      the WHEN chip changed as well. A multi-day window has no one day to mean,
      so those fall back to today. */
   'm-flow-open': () => { mResetDraft(); mSet({ screen: 'flow', day: mDraftDayFromRange() }); },
-  'm-log-time': () => { mResetDraft(); mSet({ screen: 'flow', kind: 'time', step: 2, day: mDraftDayFromRange() }); },
-  'm-log-money': () => { mResetDraft(); mSet({ screen: 'flow', kind: 'money', step: 2, day: mDraftDayFromRange() }); },
+  'm-log-time': () => { mResetDraft(); mSet({ screen: 'flow', kind: 'time', step: 2, skip: [1], day: mDraftDayFromRange() }); },
+  'm-log-money': () => { mResetDraft(); mSet({ screen: 'flow', kind: 'money', step: 2, skip: [1], day: mDraftDayFromRange() }); },
   'm-flow-close': () => { mResetDraft(); mGo('home'); },
   'm-flow-back': () => {
-    if (state.m.step <= 1) { mResetDraft(); mGo('home'); return; }
-    mSet({ step: state.m.step - 1, typing: false });
+    const seq = mFlowSteps(), at = mStepAt();
+    if (at <= 0) { mResetDraft(); mGo('home'); return; }
+    mSet({ step: seq[at - 1], typing: false });
   },
   'm-flow-next': () => {
     const s = state.m;
     if (s.step === 5) { mResetDraft(); mGo('home'); return; }
     if (!mCanAdvance()) return;
-    if (s.step === 4) { mCommit(); return; }
-    mSet({ step: s.step + 1, typing: false });
+    const seq = mFlowSteps(), at = mStepAt();
+    if (at === seq.length - 1) { mCommit(); return; }
+    mSet({ step: seq[at + 1], typing: false });
   },
   // "Skip for now" skips the note, not the entry — the entry still saves.
   'm-flow-skip': () => mCommit(),
-  'm-jump': (el) => mSet({ step: Number(el.dataset.step) || 1, typing: false }),
+  /* Jumping from the review is how a skipped step is reached deliberately —
+     the timer got the length wrong, say — so arriving at one puts it back in
+     the sequence rather than bouncing straight out of it again. */
+  'm-jump': (el) => {
+    const step = Number(el.dataset.step) || 1;
+    mSet({ step, typing: false, skip: (state.m.skip || []).filter((n) => n !== step) });
+  },
 
   'm-kind': (el) => mSet({ kind: el.dataset.kind, cat: null, activity: null, activityText: '', typing: false }),
   'm-day': (el) => mSet({ day: el.dataset.day }),
@@ -8220,8 +8239,11 @@ const M_ACTIONS = {
     state.timerUpdatedAt = Date.now();
     state.dirty.timer = true;
     mResetDraft();
+    /* The kind is settled and the clock has already been read, so those two
+       steps are dropped: the only thing left is to say what it was, which is
+       the whole point of timing first and naming after. */
     Object.assign(state.m, {
-      screen: 'flow', kind: 'time', step: 2, day: 'today',
+      screen: 'flow', kind: 'time', step: 2, day: 'today', skip: [1, 3],
       startMin: Math.max(0, Math.min(1439, started.getHours() * 60 + started.getMinutes())),
       durMin: mins
     });
@@ -8234,7 +8256,7 @@ const M_ACTIONS = {
     const on = el.dataset.day || todayIso;
     mResetDraft();
     Object.assign(state.m, {
-      screen: 'flow', kind: 'time', step: 2, startMin: a, durMin: b - a,
+      screen: 'flow', kind: 'time', step: 2, skip: [1, 3], startMin: a, durMin: b - a,
       day: on === todayIso ? 'today' : on === mShiftIso(todayIso, -1) ? 'yesterday' : 'earlier',
       earlierIso: on
     });
