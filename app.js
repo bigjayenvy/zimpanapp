@@ -6596,27 +6596,51 @@ const mGapTotal = (list) => list.reduce((a, g) => a + (g.b - g.a), 0);
 
 /* ── reading the week ── */
 
-const mWeekDates = () => {
-  const days = [];
-  for (let i = 6; i >= 0; i--) days.push(mShiftIso(todayIso, -i));
-  return days;
-};
+// Which window Insights is read over. Its own, not Today's: one is for logging
+// a day and the other for reading a stretch, and a control that moved both
+// would keep answering a question you had not asked.
+const mInsightKey = () => state.m.insightRange || 'week';
+const mInsightDates = () => mRangeDates(mInsightKey());
+// How the written line refers to its own window, mid-sentence.
+const mInsightPhrase = () => ({
+  today: 'today', yesterday: 'yesterday', week: 'your logged week',
+  fortnight: 'your last two weeks', month: 'your logged month'
+}[mInsightKey()] || 'your logged week');
 
-// Hours logged per day, or spent per day. Money in minor units until the last
-// division, same rule as everywhere else.
-function mWeekSeries(money) {
-  return mWeekDates().map((d) => ({
-    date: d,
-    label: new Date(d + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'narrow' }),
-    v: money ? mSumCents(mMoneyRows([d]), 'out') / 100 : mLoggedMins([d])
-  }));
+/* The bars. Over several days that is one bar per day; over a single day a
+   day-by-day chart would be one bar and six blanks, so it becomes one bar per
+   category instead — the same question, asked at the only resolution the
+   window can answer it. */
+function mRangeSeries(money) {
+  const dates = mInsightDates();
+  if (dates.length > 1) {
+    return dates.map((d) => ({
+      label: new Date(d + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'narrow' }),
+      v: money ? mSumCents(mMoneyRows([d]), 'out') / 100 : mLoggedMins([d]),
+      color: null
+    }));
+  }
+  const totals = {};
+  if (money) mMoneyRows(dates).forEach((e) => { totals[e.purpose] = (totals[e.purpose] || 0) + mCents(e.out); });
+  else mTimeRows(dates).forEach((e) => { totals[e.category] = (totals[e.category] || 0) + span(e); });
+  return Object.keys(totals)
+    .filter((k) => totals[k] > 0)
+    .sort((a, b) => totals[b] - totals[a])
+    .slice(0, 7)
+    .map((k) => ({
+      // Long names do not fit under a 45px bar; the colour carries the rest,
+      // and the row beneath spells every one of them out in full.
+      label: k.length > 6 ? k.slice(0, 5) + '…' : k,
+      v: money ? totals[k] / 100 : totals[k],
+      color: mColor(k, money)
+    }));
 }
 
-// Where it went: totals by category or purpose across the same seven days,
+// Where it went: totals by category or purpose across the chosen window,
 // largest first, capped at the rows that fit a phone.
 function mWeekSplit(money) {
   const totals = {};
-  mWeekDates().forEach((d) => {
+  mInsightDates().forEach((d) => {
     if (money) mMoneyRows([d]).forEach((e) => { totals[e.purpose] = (totals[e.purpose] || 0) + mCents(e.out); });
     else mTimeRows([d]).forEach((e) => { totals[e.category] = (totals[e.category] || 0) + span(e); });
   });
@@ -6637,29 +6661,30 @@ function mNotice(money) {
   const split = mWeekSplit(money);
   if (!split.length) {
     return money
-      ? 'Nothing spent in the last seven days — or nothing logged, which Zimpan cannot tell apart yet.'
-      : 'Not enough logged this week to see a pattern yet. A few more days and there will be one.';
+      ? `Nothing spent ${mInsightPhrase()} — or nothing logged, which Zimpan cannot tell apart yet.`
+      : 'Not enough logged in this stretch to see a pattern yet. A few more days and there will be one.';
   }
   const total = split.reduce((a, r) => a + r.raw, 0);
   const top = split[0];
   const share = Math.round((top.raw / total) * 100);
-  const series = mWeekSeries(money);
+  const window = mInsightDates();
+  const series = window.map((d) => ({ date: d, v: money ? mSumCents(mMoneyRows([d]), 'out') / 100 : mLoggedMins([d]) }));
   const busiest = series.slice().sort((a, b) => b.v - a.v)[0];
   const busiestDay = new Date(busiest.date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long' });
 
   if (money) {
-    const dates = mWeekDates();
+    const dates = window;
     const inCents = dates.reduce((a, d) => a + mSumCents(mMoneyRows([d]), 'in'), 0);
     // Every purpose, not the handful the card had room for.
     const outCents = dates.reduce((a, d) => a + mSumCents(mMoneyRows([d]), 'out'), 0);
     const covered = outCents > 0 && inCents >= outCents;
-    return `${top.name} is ${share}% of your spending this week, and ${busiestDay} was the heaviest day of it. `
+    return `${top.name} is ${share}% of your spending ${mInsightPhrase()}, and ${busiestDay} was the heaviest day of it. `
       + (covered
         ? `What came in more than covered what went out.`
         : `Nothing logged coming in to set against it.`);
   }
-  const days = mWeekDates().filter((d) => mLoggedMins([d]) > 0).length;
-  return `${top.name} took ${share}% of your logged week, spread over ${days} ${days === 1 ? 'day' : 'days'}. `
+  const days = window.filter((d) => mLoggedMins([d]) > 0).length;
+  return `${top.name} took ${share}% of ${mInsightPhrase()}, spread over ${days} ${days === 1 ? 'day' : 'days'}. `
     + `${busiestDay} was your longest day at ${mDur(busiest.v)}.`;
 }
 
@@ -6690,7 +6715,7 @@ state.m = {
   catTyping: false, catText: '', weight: '', sleep: '',
   // the rest
   range: 'today', reviewDay: '',
-  insightTab: 'time', accountOpen: false,
+  insightTab: 'time', insightRange: 'week', accountOpen: false,
   donateOpen: false, donateAmt: 50, donateThanks: false
 };
 
@@ -6999,12 +7024,11 @@ function mBrandBar() {
 /* The five windows, as a row that scrolls rather than wraps: five chips do not
    fit across 393px at a tappable size, and a second line of them pushes the
    day's figures below the fold. */
-function mRangeChips() {
-  const on = mRangeKey();
+function mRangeChips(act, on) {
   return `
 <div style="display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;margin-bottom:16px;padding-bottom:2px;">
   ${DECK_RANGES.map(([key, label]) => `
-    <button data-act="m-range" data-key="${key}" aria-pressed="${key === on}"
+    <button data-act="${esc(act || 'm-range')}" data-key="${key}" aria-pressed="${key === on}"
       style="flex:none;padding:9px 15px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;white-space:nowrap;min-height:40px;${mChip(key === on)}">${esc(label)}</button>`).join('')}
 </div>`;
 }
@@ -7031,7 +7055,7 @@ function mHome() {
     <div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#7450e4;font-weight:600;">${esc(mRangeKicker())}</div>
     <div style="font-family:var(--font-heading);font-weight:700;font-size:29px;line-height:1.1;color:#16131f;margin-top:3px;">${esc(mRangeHeading())}</div>
   </div>
-  ${mRangeChips()}
+  ${mRangeChips('m-range', mRangeKey())}
 
   <div style="border-radius:20px;padding:18px;background:var(--grad-time-money);box-shadow:${M_LIFT};color:#fff;margin-bottom:14px;">
     <div style="display:flex;justify-content:space-between;align-items:baseline;">
@@ -7511,7 +7535,8 @@ function mDetail() {
 
 function mInsights() {
   const money = state.m.insightTab === 'money';
-  const series = mWeekSeries(money);
+  const series = mRangeSeries(money);
+  const byCategory = !!(series[0] && series[0].color);
   const max = Math.max.apply(null, series.map((w) => w.v).concat([1]));
   const split = mWeekSplit(money);
   const splitMax = split.length ? split[0].raw : 1;
@@ -7526,9 +7551,10 @@ function mInsights() {
 <div style="padding:6px 22px 108px;">
   ${mBrandBar()}
   <div style="margin-bottom:18px;">
-    <div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#7450e4;font-weight:600;">Last 7 days</div>
+    <div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#7450e4;font-weight:600;">${esc(mRangeKicker(mInsightKey()))}</div>
     <div style="font-family:var(--font-heading);font-weight:700;font-size:29px;line-height:1.1;color:#16131f;margin-top:3px;">The pattern</div>
   </div>
+  ${mRangeChips('m-insight-range', mInsightKey())}
   <div class="seg" style="display:flex;width:100%;gap:6px;padding:4px;background:#e8e6ef;border-color:transparent;margin-bottom:18px;">
     ${opt('time', 'Time')}${opt('money', 'Money')}
   </div>
@@ -7537,13 +7563,13 @@ function mInsights() {
 
   <div class="card" style="border-radius:20px;box-shadow:${M_SHADOW_MD};padding:18px;gap:0;margin-bottom:14px;">
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:16px;">
-      <span style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;">${money ? 'Spent per day' : 'Hours logged per day'}</span>
+      <span style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;">${byCategory ? (money ? 'Spent by purpose' : 'Hours by category') : (money ? 'Spent per day' : 'Hours logged per day')}</span>
       <span style="font-family:var(--font-heading);font-weight:700;font-size:22px;color:#16131f;">${esc(total)}</span>
     </div>
     <div style="display:flex;align-items:flex-end;gap:8px;height:118px;">
       ${series.map((w, i) => `
         <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:7px;justify-content:flex-end;height:100%;">
-          <div style="width:100%;border-radius:8px 8px 4px 4px;min-height:5px;height:${Math.round((w.v / max) * 100)}%;background:${i === series.length - 1 ? 'linear-gradient(180deg,#8b5cf6,#4f46e5)' : '#e4dcfd'};"></div>
+          <div style="width:100%;border-radius:8px 8px 4px 4px;min-height:5px;height:${Math.round((w.v / max) * 100)}%;background:${w.color ? esc(w.color) : i === series.length - 1 ? 'linear-gradient(180deg,#8b5cf6,#4f46e5)' : '#e4dcfd'};"></div>
           <span style="font-size:10.5px;color:#9995ab;font-weight:500;">${esc(w.label)}</span>
         </div>`).join('')}
     </div>
@@ -7930,6 +7956,7 @@ const M_ACTIONS = {
   'm-go-home': () => mGo('home'),
   'm-go-insights': () => mGo('insights'),
   'm-range': (el) => mSet({ range: el.dataset.key }),
+  'm-insight-range': (el) => mSet({ insightRange: el.dataset.key }),
   'm-go-review': (el) => mSet({ reviewDay: (el && el.dataset.day) || todayIso, screen: 'review' }),
   'm-insight-tab': (el) => mSet({ insightTab: el.dataset.tab }),
   'm-open-entry': (el) => mSet({ screen: 'detail', selected: el.dataset.id, selectedKind: el.dataset.kind }),
@@ -8120,6 +8147,10 @@ const M_ACTIONS = {
      desktop's and is reused whole. */
   'm-report-open': () => {
     state.app = state.m.insightTab === 'money' ? 'money' : 'time';
+    /* The deck opens on the window Insights is already showing. Both read the
+       same five spans off DECK_RANGES, so handing one to the other is a
+       straight assignment rather than a translation. */
+    state.deckRange = mInsightKey();
     ACTIONS['open-report']();
   },
 
