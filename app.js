@@ -6852,10 +6852,24 @@ function mEntryRow(e) {
   const meta = money
     ? `${e.cat} · money ${e.dir}`
     : `${e.cat} · ${mRange(e.start, e.dur)}`;
+  /* Which of the two things this is, at a glance. The tints are the ones the
+     quick actions and the kind cards already use, so a row and the button that
+     created it read as the same family.
+
+     The money glyph is the active currency, which is not always one character:
+     "Dhs" and "HK$" have to sit in the same 26px tile as "$", so the type size
+     follows the glyph rather than the tile growing to fit it. */
+  const glyph = money ? mGlyph() : '◷';
+  const glyphSize = !money ? 13 : glyph.length > 2 ? 8.5 : glyph.length > 1 ? 10 : 13;
+  const tile = `
+  <span aria-hidden="true" style="width:26px;height:26px;flex:none;border-radius:9px;display:grid;place-items:center;
+    background:${money ? '#eceefe' : '#f2eefe'};color:${money ? '#3f4bc4' : '#5f3ac9'};
+    font-size:${glyphSize}px;font-weight:700;line-height:1;">${esc(glyph)}</span>`;
   return `
 <button class="card" data-act="m-open-entry" data-id="${esc(e.id)}" data-kind="${money ? 'money' : 'time'}"
-  style="flex-direction:row;align-items:center;gap:13px;width:100%;padding:13px 14px;border-radius:16px;box-shadow:${M_SHADOW_SM};cursor:pointer;text-align:left;">
+  style="flex-direction:row;align-items:center;gap:10px;width:100%;padding:13px 14px;border-radius:16px;box-shadow:${M_SHADOW_SM};cursor:pointer;text-align:left;">
   <span style="width:9px;height:38px;border-radius:999px;flex:none;background:${esc(mColor(e.cat, money))};"></span>
+  ${tile}
   <span style="flex:1;min-width:0;">
     <span style="display:block;font-weight:600;font-size:15px;color:#16131f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(e.title)}</span>
     <span style="display:block;font-size:12.5px;color:#756f88;margin-top:2px;">${esc(meta)}</span>
@@ -6889,21 +6903,33 @@ function mDonateCard() {
 </div>`;
 }
 
+/* The mark, on the two screens that are destinations rather than steps. Setup
+   and the add flow deliberately go without: each is one job with a way out,
+   and a logo on them is only a second thing to look at. The avatar moves up
+   here too, which hands the day's heading the full width it was drawn for. */
+function mBrandBar() {
+  return `
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+  <span style="display:flex;align-items:center;gap:9px;">
+    ${LOGO_BADGE(26)}
+    <span style="font-family:var(--font-heading);font-weight:600;font-size:19px;letter-spacing:.02em;line-height:1;color:#16131f;">ZIMPAN<span style="color:#5f3ac9;">.</span></span>
+  </span>
+  <button data-act="m-account-open" aria-label="Account"
+    style="width:38px;height:38px;flex:none;border:0;border-radius:50%;background:#e4dcfd;display:grid;place-items:center;font-family:var(--font-body);font-weight:600;font-size:14px;color:#472b97;cursor:pointer;">${esc(mInitials())}</button>
+</div>`;
+}
+
 function mHome() {
   const list = mDayList(todayIso);
   const logged = mLoggedMins(todayIso);
   const bars = mDayBars(todayIso);
   const gaps = mGaps(todayIso);
-  const initials = mInitials();
   return `
 <div style="padding:6px 22px 108px;">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
-    <div>
-      <div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#7450e4;font-weight:600;">${esc(mKicker(todayIso))}</div>
-      <div style="font-family:var(--font-heading);font-weight:700;font-size:29px;line-height:1.1;color:#16131f;margin-top:3px;">Today</div>
-    </div>
-    <button data-act="m-account-open" aria-label="Account"
-      style="width:38px;height:38px;border:0;border-radius:50%;background:#e4dcfd;display:grid;place-items:center;font-family:var(--font-body);font-weight:600;font-size:14px;color:#472b97;cursor:pointer;">${esc(initials)}</button>
+  ${mBrandBar()}
+  <div style="margin-bottom:20px;">
+    <div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#7450e4;font-weight:600;">${esc(mKicker(todayIso))}</div>
+    <div style="font-family:var(--font-heading);font-weight:700;font-size:29px;line-height:1.1;color:#16131f;margin-top:3px;">Today</div>
   </div>
 
   <div style="border-radius:20px;padding:18px;background:${M_GRAD};box-shadow:${M_LIFT};color:#fff;margin-bottom:14px;">
@@ -7352,6 +7378,7 @@ function mInsights() {
     </label>`;
   return `
 <div style="padding:6px 22px 108px;">
+  ${mBrandBar()}
   <div style="margin-bottom:18px;">
     <div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#7450e4;font-weight:600;">Last 7 days</div>
     <div style="font-family:var(--font-heading);font-weight:700;font-size:29px;line-height:1.1;color:#16131f;margin-top:3px;">The pattern</div>
