@@ -7011,7 +7011,7 @@ function mHome() {
   </div>
   ${mRangeChips()}
 
-  <div style="border-radius:20px;padding:18px;background:${M_GRAD};box-shadow:${M_LIFT};color:#fff;margin-bottom:14px;">
+  <div style="border-radius:20px;padding:18px;background:var(--grad-time-money);box-shadow:${M_LIFT};color:#fff;margin-bottom:14px;">
     <div style="display:flex;justify-content:space-between;align-items:baseline;">
       <div>
         <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;opacity:.78;">${single ? 'Logged today' : 'Logged'}</div>
@@ -7019,7 +7019,7 @@ function mHome() {
       </div>
       <div style="text-align:right;">
         <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;opacity:.78;">Money out</div>
-        <div style="font-family:var(--font-heading);font-weight:700;font-size:32px;line-height:1.1;margin-top:4px;">${esc(mMoney(mOutToday(todayIso)))}</div>
+        <div style="font-family:var(--font-heading);font-weight:700;font-size:32px;line-height:1.1;margin-top:4px;">${esc(mMoney(mOutToday(dates)))}</div>
       </div>
     </div>
     <div style="display:flex;gap:3px;margin-top:16px;height:9px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.22);">

@@ -135,6 +135,12 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     display: flex; align-items: center; gap: 9px;
     min-height: 44px; padding: 8px 10px; font-size: 15px; border-radius: 10px;
   }
+  /* `filterPicker` hides rows with the `hidden` attribute, which works through
+     the UA rule [hidden] { display: none }. A class selector setting display
+     outranks it, so the rule above quietly beat the filter: rows were marked
+     hidden and stayed on screen. Anything that sets display on something
+     hideable has to say what hidden means for it. */
+  .m-pick .pick-opt[hidden] { display: none; }
   .m-pick .pick-opt.is-on { background: var(--color-accent-100); }
   .m-pick .pick-list { gap: 2px; }
   .m-pick .pick-btn { box-shadow: var(--shadow-sm); }
@@ -150,6 +156,12 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      make it agree with everything else on the page and mean nothing — but both
      are retuned to sit with the violet rather than against it. */
   :root {
+    /* Time on the left, money on the right, and the card that carries both
+       figures sweeps from one tracker's hue to the other. The stops run
+       through blue rather than straight from violet to teal — the direct path
+       between them passes through a muddy grey at the midpoint, which is
+       exactly where this card is widest. */
+    --grad-time-money: linear-gradient(100deg, #8b5cf6 0%, #6d54f0 32%, #3f7fd4 66%, #16a394 100%);
     --zg-strong: #0e9f6e;
     --zg-text: #57516b;
     /* The selected block in the bottom bar: a tint of the brand, since the
