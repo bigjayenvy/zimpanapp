@@ -25,11 +25,26 @@ CREATE TABLE IF NOT EXISTS users (
   -- Optional. Only used to scale the calorie-burn estimate; blank falls back
   -- to an average build.
   weight_kg     SMALLINT UNSIGNED NULL,
+  -- The hour the day is treated as over, minutes since midnight. Gap review
+  -- walks from 6am to here looking for unlogged stretches; null falls back to
+  -- 10pm, which is what the flow assumed before anyone could say otherwise.
+  sleep_min     SMALLINT UNSIGNED NULL,
   -- Steps walked, keyed by date: {"2026-08-16": {"v": 5300, "t": 1755300000000}}.
   -- A column rather than a table because the map is small, always read whole,
   -- and merged per date on the client using the per-date stamp — which is what
   -- lets two devices each record a different day without either winning.
   steps_json    JSON         NULL,
+  -- Which trackers the user asked to be prompted about:
+  -- {"time": true, "money": true, "steps": false, "meals": false}. A column
+  -- rather than a table for the same reason steps_json is one: four booleans
+  -- read and written whole, only ever by their owner.
+  tracks_json   JSON         NULL,
+  -- A timer that is still running. It is not an entry yet — it becomes one
+  -- only when it is stopped — but it lives here rather than on the device so
+  -- locking the phone, reloading, or opening the web app does not lose it.
+  -- The activity is deliberately absent: this flow names the entry on stop.
+  timer_start   BIGINT       NULL,
+  timer_cat     VARCHAR(60)  NULL,
   -- 'user', 'manager' or 'superadmin'. Managers read the admin dashboard,
   -- superadmins also write to it. Everyone else never sees it exists.
   role          VARCHAR(16)  NOT NULL DEFAULT 'user',

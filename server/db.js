@@ -156,6 +156,17 @@ async function alterExisting() {
   if (!has('steps_json')) {
     await pool.query('ALTER TABLE users ADD COLUMN steps_json JSON NULL AFTER weight_kg');
   }
+  if (!has('sleep_min')) {
+    await pool.query('ALTER TABLE users ADD COLUMN sleep_min SMALLINT UNSIGNED NULL AFTER weight_kg');
+  }
+  if (!has('tracks_json')) {
+    await pool.query('ALTER TABLE users ADD COLUMN tracks_json JSON NULL AFTER steps_json');
+  }
+  // Added together and only ever read together, so one guard covers both.
+  if (!has('timer_start')) {
+    await pool.query('ALTER TABLE users ADD COLUMN timer_start BIGINT NULL AFTER steps_json');
+    await pool.query('ALTER TABLE users ADD COLUMN timer_cat VARCHAR(60) NULL AFTER timer_start');
+  }
   if (!has('role')) {
     await pool.query("ALTER TABLE users ADD COLUMN role VARCHAR(16) NOT NULL DEFAULT 'user' AFTER steps_json");
   }

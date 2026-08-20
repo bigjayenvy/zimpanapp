@@ -59,7 +59,7 @@ const list = (v, field) => {
   return v;
 };
 
-export const CURRENCIES = ['PHP', 'AED', 'USD', 'EUR'];
+export const CURRENCIES = ['PHP', 'AED', 'USD', 'EUR', 'SGD', 'HKD'];
 
 /* ── pull ── */
 
@@ -73,7 +73,9 @@ export async function changesSince(userId, since) {
              FROM categories WHERE user_id = ? AND updated_at > ?`, [userId, since]),
     query(`SELECT name, color, position, updated_at, deleted
              FROM purposes WHERE user_id = ? AND updated_at > ?`, [userId, since]),
-    one('SELECT currency, weight_kg, steps_json, updated_at FROM users WHERE id = ?', [userId])
+    one(`SELECT currency, weight_kg, sleep_min, steps_json, tracks_json,
+                timer_start, timer_cat, display_name, updated_at
+           FROM users WHERE id = ?`, [userId])
   ]);
 
   const named = (rows) => rows.map((r) => ({
@@ -99,6 +101,23 @@ export async function changesSince(userId, since) {
       : null,
     weightKg: user && Number(user.updated_at) > since
       ? { value: user.weight_kg == null ? null : Number(user.weight_kg), updatedAt: Number(user.updated_at) }
+      : null,
+    sleepMin: user && Number(user.updated_at) > since
+      ? { value: user.sleep_min == null ? null : Number(user.sleep_min), updatedAt: Number(user.updated_at) }
+      : null,
+    name: user && Number(user.updated_at) > since
+      ? { value: user.display_name || '', updatedAt: Number(user.updated_at) }
+      : null,
+    tracks: user && Number(user.updated_at) > since && user.tracks_json
+      ? { value: typeof user.tracks_json === 'string' ? JSON.parse(user.tracks_json) : user.tracks_json,
+          updatedAt: Number(user.updated_at) }
+      : null,
+    /* A timer is a fact about right now, so it is sent whole every time rather
+       than filtered by `since`: a device that pulls after the timer started
+       has to learn about it even if nothing else on the row has moved. */
+    timer: user
+      ? { start: user.timer_start == null ? null : Number(user.timer_start),
+          category: user.timer_cat || '', updatedAt: Number(user.updated_at) }
       : null,
     /* Sent whole rather than filtered by `since`: the map carries a stamp per
        date and the client merges on those, so it needs every day it has not
@@ -215,6 +234,43 @@ export async function applyChanges(userId, changes) {
     weight = [value, stamp(c.weightKg.updatedAt, 'weightKg.updatedAt')];
   }
 
+  // Minutes since midnight, so 1439 is the last legal value. Null clears it
+  // and puts the day's end back to the 10pm default.
+  let sleep = null;
+  if (c.sleepMin && typeof c.sleepMin === 'object') {
+    const raw = c.sleepMin.value;
+    const value = raw == null || raw === '' ? null : int(raw, 'sleepMin.value', 0, 1439);
+    sleep = [value, stamp(c.sleepMin.updatedAt, 'sleepMin.updatedAt')];
+  }
+
+  let name = null;
+  if (c.name && typeof c.name === 'object') {
+    const raw = c.name.value;
+    const value = raw == null || raw === '' ? null : str(raw, 'name.value', 120);
+    name = [value, stamp(c.name.updatedAt, 'name.updatedAt')];
+  }
+
+  /* Four known booleans, rebuilt rather than stored as sent: an unknown key
+     here would be handed back to every device forever. */
+  let tracks = null;
+  if (c.tracks && typeof c.tracks === 'object' && c.tracks.value && typeof c.tracks.value === 'object') {
+    const v = c.tracks.value;
+    tracks = [JSON.stringify({
+      time: !!v.time, money: !!v.money, steps: !!v.steps, meals: !!v.meals
+    }), stamp(c.tracks.updatedAt, 'tracks.updatedAt')];
+  }
+
+  /* The running timer. `start` null means it was stopped, which is a write
+     worth making — that is how the other devices find out. */
+  let timer = null;
+  if (c.timer && typeof c.timer === 'object') {
+    const raw = c.timer.start;
+    const start = raw == null || raw === '' ? null : stamp(raw, 'timer.start');
+    const cat = c.timer.category == null || c.timer.category === ''
+      ? null : str(c.timer.category, 'timer.category', 60);
+    timer = [start, cat, stamp(c.timer.updatedAt, 'timer.updatedAt')];
+  }
+
   await transaction(async (conn) => {
     const run = async (sql, rows) => { for (const r of rows) await conn.execute(sql, r); };
     await run(UPSERT_ENTRY, entries);
@@ -228,6 +284,22 @@ export async function applyChanges(userId, changes) {
     if (weight) {
       await conn.execute('UPDATE users SET weight_kg = ?, updated_at = ? WHERE id = ? AND updated_at <= ?',
         [weight[0], weight[1], userId, weight[1]]);
+    }
+    if (sleep) {
+      await conn.execute('UPDATE users SET sleep_min = ?, updated_at = ? WHERE id = ? AND updated_at <= ?',
+        [sleep[0], sleep[1], userId, sleep[1]]);
+    }
+    if (name) {
+      await conn.execute('UPDATE users SET display_name = ?, updated_at = ? WHERE id = ? AND updated_at <= ?',
+        [name[0], name[1], userId, name[1]]);
+    }
+    if (tracks) {
+      await conn.execute('UPDATE users SET tracks_json = ?, updated_at = ? WHERE id = ? AND updated_at <= ?',
+        [tracks[0], tracks[1], userId, tracks[1]]);
+    }
+    if (timer) {
+      await conn.execute('UPDATE users SET timer_start = ?, timer_cat = ?, updated_at = ? WHERE id = ? AND updated_at <= ?',
+        [timer[0], timer[1], timer[2], userId, timer[2]]);
     }
     /* Merged here rather than overwritten. A device only sends the days it
        knows about, so writing its map wholesale would erase any day recorded

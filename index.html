@@ -61,6 +61,75 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   input[type="time"]::-webkit-calendar-picker-indicator { opacity: .35; }
 
+  /* ── the mobile logging flow ──
+     Everything else on the phone is drawn with the design system's classes and
+     tokens. These three are the pieces it has no equivalent for: a card that
+     has to pulse, a rail that has to be dragged, and a fill that has to read as
+     "nothing was here". The animations are named because the flow leans on
+     them by name — a step slides in, a tick pops, a running timer breathes. */
+  @keyframes zStep { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  @keyframes zPop  { from { opacity: 0; transform: scale(.9); } to { opacity: 1; transform: none; } }
+  @keyframes zPulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+  /* The running timer. Outlined rather than filled, so the idle card's
+     gradient stays the thing that invites a tap and this one just reports. */
+  .m-timer {
+    display: flex; align-items: center; gap: 14px;
+    padding: 16px; border-radius: 18px;
+    background: #fff; border: 1.5px solid var(--color-accent);
+    box-shadow: 0 8px 22px color-mix(in srgb, var(--color-accent) 18%, transparent);
+  }
+  .m-timer-dot {
+    width: 10px; height: 10px; flex: none; border-radius: 50%;
+    background: var(--color-accent);
+    animation: zPulse 1.4s ease-in-out infinite;
+  }
+
+  /* The drag track. The hit area is 38px tall against a 10px rail, because the
+     thing being aimed at is a finger's width even though it does not look it.
+     touch-action is what stops the browser scrolling the page instead. */
+  .m-track {
+    position: relative; height: 38px; margin-top: 12px;
+    cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  .m-track:active { cursor: grabbing; }
+  .m-rail {
+    position: absolute; left: 0; right: 0; top: 14px;
+    height: 10px; border-radius: 999px; background: var(--color-neutral-200);
+  }
+  .m-fill {
+    position: absolute; top: 14px; height: 10px; border-radius: 999px;
+    background: linear-gradient(90deg, #8b5cf6, #4f46e5);
+  }
+  .m-handle {
+    position: absolute; top: 5px; width: 28px; height: 28px;
+    margin-left: -14px; border-radius: 50%;
+    background: #fff; border: 2.5px solid var(--color-accent);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--color-accent-2) 35%, transparent);
+  }
+
+  /* Unlogged time. Hatched rather than a flat colour: a solid bar reads as a
+     category you cannot name, and this is the absence of one. */
+  .m-hatch {
+    background: repeating-linear-gradient(115deg,
+      var(--color-accent-300) 0 7px, var(--color-accent-200) 7px 14px);
+  }
+  /* The banner's tile carries the same hatch at a tighter pitch, since it is a
+     third of the width and the stripes would otherwise read as two blocks. */
+  .m-hatch-tile {
+    background: repeating-linear-gradient(115deg,
+      var(--color-accent-300) 0 6px, var(--color-accent-200) 6px 12px);
+  }
+
+  /* Held down, a numpad key lights rather than moves — the finger is already
+     covering it, so anything subtler is invisible. */
+  .m-key:active { background: var(--color-accent-200) !important; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .m-timer-dot { animation: none; }
+    [style*="zStep"], [style*="zPop"] { animation: none !important; }
+  }
+
   /* — semantic colour —
      These carry meaning rather than brand: energy out, energy in, giving. They
      stay green/amber through the rebrand — recolouring "burned" violet would

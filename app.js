@@ -115,10 +115,16 @@ function durShort(mins) {
 /* Currency is a display choice, not a conversion — picking a different one
    relabels the amounts you logged, it does not convert them. */
 const CURRENCIES = [
+  // PHP stays first: currency() falls back to this row, and that fallback is
+  // what an account with no stored preference has always resolved to.
   { code: 'PHP', symbol: '₱', label: 'Philippine Peso' },
-  { code: 'AED', symbol: 'AED ', label: 'UAE Dirham' },
+  // "Dhs" rather than "AED" — the dirham is written the way it is spoken in
+  // the shops, and it is the symbol the mobile flow puts on its money tile.
+  { code: 'AED', symbol: 'Dhs ', label: 'UAE Dirham' },
   { code: 'USD', symbol: '$', label: 'US Dollar' },
-  { code: 'EUR', symbol: '€', label: 'Euro' }
+  { code: 'EUR', symbol: '€', label: 'Euro' },
+  { code: 'SGD', symbol: 'S$', label: 'Singapore Dollar' },
+  { code: 'HKD', symbol: 'HK$', label: 'Hong Kong Dollar' }
 ];
 const currency = () => CURRENCIES.find((c) => c.code === state.currency) || CURRENCIES[0];
 
@@ -381,6 +387,11 @@ function save() {
       steps: state.steps, stepsAt: state.stepsAt,
       deckRange: state.deckRange,
       weightKg: state.weightKg, weightUpdatedAt: state.weightUpdatedAt,
+      sleepMin: state.sleepMin, sleepUpdatedAt: state.sleepUpdatedAt,
+      displayName: state.displayName, nameUpdatedAt: state.nameUpdatedAt,
+      tracks: state.tracks, tracksUpdatedAt: state.tracksUpdatedAt,
+      timerUpdatedAt: state.timerUpdatedAt,
+      setupDone: state.setupDone, mClassic: state.mClassic,
       entryMode: state.entryMode,
       tombstones: state.tombstones, dirty: state.dirty,
       lastSyncAt: state.lastSyncAt, account: state.account,
@@ -554,6 +565,25 @@ const state = {
 
   weightKg: Number(stored.weightKg) || null,
   weightUpdatedAt: Number(stored.weightUpdatedAt) || 0,
+
+  /* Where the day stops. Gap review walks from 6am to here; null means nobody
+     has said, and 10pm stands in. Minutes since midnight, like everything else
+     that is a time in this app. */
+  sleepMin: stored.sleepMin == null ? null : Number(stored.sleepMin),
+  sleepUpdatedAt: Number(stored.sleepUpdatedAt) || 0,
+  // What to call you. Collected at setup, shown on Today.
+  displayName: stored.displayName || '',
+  nameUpdatedAt: Number(stored.nameUpdatedAt) || 0,
+  // Which trackers to ask about. Time and money carry the app, so they start on.
+  tracks: Object.assign({ time: true, money: true, steps: false, meals: false },
+    stored.tracks && typeof stored.tracks === 'object' ? stored.tracks : {}),
+  tracksUpdatedAt: Number(stored.tracksUpdatedAt) || 0,
+  timerUpdatedAt: Number(stored.timerUpdatedAt) || 0,
+  /* Whether first-run setup has been through. An account that already has rows
+     has plainly been set up, whatever this device remembers. */
+  setupDone: stored.setupDone === true,
+  // Whether the phone was sent back to the full desktop layout by hand.
+  mClassic: stored.mClassic === true,
   // 'timer' or 'manual' — only one entry card is on screen at a time.
   entryMode: stored.entryMode === 'manual' ? 'manual' : 'timer',
 
@@ -630,7 +660,11 @@ const state = {
   tombstones: Object.assign(EMPTY_KEYED(), stored.tombstones),
   dirty: Object.assign(EMPTY_KEYED(), stored.dirty, {
     currency: !!(stored.dirty && stored.dirty.currency),
-    steps: !!(stored.dirty && stored.dirty.steps)
+    steps: !!(stored.dirty && stored.dirty.steps),
+    sleep: !!(stored.dirty && stored.dirty.sleep),
+    name: !!(stored.dirty && stored.dirty.name),
+    tracks: !!(stored.dirty && stored.dirty.tracks),
+    timer: !!(stored.dirty && stored.dirty.timer)
   }),
   lastSyncAt: Number(stored.lastSyncAt) || 0,
   account: stored.account || null,
@@ -733,6 +767,14 @@ function collectChanges() {
   });
   if (state.dirty.currency) out.currency = { value: state.currency, updatedAt: state.currencyUpdatedAt };
   if (state.dirty.weight) out.weightKg = { value: state.weightKg, updatedAt: state.weightUpdatedAt };
+  if (state.dirty.sleep) out.sleepMin = { value: state.sleepMin, updatedAt: state.sleepUpdatedAt };
+  if (state.dirty.name) out.name = { value: state.displayName, updatedAt: state.nameUpdatedAt };
+  if (state.dirty.tracks) out.tracks = { value: state.tracks, updatedAt: state.tracksUpdatedAt };
+  /* A stopped timer is as much news as a started one, so this pushes whatever
+     the field currently says rather than only a live start time. */
+  if (state.dirty.timer) {
+    out.timer = { start: state.timerStart, category: state.timerCategory, updatedAt: state.timerUpdatedAt };
+  }
   /* Sent whole rather than as a diff. The map is one small object, the server
      stores it verbatim, and sending all of it is what lets a device that has
      been away contribute its days without having to work out which are new. */
@@ -780,6 +822,31 @@ function mergeChanges(changes) {
     state.weightUpdatedAt = changes.weightKg.updatedAt;
     state.dirty.weight = false;
   }
+  if (changes.sleepMin && changes.sleepMin.updatedAt >= state.sleepUpdatedAt) {
+    state.sleepMin = changes.sleepMin.value == null ? null : Number(changes.sleepMin.value);
+    state.sleepUpdatedAt = changes.sleepMin.updatedAt;
+    state.dirty.sleep = false;
+  }
+  if (changes.name && changes.name.updatedAt >= state.nameUpdatedAt) {
+    state.displayName = changes.name.value || '';
+    state.nameUpdatedAt = changes.name.updatedAt;
+    state.dirty.name = false;
+  }
+  if (changes.tracks && changes.tracks.value && changes.tracks.updatedAt >= state.tracksUpdatedAt) {
+    state.tracks = Object.assign({}, state.tracks, changes.tracks.value);
+    state.tracksUpdatedAt = changes.tracks.updatedAt;
+    state.dirty.tracks = false;
+  }
+  /* The timer is the one scalar a local edit should not automatically win: a
+     device that stopped it wrote that fact at a later stamp, and a device that
+     merely still has it running has nothing newer to say. Equal stamps leave
+     what is here — the server is echoing this device's own push. */
+  if (changes.timer && changes.timer.updatedAt > state.timerUpdatedAt) {
+    state.timerStart = changes.timer.start == null ? null : Number(changes.timer.start);
+    if (changes.timer.category) state.timerCategory = changes.timer.category;
+    state.timerUpdatedAt = changes.timer.updatedAt;
+    state.dirty.timer = false;
+  }
 
   /* Merged a day at a time on its own stamp rather than the whole map at once:
      a phone that recorded Monday and a laptop that recorded Tuesday should end
@@ -816,6 +883,10 @@ function clearPushed(sent) {
   });
   if (sent.currency && state.currencyUpdatedAt === sent.currency.updatedAt) state.dirty.currency = false;
   if (sent.weightKg && state.weightUpdatedAt === sent.weightKg.updatedAt) state.dirty.weight = false;
+  if (sent.sleepMin && state.sleepUpdatedAt === sent.sleepMin.updatedAt) state.dirty.sleep = false;
+  if (sent.name && state.nameUpdatedAt === sent.name.updatedAt) state.dirty.name = false;
+  if (sent.tracks && state.tracksUpdatedAt === sent.tracks.updatedAt) state.dirty.tracks = false;
+  if (sent.timer && state.timerUpdatedAt === sent.timer.updatedAt) state.dirty.timer = false;
   /* Cleared only when nothing was written while the request was in flight —
      the same rule the rows above follow, applied to the whole map at once. */
   if (sent.steps && !Object.keys(sent.steps).some((d) => (Number(state.stepsAt[d]) || 0) > (Number(sent.steps[d].t) || 0))) {
@@ -5488,13 +5559,37 @@ function render() {
     // A reset link has to open its panel directly; there is no landing page
     // journey that leads to it.
     const panelOpen = state.authOpen || state.authMode === 'reset';
-    root.innerHTML = landingScreen() + (panelOpen ? authScreen() : '') + legalSheet();
+    root.innerHTML = (mobileOn() ? mSignin() : landingScreen()) + (panelOpen ? authScreen() : '') + legalSheet();
     if (scrollY && window.scrollY !== scrollY) window.scrollTo(0, scrollY);
     restoreFocus(f);
     if (panelOpen) mountGoogleButton();
     return;
   }
   if (state.migrateOffer) { root.innerHTML = migrateScreen(); return; }
+
+  /* The phone runs the logging flow instead of the reading layout — same rows
+     underneath, a different question being asked of them. "Full view" in the
+     account sheet sends it back here, and the desktop is never touched. */
+  if (mobileOn()) {
+    if (!mBooted) { mBoot(); mBooted = true; }
+    /* Setup answers "has this account been through it", and a pull that lands
+       after boot can answer it better than the boot did — so it is asked again
+       here rather than only once. */
+    if (state.m.screen === 'setup' && hasLocalData()) {
+      state.setupDone = true;
+      state.m.screen = 'home';
+    }
+    root.innerHTML = `<div id="zimpan-progress" class="topbar" style="display:none"><i></i></div>${mobileApp()}${legalSheet()}`;
+    if (scrollY && window.scrollY !== scrollY) window.scrollTo(0, scrollY);
+    restoreFocus(f);
+    paintBusy();
+    if (state.focusField) {
+      const want = root.querySelector(`[data-k="${state.focusField}"]`);
+      state.focusField = null;
+      if (want) want.focus();
+    }
+    return;
+  }
 
   const v = compute();
   const body = v.isMoney ? moneyDesktop(v) : timeDesktop(v);
@@ -5509,6 +5604,7 @@ function render() {
   ${body}
   <div class="no-print" style="padding: 26px 28px 10px; display: flex; align-items: center; gap: 10px 18px; flex-wrap: wrap;">
     ${legalLinks('var(--color-neutral-600)')}
+    ${isPhone() && state.mClassic ? `<button class="btn btn-secondary" data-act="m-mobile" style="font-size: 12.5px; padding: 6px 14px;">Back to the mobile app</button>` : ''}
   </div>
   ${focusPanel(v)}
   ${pillarSheet(v)}
@@ -6209,6 +6305,1612 @@ const CHANGES = {
   'money-out': (el) => updateMoney(el.dataset.id, { out: money2(el.value) })
 };
 
+/* ═════════════════════ mobile — progressive logging ═════════════════════
+
+   One flow that logs both time and money in two or three taps a step, plus
+   the day it lives in: a live timer, an end-of-day gap review, first-run
+   setup, insights, entry detail and a donate path.
+
+   It takes the whole viewport on a phone rather than sitting beside the
+   desktop layout, because the two answer different questions — the desktop
+   page is for reading a month, this is for logging ten seconds ago. The data
+   underneath is the same: the same `entries` and `money` rows, the same
+   client-minted ids, the same `updated_at` stamp, so anything logged here
+   syncs and reads back there with no translation.
+
+   The rule the whole flow is built around: nothing takes focus unless the
+   user asked for a keyboard. Every closed field is a button, and only six
+   affordances in the entire experience can mint a focused input. */
+
+/* ── vocabulary ──
+   What a brand-new account is offered at setup. Once it has categories of its
+   own these are consulted for two things only: a sub-line for a name they
+   recognise, and a starting colour. Everything else comes off the account. */
+const M_CATS = [
+  { name: 'Work', color: '#7856f5', sub: 'deep + shallow', acts: ['Client call', 'Focus block', 'Email', 'Standup'] },
+  { name: 'Health', color: '#22a67a', sub: 'move + rest', acts: ['Gym', 'Walk', 'Run', 'Stretch'] },
+  { name: 'Food', color: '#e0913a', sub: 'meals + prep', acts: ['Breakfast', 'Lunch', 'Dinner', 'Cooking'] },
+  { name: 'Family', color: '#e05a8a', sub: 'people time', acts: ['Kids', 'Call home', 'Dinner out'] },
+  { name: 'Learning', color: '#4f46e5', sub: 'books + courses', acts: ['Reading', 'Course', 'Practice'] },
+  { name: 'Rest', color: '#9995ab', sub: 'sleep + idle', acts: ['Nap', 'Scrolling', 'TV'] }
+];
+const M_PURPOSES = [
+  { name: 'Food', color: '#e0913a', sub: 'groceries, eating out', acts: ['Groceries', 'Coffee', 'Lunch out'] },
+  { name: 'Transport', color: '#3f4bc4', sub: 'fares, fuel', acts: ['Grab', 'Jeepney', 'Fuel'] },
+  { name: 'Bills', color: '#756f88', sub: 'rent, utilities', acts: ['Electric', 'Internet', 'Rent'] },
+  { name: 'Health', color: '#22a67a', sub: 'meds, checkups', acts: ['Pharmacy', 'Clinic'] },
+  { name: 'Fun', color: '#e05a8a', sub: 'going out', acts: ['Movie', 'Drinks'] },
+  { name: 'Income', color: '#7856f5', sub: 'salary, gigs', acts: ['Salary', 'Freelance'] }
+];
+// Setup offers these four; only the first two are on to begin with, because
+// they are the two the app is actually built out of.
+const M_TRACKS = [
+  { key: 'time', name: 'Time', sub: 'Hours by activity' },
+  { key: 'money', name: 'Money', sub: 'In and out' },
+  { key: 'steps', name: 'Steps', sub: 'From your phone' },
+  { key: 'meals', name: 'Meals', sub: 'What you ate' }
+];
+/* The picker's order, which is not the storage order in CURRENCIES — the
+   dirham leads here because it is the default a new account is offered. */
+const M_CURRENCIES = [
+  { code: 'AED', glyph: 'Dhs' }, { code: 'USD', glyph: '$' }, { code: 'PHP', glyph: '₱' },
+  { code: 'EUR', glyph: '€' }, { code: 'SGD', glyph: 'S$' }, { code: 'HKD', glyph: 'HK$' }
+];
+
+/* ── the look ──
+   Values rather than classes only where the design system has no equivalent:
+   the gradient is a token, the two chip states are used by a dozen controls,
+   and repeating either by hand is how they drift apart. */
+const M_GRAD = 'var(--grad-brand)';
+const M_GRAD_FLAT = 'linear-gradient(115deg,#8b5cf6,#4f46e5)';
+const M_HAIR = '1px solid rgba(47,28,102,.08)';
+const M_SHADOW_SM = '0 1px 2px rgba(47,28,102,.09)';
+const M_SHADOW_MD = '0 4px 14px rgba(47,28,102,.09)';
+const M_LIFT = '0 14px 34px rgba(79,70,229,.3)';
+
+// Chips, pills and cards all pick a side of the same two-state switch.
+const mChip = (on) => on
+  ? `background:${M_GRAD_FLAT};color:#fff;border:1px solid transparent;`
+  : 'background:#fff;color:#3b3648;border:1px solid rgba(47,28,102,.12);';
+// The uppercase micro-label that heads nearly every group in the flow.
+const mLabel = (text, right) => `
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;">
+    <span style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;">${esc(text)}</span>
+    ${right || ''}
+  </div>`;
+const mHead = (title, hint) => `
+  <h3 style="margin:0 0 6px;font-family:var(--font-heading);font-weight:700;font-size:26px;line-height:1.15;color:#16131f;">${esc(title)}</h3>
+  <p style="margin:0 0 20px;font-size:14px;color:#756f88;line-height:1.45;">${esc(hint)}</p>`;
+
+/* ── formatting ──
+   Minutes since midnight are the currency of this whole file; they become
+   text here and nowhere else. */
+
+// 9am, 10:45am — the minutes only when there are some, which is how a time is
+// said out loud.
+const mClock = (min) => {
+  const t = ((Math.round(min) % 1440) + 1440) % 1440;
+  const h = Math.floor(t / 60), m = t % 60;
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}${m ? ':' + pad(m) : ''}${h >= 12 ? 'pm' : 'am'}`;
+};
+const mDur = (min) => {
+  const n = Math.max(0, Math.round(min));
+  const h = Math.floor(n / 60), m = n % 60;
+  if (h && m) return `${h}h ${m}m`;
+  return h ? `${h}h` : `${m}m`;
+};
+const mRange = (start, dur) => `${mClock(start)} – ${mClock(start + dur)}`;
+
+/* Money is summed in minor units and divided once at the end. Adding a column
+   of floats drifts; adding a column of integers cannot. */
+const mCents = (n) => Math.round((Number(n) || 0) * 100);
+const mSumCents = (rows, key) => rows.reduce((a, r) => a + mCents(r[key]), 0);
+const mMoney = (n) => amount(n);
+// The bare glyph for the tiles, without the dirham's trailing space.
+const mGlyph = () => currency().symbol.trim();
+
+const mShiftIso = (isoDate, delta) => {
+  const d = new Date(isoDate + 'T00:00:00');
+  d.setDate(d.getDate() + delta);
+  return iso(d);
+};
+const mLongDate = (isoDate) => new Date(isoDate + 'T00:00:00')
+  .toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+const mKicker = (isoDate) => new Date(isoDate + 'T00:00:00')
+  .toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' });
+
+/* ── the account's own vocabulary ──
+   The grids are drawn from `categories` and `purposes`, in the order the
+   account keeps them, not from the authored lists above. */
+const mVocab = (money) => (money ? state.purposes : state.categories).slice()
+  .sort((a, b) => (a.position || 0) - (b.position || 0) || byName(a, b));
+
+const mAuthored = (name, money) => (money ? M_PURPOSES : M_CATS).find((c) => c.name === name);
+
+const mColor = (name, money) => {
+  const row = (money ? state.purposes : state.categories).find((c) => c.name === name);
+  if (row && row.color) return row.color;
+  const a = mAuthored(name, money);
+  return a ? a.color : '#9995ab';
+};
+
+/* The "usual ones" pills. Drawn from what this account actually logs under
+   that name, most-used first, and only topped up from the authored list when
+   there is not enough history to fill the row — a suggestion that is really a
+   suggestion beats four that were written by someone else. */
+function mActs(name, money) {
+  const rows = (money ? state.money : state.entries)
+    .filter((r) => (money ? r.purpose : r.category) === name);
+  const seen = {};
+  rows.forEach((r) => {
+    const a = String(r.activity || '').trim();
+    if (a) seen[a] = (seen[a] || 0) + 1;
+  });
+  const mine = Object.keys(seen)
+    .sort((a, b) => seen[b] - seen[a] || a.localeCompare(b))
+    .slice(0, 4);
+  const authored = mAuthored(name, money);
+  const pad2 = authored ? authored.acts.filter((a) => !mine.includes(a)) : [];
+  return mine.concat(pad2).slice(0, 4);
+}
+
+// The card's sub-line: the authored reading when the name is one of ours,
+// otherwise the two things most often logged under it.
+function mSub(name, money) {
+  const a = mAuthored(name, money);
+  if (a) return a.sub;
+  const acts = mActs(name, money);
+  return acts.length ? acts.slice(0, 2).join(' + ').toLowerCase() : 'your own';
+}
+
+/* ── reading the day ──
+   Every figure on Today is derived from the rows, so an empty day is empty
+   rather than zeroed-out placeholder. */
+
+// Where the day stops for gap review. Null means nobody has said, and 10pm is
+// the assumption the flow was designed against.
+const mDayEnd = () => (state.sleepMin == null ? 1320 : state.sleepMin);
+
+const mTimeRows = (dateIso) => state.entries.filter((e) => e.date === dateIso);
+const mMoneyRows = (dateIso) => state.money.filter((e) => e.date === dateIso);
+
+/* One list, timed rows in clock order and the money after them — money has no
+   position on a clock, and interleaving it by insertion time made the day read
+   as though it had happened out of order. */
+function mDayList(dateIso) {
+  const time = mTimeRows(dateIso).slice()
+    .sort((a, b) => (Number(a.from) || 0) - (Number(b.from) || 0))
+    .map((e) => ({
+      kind: 'time', id: e.id, title: e.activity, cat: e.category,
+      start: Number(e.from) || 0, dur: span(e), note: e.note || ''
+    }));
+  const money = mMoneyRows(dateIso).map((e) => ({
+    kind: 'money', id: e.id, title: e.activity, cat: e.purpose,
+    dir: mCents(e.in) > 0 ? 'in' : 'out',
+    amount: mCents(e.in) > 0 ? Number(e.in) : Number(e.out), note: e.note || ''
+  }));
+  return time.concat(money);
+}
+
+const mLoggedMins = (dateIso) => mTimeRows(dateIso).reduce((a, e) => a + span(e), 0);
+const mOutToday = (dateIso) => mSumCents(mMoneyRows(dateIso), 'out') / 100;
+
+/* The day-split bar. One segment per category sized by its minutes, tinted at
+   descending opacity largest-first, and whatever is left of the day as a faint
+   remainder — which on an empty day is the only thing there is. */
+function mDayBars(dateIso) {
+  const byCat = {};
+  mTimeRows(dateIso).forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + span(e); });
+  const names = Object.keys(byCat).sort((a, b) => byCat[b] - byCat[a]);
+  const logged = names.reduce((a, k) => a + byCat[k], 0);
+  const bars = names.map((k, i) => ({
+    grow: byCat[k], color: `rgba(255,255,255,${Math.max(0.3, 0.94 - i * 0.13).toFixed(2)})`
+  }));
+  if (logged < 1440) bars.push({ grow: 1440 - logged, color: 'rgba(255,255,255,.22)' });
+  return bars;
+}
+
+/* Unlogged stretches, walking a cursor from 6am to bedtime. Overlapping
+   entries move the cursor by whichever ends later, so two things logged over
+   each other do not invent a gap between them. Anything under half an hour is
+   not worth being asked about. */
+function mGaps(dateIso) {
+  const end = mDayEnd();
+  const spans = mTimeRows(dateIso)
+    .map((e) => ({ a: Number(e.from) || 0, b: (Number(e.from) || 0) + span(e) }))
+    .sort((x, y) => x.a - y.a);
+  const out = [];
+  let cursor = 360;
+  spans.forEach((t) => {
+    if (t.a - cursor >= 30) out.push({ a: cursor, b: Math.min(t.a, end) });
+    cursor = Math.max(cursor, t.b);
+  });
+  if (end - cursor >= 30) out.push({ a: cursor, b: end });
+  return out.filter((g) => g.b - g.a >= 30);
+}
+const mGapTotal = (list) => list.reduce((a, g) => a + (g.b - g.a), 0);
+
+/* ── reading the week ── */
+
+const mWeekDates = () => {
+  const days = [];
+  for (let i = 6; i >= 0; i--) days.push(mShiftIso(todayIso, -i));
+  return days;
+};
+
+// Hours logged per day, or spent per day. Money in minor units until the last
+// division, same rule as everywhere else.
+function mWeekSeries(money) {
+  return mWeekDates().map((d) => ({
+    date: d,
+    label: new Date(d + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'narrow' }),
+    v: money ? mSumCents(mMoneyRows(d), 'out') / 100 : mLoggedMins(d)
+  }));
+}
+
+// Where it went: totals by category or purpose across the same seven days,
+// largest first, capped at the rows that fit a phone.
+function mWeekSplit(money) {
+  const totals = {};
+  mWeekDates().forEach((d) => {
+    if (money) mMoneyRows(d).forEach((e) => { totals[e.purpose] = (totals[e.purpose] || 0) + mCents(e.out); });
+    else mTimeRows(d).forEach((e) => { totals[e.category] = (totals[e.category] || 0) + span(e); });
+  });
+  return Object.keys(totals)
+    .filter((k) => totals[k] > 0)
+    .sort((a, b) => totals[b] - totals[a])
+    .slice(0, 5)
+    .map((k) => ({
+      name: k, raw: totals[k], color: mColor(k, money),
+      value: money ? mMoney(totals[k] / 100) : mDur(totals[k])
+    }));
+}
+
+/* The one written observation. Sentences rather than a stat grid, because a
+   grid is something to decode and this is something to read — and it says
+   nothing at all rather than something hollow when the week is too thin. */
+function mNotice(money) {
+  const split = mWeekSplit(money);
+  if (!split.length) {
+    return money
+      ? 'Nothing spent in the last seven days — or nothing logged, which Zimpan cannot tell apart yet.'
+      : 'Not enough logged this week to see a pattern yet. A few more days and there will be one.';
+  }
+  const total = split.reduce((a, r) => a + r.raw, 0);
+  const top = split[0];
+  const share = Math.round((top.raw / total) * 100);
+  const series = mWeekSeries(money);
+  const busiest = series.slice().sort((a, b) => b.v - a.v)[0];
+  const busiestDay = new Date(busiest.date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long' });
+
+  if (money) {
+    const dates = mWeekDates();
+    const inCents = dates.reduce((a, d) => a + mSumCents(mMoneyRows(d), 'in'), 0);
+    // Every purpose, not the handful the card had room for.
+    const outCents = dates.reduce((a, d) => a + mSumCents(mMoneyRows(d), 'out'), 0);
+    const covered = outCents > 0 && inCents >= outCents;
+    return `${top.name} is ${share}% of your spending this week, and ${busiestDay} was the heaviest day of it. `
+      + (covered
+        ? `What came in more than covered what went out.`
+        : `Nothing logged coming in to set against it.`);
+  }
+  const days = mWeekDates().filter((d) => mLoggedMins(d) > 0).length;
+  return `${top.name} took ${share}% of your logged week, spread over ${days} ${days === 1 ? 'day' : 'days'}. `
+    + `${busiestDay} was your longest day at ${mDur(busiest.v)}.`;
+}
+
+/* ── session state ──
+   Everything the flow is holding but has not committed. Draft fields are flat
+   so the shared `data-sync` input handler can reach them; nothing here is
+   persisted, because a half-finished entry is not something to restore. */
+const mDefaultStart = () => {
+  const n = new Date();
+  const at = Math.floor((n.getHours() * 60 + n.getMinutes()) / 15) * 15;
+  return Math.max(360, Math.min(1439 - 60, at));
+};
+
+state.m = {
+  screen: 'home', step: 1, setupStep: 1,
+  // draft
+  kind: null, day: 'today', earlierIso: '',
+  cat: null, activity: null, typing: false, activityText: '',
+  dir: 'out', amount: '', startMin: mDefaultStart(), durMin: 60,
+  note: '', noteOpen: false,
+  // the row being re-edited, if this is an edit rather than a new entry
+  editId: null, editKind: null,
+  // detail
+  selected: null, selectedKind: null,
+  // setup
+  setupName: '', nameTyping: false, setupCurrency: 'AED',
+  setupCats: ['Work', 'Health', 'Food', 'Rest'], customCats: [],
+  catTyping: false, catText: '', weight: '', sleep: '',
+  // the rest
+  insightTab: 'time', accountOpen: false,
+  donateOpen: false, donateAmt: 50, donateThanks: false
+};
+
+/* Which screen the phone opens on. Signed out is the sign-in screen; signed in
+   with nothing set up and nothing logged is setup; everything else is Today.
+   An account that already has rows has plainly been through setup, whatever
+   this particular device remembers. */
+function mBoot() {
+  if (state.setupDone || hasLocalData()) { state.setupDone = true; state.m.screen = 'home'; return; }
+  state.m.screen = 'setup';
+  state.m.setupStep = 1;
+  // AED is what the picker opens on; `state.currency` is only ever PHP here,
+  // which is the storage fallback rather than anybody's answer.
+  state.m.setupCurrency = 'AED';
+}
+
+/* ── 1. sign in ──
+   Both buttons lead to the same place. Google accounts need a currency,
+   categories and a bedtime exactly as much as email ones do — only the
+   credential differs — so both open the real auth panel and both land in
+   setup once it closes. */
+function mSignin() {
+  return `
+<div style="min-height:100vh;display:flex;flex-direction:column;justify-content:center;gap:26px;
+            padding:0 28px 34px;background:linear-gradient(180deg,#f8f7fb 0%,#efedf6 100%);">
+  <div style="display:flex;align-items:center;gap:13px;">
+    <span style="filter:drop-shadow(0 10px 24px rgba(79,70,229,.34));display:block;">${LOGO_BADGE(56)}</span>
+    <span style="font-family:var(--font-heading);font-weight:600;font-size:30px;letter-spacing:.02em;line-height:1;color:#16131f;">ZIMPAN<span style="color:#5f3ac9;">.</span></span>
+  </div>
+  <div>
+    <div style="font-family:var(--font-heading);font-weight:700;font-size:38px;line-height:1.05;letter-spacing:-.01em;color:#16131f;">Where did<br>it all go?</div>
+    <p style="margin:14px 0 0;font-size:15.5px;line-height:1.5;color:#575168;max-width:31ch;">Log your time and money in a few taps. Zimpan finds the pattern for you.</p>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:10px;margin-top:6px;">
+    <button class="btn btn-primary" data-act="m-signup"
+      style="width:100%;min-height:52px;font-size:16px;box-shadow:0 6px 18px rgba(79,70,229,.34);">Create an account</button>
+    <button class="btn btn-secondary" data-act="m-signin"
+      style="width:100%;min-height:52px;font-size:16px;">Continue with Google</button>
+  </div>
+  <div style="font-size:12.5px;color:#756f88;line-height:1.5;">Free forever · no ads · your data stays yours</div>
+</div>`;
+}
+
+/* ── shared chrome ──
+   Setup and the add flow wear the same hat: a back chevron, a step count, and
+   a progress bar with one segment per step. */
+function mStepChrome(o) {
+  const seg = (i) => `<div style="flex:1;height:4px;border-radius:999px;background:${i <= o.step ? 'linear-gradient(90deg,#8b5cf6,#4f46e5)' : '#e0dce9'};"></div>`;
+  let bars = '';
+  for (let i = 1; i <= o.total; i++) bars += seg(i);
+  return `
+<div style="position:sticky;top:0;z-index:5;padding:2px 22px 0;background:#f8f7fb;">
+  <div style="display:flex;align-items:center;justify-content:space-between;min-height:44px;">
+    <button data-act="${esc(o.back)}" aria-label="Back"
+      style="border:0;background:transparent;cursor:pointer;font-size:20px;color:#575168;padding:6px 8px 6px 0;min-width:22px;min-height:44px;">${o.hideBack ? '' : '←'}</button>
+    <span style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;font-weight:600;">${esc(o.label)}</span>
+    ${o.close
+      ? `<button data-act="${esc(o.close)}" aria-label="Close" style="border:0;background:transparent;cursor:pointer;font-size:19px;color:#575168;padding:6px 0 6px 8px;min-height:44px;">✕</button>`
+      : '<span style="width:22px;"></span>'}
+  </div>
+  <div style="display:flex;gap:5px;margin:8px 0 4px;">${bars}</div>
+</div>`;
+}
+
+/* The pinned action. Never a hard block: an unmet requirement dims the button
+   and makes it do nothing, which says "not yet" without an error message. */
+function mFooter(o) {
+  return `
+<div style="position:fixed;left:0;right:0;bottom:0;z-index:6;padding:10px 22px 26px;background:linear-gradient(180deg,rgba(248,247,251,0),#f8f7fb 30%);">
+  <button class="btn btn-primary" data-act="${esc(o.act)}"${o.can ? '' : ' aria-disabled="true"'}
+    style="width:100%;min-height:54px;font-size:16.5px;box-shadow:0 6px 18px rgba(79,70,229,.32);opacity:${o.can ? 1 : 0.42};">${esc(o.label)}</button>
+  ${o.skip ? `<button data-act="${esc(o.skip)}"
+    style="width:100%;min-height:40px;border:0;background:transparent;cursor:pointer;font-size:13.5px;font-weight:600;color:#756f88;margin-top:4px;font-family:var(--font-body);">${esc(o.skipLabel)}</button>` : ''}
+</div>`;
+}
+
+/* ── 2. first-run setup ── */
+
+const M_SETUP_COPY = {
+  1: ['First, the basics', 'Two things and we are done with settings.'],
+  2: ['What do you want to watch?', 'Pick what Zimpan asks you about. Change it any time.'],
+  3: ['Two optional extras', 'Both can stay empty — nothing here is required.']
+};
+
+const mSetupCan = () => {
+  const s = state.m;
+  if (s.setupStep === 1) return !!s.setupCurrency;
+  if (s.setupStep === 2) return M_TRACKS.some((t) => state.tracks[t.key]);
+  return true;
+};
+
+function mSetupStep1() {
+  const s = state.m;
+  return `
+${mLabel('Your name')}
+${s.nameTyping
+    ? `<input class="input" type="text" data-k="m-name" data-sync="m.setupName" value="${esc(s.setupName)}"
+        placeholder="What should we call you?" autocomplete="name"
+        style="min-height:50px;padding:10px 16px;font-size:15px;border:1.5px solid #7856f5;border-radius:16px;box-shadow:0 0 0 3px rgba(120,86,245,.18);margin-bottom:22px;">`
+    : `<button data-act="m-name-open"
+        style="width:100%;min-height:50px;padding:0 16px;border-radius:16px;cursor:pointer;font-family:var(--font-body);font-size:15px;font-weight:600;color:${s.setupName ? '#16131f' : '#756f88'};background:#fff;border:1px solid rgba(47,28,102,.12);text-align:left;margin-bottom:22px;">${esc(s.setupName || 'Add your name')}</button>`}
+${mLabel('Currency for money tracking')}
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+  ${M_CURRENCIES.map((c) => `
+    <button data-act="m-currency" data-code="${esc(c.code)}"
+      style="min-height:46px;border-radius:14px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;${mChip(s.setupCurrency === c.code)}">${esc(c.glyph)} ${esc(c.code)}</button>`).join('')}
+</div>`;
+}
+
+function mSetupStep2() {
+  const s = state.m;
+  const names = M_CATS.map((c) => ({ name: c.name, color: c.color }))
+    .concat(s.customCats.map((n) => ({ name: n, color: '#5f3ac9' })));
+  return `
+<div style="display:flex;flex-direction:column;gap:10px;margin-bottom:24px;">
+  ${M_TRACKS.map((t) => {
+    const on = !!state.tracks[t.key];
+    return `
+    <button data-act="m-track" data-key="${esc(t.key)}" aria-pressed="${on}"
+      style="display:flex;align-items:center;gap:14px;width:100%;padding:15px;border-radius:16px;cursor:pointer;text-align:left;background:${on ? '#f2eefe' : '#fff'};border:1.5px solid ${on ? '#7856f5' : 'rgba(47,28,102,.1)'};">
+      <span style="width:26px;height:26px;flex:none;border-radius:50%;display:grid;place-items:center;font-size:13px;background:${on ? M_GRAD_FLAT : '#e8e6ef'};color:#fff;">${on ? '✓' : ''}</span>
+      <span style="flex:1;">
+        <span style="display:block;font-family:var(--font-heading);font-weight:700;font-size:16px;color:#16131f;">${esc(t.name)}</span>
+        <span style="display:block;font-size:12.5px;margin-top:2px;color:${on ? '#5f3ac9' : '#756f88'};">${esc(t.sub)}</span>
+      </span>
+    </button>`;
+  }).join('')}
+</div>
+${mLabel('Starting categories')}
+<div style="display:flex;flex-wrap:wrap;gap:8px;">
+  ${names.map((c) => {
+    const on = s.setupCats.indexOf(c.name) >= 0;
+    return `
+    <button data-act="m-setup-cat" data-name="${esc(c.name)}" aria-pressed="${on}"
+      style="display:inline-flex;align-items:center;gap:7px;padding:9px 15px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;${mChip(on)}">
+      <span style="width:9px;height:9px;border-radius:50%;background:${on ? '#fff' : esc(c.color)};"></span>${esc(c.name)}
+    </button>`;
+  }).join('')}
+  ${s.catTyping ? '' : `
+  <button data-act="m-newcat-open"
+    style="padding:9px 15px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;background:transparent;color:#7450e4;border:1px dashed rgba(120,86,245,.55);">+ Add category</button>`}
+</div>
+${s.catTyping ? `
+<div style="display:flex;gap:8px;margin-top:10px;">
+  <input class="input" type="text" data-k="m-newcat" data-sync="m.catText" data-enter="m-newcat-add" value="${esc(s.catText)}"
+    placeholder="Name your category"
+    style="flex:1;min-height:46px;padding:10px 14px;font-size:15px;border:1.5px solid #7856f5;border-radius:14px;box-shadow:0 0 0 3px rgba(120,86,245,.18);">
+  <button class="btn btn-primary" data-act="m-newcat-add"
+    style="flex:none;min-height:46px;padding:0 18px;border-radius:14px;font-size:14.5px;">Add</button>
+</div>` : ''}`;
+}
+
+function mSetupStep3() {
+  const s = state.m;
+  const field = (key, sync, label, hint, placeholder, extra, suffix) => `
+<div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;margin-bottom:5px;">${esc(label)}</div>
+<p style="margin:0 0 10px;font-size:13px;color:#9995ab;">${esc(hint)}</p>
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:24px;">
+  <input class="input" type="text" data-k="${key}" data-sync="${sync}" value="${esc(s[sync.split('.')[1]])}"
+    placeholder="${esc(placeholder)}"${extra}
+    style="flex:1;min-height:50px;padding:10px 16px;font-size:15.5px;border-radius:16px;">
+  ${suffix ? `<span style="flex:none;font-size:14.5px;font-weight:600;color:#756f88;">${esc(suffix)}</span>` : ''}
+</div>`;
+  return field('m-weight', 'm.weight', 'Weight', 'Only used to estimate calories burned.', 'e.g. 68', ' inputmode="decimal"', 'kg')
+    + field('m-sleep', 'm.sleep', 'What time do you usually sleep?', 'Sets where Zimpan stops counting your day.', 'e.g. 10:30pm', '', '');
+}
+
+function mSetup() {
+  const s = state.m;
+  const copy = M_SETUP_COPY[s.setupStep] || ['', ''];
+  const last = s.setupStep >= 3;
+  return `
+<div style="min-height:100vh;padding-bottom:140px;">
+${mStepChrome({ step: s.setupStep, total: 3, label: `Step ${s.setupStep} of 3`, back: 'm-setup-back', hideBack: s.setupStep <= 1 })}
+<div style="padding:18px 22px 12px;">
+  ${mHead(copy[0], copy[1])}
+  ${s.setupStep === 1 ? mSetupStep1() : ''}
+  ${s.setupStep === 2 ? mSetupStep2() : ''}
+  ${s.setupStep === 3 ? mSetupStep3() : ''}
+</div>
+${mFooter({
+    act: 'm-setup-next', can: mSetupCan(), label: last ? 'Start tracking' : 'Continue',
+    skip: last ? 'm-setup-skip' : '', skipLabel: 'Skip both'
+  })}
+</div>`;
+}
+
+/* ── 3. Today ── */
+
+function mTimerCard() {
+  if (!state.timerStart) {
+    return `
+<button class="m-timer-idle" data-act="m-timer-start"
+  style="width:100%;display:flex;align-items:center;gap:14px;padding:18px;border-radius:20px;cursor:pointer;text-align:left;border:0;background:${M_GRAD};box-shadow:${M_LIFT};color:#fff;margin-bottom:14px;">
+  <span style="width:46px;height:46px;flex:none;border-radius:50%;background:rgba(255,255,255,.2);display:grid;place-items:center;font-size:17px;">▶</span>
+  <span style="flex:1;">
+    <span style="display:block;font-family:var(--font-heading);font-weight:700;font-size:21px;line-height:1.1;">Start timer</span>
+    <span style="display:block;font-size:13px;opacity:.82;margin-top:3px;">Track it live, name it after</span>
+  </span>
+</button>`;
+  }
+  const startD = new Date(state.timerStart);
+  const startMin = startD.getHours() * 60 + startD.getMinutes();
+  const secs = mElapsedSec();
+  return `
+<div class="m-timer" style="margin-bottom:14px;">
+  <span class="m-timer-dot"></span>
+  <span style="flex:1;min-width:0;">
+    <span id="m-elapsed" style="display:block;font-family:var(--font-heading);font-weight:700;font-size:30px;line-height:1;color:#16131f;font-variant-numeric:tabular-nums;">${esc(mElapsedLabel(secs))}</span>
+    <span style="display:block;font-size:12.5px;color:#756f88;margin-top:4px;">Tracking since ${esc(mClock(startMin))}</span>
+    <span id="m-timer-long" style="display:${secs > 4 * 3600 ? 'block' : 'none'};font-size:12.5px;color:#a8631a;margin-top:4px;">Still going? You can trim it when you stop.</span>
+  </span>
+  <button class="btn btn-primary" data-act="m-timer-stop"
+    style="flex:none;min-height:44px;padding:0 20px;font-size:14.5px;box-shadow:0 5px 14px rgba(79,70,229,.3);">Stop</button>
+</div>`;
+}
+
+function mEntryRow(e) {
+  const money = e.kind === 'money';
+  const value = money
+    ? (e.dir === 'in' ? '+' : '−') + mMoney(e.amount)
+    : mDur(e.dur);
+  const meta = money
+    ? `${e.cat} · money ${e.dir}`
+    : `${e.cat} · ${mRange(e.start, e.dur)}`;
+  return `
+<button class="card" data-act="m-open-entry" data-id="${esc(e.id)}" data-kind="${money ? 'money' : 'time'}"
+  style="flex-direction:row;align-items:center;gap:13px;width:100%;padding:13px 14px;border-radius:16px;box-shadow:${M_SHADOW_SM};cursor:pointer;text-align:left;">
+  <span style="width:9px;height:38px;border-radius:999px;flex:none;background:${esc(mColor(e.cat, money))};"></span>
+  <span style="flex:1;min-width:0;">
+    <span style="display:block;font-weight:600;font-size:15px;color:#16131f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(e.title)}</span>
+    <span style="display:block;font-size:12.5px;color:#756f88;margin-top:2px;">${esc(meta)}</span>
+  </span>
+  <span style="font-family:var(--font-heading);font-weight:700;font-size:15px;white-space:nowrap;color:${money && e.dir === 'in' ? '#1c8a63' : '#16131f'};">${esc(value)}</span>
+</button>`;
+}
+
+function mDonateCard() {
+  return `
+<div class="card" style="border-radius:20px;padding:18px;border:1px solid rgba(120,86,245,.25);box-shadow:0 4px 14px rgba(47,28,102,.08);gap:0;margin-top:22px;">
+  <div style="font-family:var(--font-heading);font-weight:700;font-size:19px;color:#16131f;">Zimpan is free, and stays free</div>
+  <p style="margin:7px 0 14px;font-size:14px;line-height:1.5;color:#575168;">No ads, no paid tier, and nothing you log is ever sold. If it has been worth something to you, a small gift keeps it being built.</p>
+  <button class="btn btn-primary" data-act="m-donate-open"
+    style="width:100%;min-height:48px;font-size:15px;box-shadow:0 5px 16px rgba(79,70,229,.3);">Donate</button>
+</div>`;
+}
+
+function mHome() {
+  const list = mDayList(todayIso);
+  const logged = mLoggedMins(todayIso);
+  const bars = mDayBars(todayIso);
+  const gaps = mGaps(todayIso);
+  const initials = mInitials();
+  return `
+<div style="padding:6px 22px 108px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+    <div>
+      <div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#7450e4;font-weight:600;">${esc(mKicker(todayIso))}</div>
+      <div style="font-family:var(--font-heading);font-weight:700;font-size:29px;line-height:1.1;color:#16131f;margin-top:3px;">Today</div>
+    </div>
+    <button data-act="m-account-open" aria-label="Account"
+      style="width:38px;height:38px;border:0;border-radius:50%;background:#e4dcfd;display:grid;place-items:center;font-family:var(--font-body);font-weight:600;font-size:14px;color:#472b97;cursor:pointer;">${esc(initials)}</button>
+  </div>
+
+  <div style="border-radius:20px;padding:18px;background:${M_GRAD};box-shadow:${M_LIFT};color:#fff;margin-bottom:14px;">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;">
+      <div>
+        <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;opacity:.78;">Logged today</div>
+        <div style="font-family:var(--font-heading);font-weight:700;font-size:32px;line-height:1.1;margin-top:4px;">${esc(mDur(logged))}</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;opacity:.78;">Money out</div>
+        <div style="font-family:var(--font-heading);font-weight:700;font-size:32px;line-height:1.1;margin-top:4px;">${esc(mMoney(mOutToday(todayIso)))}</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:3px;margin-top:16px;height:9px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.22);">
+      ${bars.map((b) => `<div style="height:100%;flex-basis:0;border-radius:999px;background:${b.color};flex-grow:${b.grow};"></div>`).join('')}
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-top:9px;font-size:11.5px;opacity:.85;">
+      <span>${esc(mDur(1440 - logged))} unlogged</span>
+      <span>${list.length} ${list.length === 1 ? 'entry' : 'entries'}</span>
+    </div>
+  </div>
+
+  ${mTimerCard()}
+
+  <div style="display:flex;gap:10px;margin-bottom:22px;">
+    ${[['m-log-time', '#f2eefe', '#5f3ac9', '◷', 'Log time', '15px'],
+      ['m-log-money', '#eceefe', '#3f4bc4', mGlyph(), 'Log money', '13px']].map((q) => `
+      <button class="card" data-act="${q[0]}"
+        style="flex:1;flex-direction:column;gap:6px;align-items:flex-start;padding:14px;border-radius:16px;box-shadow:${M_SHADOW_SM};cursor:pointer;text-align:left;">
+        <span style="width:30px;height:30px;border-radius:10px;background:${q[1]};display:grid;place-items:center;font-size:${q[5]};font-weight:700;color:${q[2]};">${esc(q[3])}</span>
+        <span style="font-family:var(--font-heading);font-weight:700;font-size:15px;color:#16131f;">${esc(q[4])}</span>
+      </button>`).join('')}
+  </div>
+
+  ${gaps.length ? `
+  <button data-act="m-go-review"
+    style="display:flex;align-items:center;gap:12px;width:100%;padding:14px 16px;border-radius:16px;cursor:pointer;text-align:left;background:#efedf6;border:1px solid rgba(120,86,245,.22);margin-bottom:22px;">
+    <span class="m-hatch-tile" style="width:34px;height:34px;flex:none;border-radius:11px;"></span>
+    <span style="flex:1;">
+      <span style="display:block;font-family:var(--font-body);font-weight:600;font-size:14.5px;color:#16131f;">${esc(mDur(mGapTotal(gaps)))} unaccounted for</span>
+      <span style="display:block;font-size:12.5px;color:#756f88;margin-top:2px;">Review the day and fill the blanks</span>
+    </span>
+    <span style="font-size:17px;color:#7450e4;">→</span>
+  </button>` : ''}
+
+  <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;">
+    <h4 style="margin:0;font-family:var(--font-heading);font-weight:700;font-size:19px;color:#16131f;">Your day</h4>
+    <span style="font-size:12.5px;color:#756f88;">${list.length} ${list.length === 1 ? 'entry' : 'entries'}</span>
+  </div>
+
+  ${list.length ? `
+  <div style="display:flex;flex-direction:column;gap:9px;">${list.map(mEntryRow).join('')}</div>`
+    : `
+  <div style="padding:30px 24px;border-radius:20px;background:#fff;border:1px dashed rgba(120,86,245,.35);text-align:center;">
+    <div style="width:46px;height:46px;margin:0 auto;border-radius:14px;background:#f2eefe;display:grid;place-items:center;font-size:19px;color:#5f3ac9;">◷</div>
+    <div style="font-family:var(--font-heading);font-weight:700;font-size:19px;color:#16131f;margin-top:14px;">Nothing logged yet</div>
+    <p style="margin:7px 0 0;font-size:14px;color:#756f88;line-height:1.45;">Start a timer for what you are doing now, or log something that already happened.</p>
+  </div>`}
+
+  ${mDonateCard()}
+</div>`;
+}
+
+/* ── 4. the add flow ── */
+
+const M_FLOW_COPY = {
+  1: ['What are you logging?', 'Pick one — you can add the details next.'],
+  2: { time: ['What were you doing?', 'Choose a category, then the activity.'], money: ['How much?', 'Tap the amount. No keyboard needed.'] },
+  3: { time: ['When was that?', 'Start time and how long it ran.'], money: ['What was it for?', 'Purpose keeps the weekly split honest.'] },
+  4: ['Look right?', 'Tap anything to change it.']
+};
+
+// What the entry will be called: what was typed beats what was tapped, and the
+// category stands in for both rather than saving something called "Untitled".
+const mDraftLabel = () => {
+  const s = state.m;
+  return s.activityText.trim() || s.activity || s.cat || '';
+};
+
+const mIsMoney = () => state.m.kind === 'money';
+
+function mCanAdvance() {
+  const s = state.m;
+  if (s.step === 1) return !!s.kind;
+  if (s.step === 2) return mIsMoney() ? Number(s.amount) > 0 : !!s.cat;
+  if (s.step === 3) return mIsMoney() ? !!s.cat : s.durMin > 0;
+  return true;
+}
+
+/* The date the draft lands on. Today and Yesterday are the two answers that
+   cover almost everything; Earlier opens a row of the days before them, which
+   is a date picker made of taps rather than a field that summons a keyboard. */
+function mDraftIso() {
+  const s = state.m;
+  if (s.day === 'today') return todayIso;
+  if (s.day === 'yesterday') return mShiftIso(todayIso, -1);
+  return s.earlierIso || mShiftIso(todayIso, -2);
+}
+const mDayChipLabel = () => {
+  const s = state.m;
+  if (s.day === 'today') return 'Today';
+  if (s.day === 'yesterday') return 'Yesterday';
+  return dayLabel(mDraftIso());
+};
+
+function mFlowKind() {
+  const s = state.m;
+  const card = (kind, icon, title, sub, tileBg, tileFg) => {
+    const on = s.kind === kind;
+    return `
+    <button data-act="m-kind" data-kind="${kind}" aria-pressed="${on}"
+      style="display:flex;align-items:center;gap:14px;width:100%;padding:16px;border-radius:18px;cursor:pointer;text-align:left;background:${on ? M_GRAD_FLAT : '#fff'};border:1.5px solid ${on ? 'transparent' : 'rgba(47,28,102,.1)'};box-shadow:${on ? '0 10px 26px rgba(79,70,229,.3)' : M_SHADOW_SM};">
+      <span style="width:44px;height:44px;flex:none;border-radius:14px;display:grid;place-items:center;font-size:19px;font-weight:700;background:${on ? 'rgba(255,255,255,.2)' : tileBg};color:${on ? '#fff' : tileFg};">${esc(icon)}</span>
+      <span style="flex:1;">
+        <span style="display:block;font-family:var(--font-heading);font-weight:700;font-size:17px;color:${on ? '#fff' : '#16131f'};">${esc(title)}</span>
+        <span style="display:block;font-size:13px;margin-top:2px;color:${on ? 'rgba(255,255,255,.82)' : '#756f88'};">${esc(sub)}</span>
+      </span>
+    </button>`;
+  };
+  const chip = (day, label) => `
+    <button data-act="m-day" data-day="${day}" aria-pressed="${s.day === day}"
+      style="padding:9px 16px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;${mChip(s.day === day)}">${esc(label)}</button>`;
+  // The five days before yesterday, so "Earlier" resolves to a real date
+  // without ever opening a keyboard.
+  const earlier = [2, 3, 4, 5, 6].map((n) => mShiftIso(todayIso, -n));
+  return `
+<div style="display:flex;flex-direction:column;gap:10px;margin-bottom:24px;">
+  ${card('time', '◷', 'Time', 'Something you did', '#f2eefe', '#5f3ac9')}
+  ${card('money', mGlyph(), 'Money', 'Something you spent or earned', '#eceefe', '#3f4bc4')}
+</div>
+${mLabel('When')}
+<div style="display:flex;flex-wrap:wrap;gap:8px;">
+  ${chip('today', 'Today')}${chip('yesterday', 'Yesterday')}${chip('earlier', 'Earlier')}
+</div>
+${s.day === 'earlier' ? `
+<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">
+  ${earlier.map((d) => `
+    <button data-act="m-earlier" data-iso="${d}" aria-pressed="${mDraftIso() === d}"
+      style="padding:9px 15px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;${mChip(mDraftIso() === d)}">${esc(dayLabel(d))}</button>`).join('')}
+</div>` : ''}`;
+}
+
+/* The category grid, shared by time's step 2 and money's step 3. Drawn from the
+   account's own categories, with the activity pills under it drawn from what
+   has actually been logged under the one that is selected. */
+function mFlowCategory() {
+  const s = state.m;
+  const money = mIsMoney();
+  const rows = mVocab(money);
+  const acts = s.cat ? mActs(s.cat, money) : [];
+  return `
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:22px;">
+  ${rows.map((c) => {
+    const on = s.cat === c.name;
+    return `
+    <button data-act="m-cat" data-name="${esc(c.name)}" aria-pressed="${on}"
+      style="display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:14px;border-radius:16px;cursor:pointer;text-align:left;min-height:86px;background:${on ? '#f2eefe' : '#fff'};border:1.5px solid ${on ? '#7856f5' : 'rgba(47,28,102,.1)'};">
+      <span style="width:11px;height:11px;border-radius:50%;background:${esc(mColor(c.name, money))};"></span>
+      <span style="font-family:var(--font-heading);font-weight:700;font-size:15.5px;color:#16131f;">${esc(c.name)}</span>
+      <span style="font-size:11.5px;color:${on ? '#5f3ac9' : '#756f88'};">${esc(mSub(c.name, money))}</span>
+    </button>`;
+  }).join('')}
+</div>
+${mLabel(s.cat ? `${s.cat} — usual ones` : 'Pick a category first')}
+<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
+  ${acts.map((a) => `
+    <button data-act="m-act" data-name="${esc(a)}" aria-pressed="${s.activity === a}"
+      style="padding:9px 15px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;${mChip(s.activity === a)}">${esc(a)}</button>`).join('')}
+  ${s.typing ? '' : `
+  <button data-act="m-type-open"
+    style="padding:9px 15px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;background:transparent;color:#7450e4;border:1px dashed rgba(120,86,245,.55);">Type it</button>`}
+</div>
+${s.typing ? `
+<input class="input" type="text" data-k="m-activity" data-sync="m.activityText" value="${esc(s.activityText)}"
+  placeholder="What was it?"
+  style="min-height:46px;padding:10px 14px;font-size:15px;border:1.5px solid #7856f5;border-radius:14px;box-shadow:0 0 0 3px rgba(120,86,245,.18);">` : ''}`;
+}
+
+// Money's step 2. Every digit is a tap: the numpad is the whole point, and a
+// real number field here would put a keyboard over the amount it is setting.
+function mFlowAmount() {
+  const s = state.m;
+  const has = Number(s.amount) > 0;
+  const opt = (dir, label) => `
+    <label class="seg-opt" style="flex:1;justify-content:center;min-height:40px;border-radius:999px;border-left:0;font-family:var(--font-heading);font-weight:700;font-size:14px;color:${s.dir === dir ? '#fff' : '#575168'};">
+      <input type="radio" name="m-dir" data-act="m-dir" data-dir="${dir}"${s.dir === dir ? ' checked' : ''}><span>${label}</span>
+    </label>`;
+  const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'];
+  return `
+<div class="seg" style="display:flex;width:100%;gap:6px;padding:4px;background:#e8e6ef;border-color:transparent;margin-bottom:18px;">
+  ${opt('out', 'Money out')}${opt('in', 'Money in')}
+</div>
+<div style="text-align:center;padding:6px 0 18px;">
+  <div style="font-family:var(--font-heading);font-weight:700;font-size:52px;line-height:1;letter-spacing:-.01em;color:${has ? (s.dir === 'in' ? '#1c8a63' : '#16131f') : '#c3bfd0'};">${esc(currency().symbol + (s.amount || '0'))}</div>
+  <div style="font-size:12.5px;color:#756f88;margin-top:6px;">${s.dir === 'in' ? 'Coming in' : 'Going out'}</div>
+</div>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:9px;">
+  ${keys.map((k) => `
+    <button class="m-key" data-act="m-key" data-key="${k === '.' ? 'dot' : k === '⌫' ? 'del' : k}"
+      style="min-height:56px;border-radius:16px;cursor:pointer;font-family:var(--font-heading);font-weight:700;font-size:22px;color:#16131f;background:#fff;border:${M_HAIR};box-shadow:${M_SHADOW_SM};">${esc(k)}</button>`).join('')}
+</div>`;
+}
+
+/* Time's step 3. The drag track is the centrepiece and everything else on the
+   screen is another way of saying the same two numbers — every control moves
+   the handle, and the handle moves every control. */
+function mFlowWhen() {
+  const s = state.m;
+  const long = s.durMin > 240;
+  const crosses = s.startMin + s.durMin > 1440;
+  const warning = long
+    ? 'That is a long stretch. If the timer kept running after you stopped, trim it here.'
+    : (crosses ? 'This crosses midnight — Zimpan will split it across the two days.' : '');
+  const hour = Math.floor(s.startMin / 60);
+  const minute = s.startMin % 60;
+  const hours = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22];
+  const mins = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
+  const durs = [15, 30, 45, 60, 90, 120, 180];
+  const left = Math.max(0, Math.min(100, ((s.startMin - 360) / 1080) * 100));
+  const width = Math.max(0, Math.min(100 - left, (s.durMin / 1080) * 100));
+  const smallChip = (act, data, label, on) => `
+    <button data-act="${act}" ${data} aria-pressed="${on}"
+      style="min-height:40px;padding:0 4px;border-radius:12px;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;${mChip(on)}">${esc(label)}</button>`;
+  return `
+${warning ? `
+<div style="display:flex;gap:11px;align-items:flex-start;padding:13px 14px;border-radius:16px;background:#fdf3e6;border:1px solid rgba(224,145,58,.35);margin-bottom:14px;">
+  <span style="font-size:15px;line-height:1.3;color:#a8631a;">!</span>
+  <span style="flex:1;font-size:13.5px;line-height:1.45;color:#7a4a13;">${esc(warning)}</span>
+  <button data-act="m-halve"
+    style="flex:none;min-height:34px;padding:0 13px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:12.5px;font-weight:600;color:#7a4a13;background:#fff;border:1px solid rgba(224,145,58,.5);">Halve it</button>
+</div>` : ''}
+<div class="card" style="border-radius:20px;padding:18px;box-shadow:${M_SHADOW_MD};gap:0;margin-bottom:18px;">
+  <div style="display:flex;justify-content:space-between;align-items:baseline;">
+    <span id="m-range" style="font-family:var(--font-heading);font-weight:700;font-size:26px;color:#16131f;">${esc(mRange(s.startMin, s.durMin))}</span>
+    <span id="m-durlabel" style="font-size:13px;color:#7450e4;font-weight:600;">${esc(mDur(s.durMin))}</span>
+  </div>
+  <div class="m-track" data-m-track>
+    <div class="m-rail"></div>
+    <div class="m-fill" style="left:${left}%;width:${width}%;"></div>
+    <div class="m-handle" style="left:${left}%;"></div>
+  </div>
+  <div style="display:flex;justify-content:space-between;font-size:10.5px;color:#9995ab;margin-top:7px;">
+    <span>6a</span><span>12p</span><span>6p</span><span>12a</span>
+  </div>
+</div>
+${mLabel('Started — hour', `<button data-act="m-now" style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:12.5px;font-weight:600;color:#7450e4;padding:0;">Use now</button>`)}
+<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:7px;margin-bottom:16px;">
+  ${hours.map((h) => smallChip('m-hour', `data-h="${h}"`, `${h % 12 === 0 ? 12 : h % 12}${h >= 12 ? 'p' : 'a'}`, hour === h)).join('')}
+</div>
+${mLabel('Minutes', `
+  <span style="display:flex;align-items:center;gap:8px;">
+    <button data-act="m-min-step" data-d="-1" aria-label="A minute earlier"
+      style="width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:17px;line-height:1;color:#5f3ac9;background:#fff;border:1px solid rgba(120,86,245,.4);">−</button>
+    <span id="m-minlabel" style="min-width:38px;text-align:center;font-family:var(--font-heading);font-weight:700;font-size:16px;color:#16131f;font-variant-numeric:tabular-nums;">:${pad(minute)}</span>
+    <button data-act="m-min-step" data-d="1" aria-label="A minute later"
+      style="width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:17px;line-height:1;color:#5f3ac9;background:#fff;border:1px solid rgba(120,86,245,.4);">+</button>
+  </span>`)}
+<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:7px;margin-bottom:16px;">
+  ${mins.map((m) => smallChip('m-min', `data-m="${m}"`, ':' + pad(m), minute === m)).join('')}
+</div>
+${mLabel('For how long')}
+<div style="display:flex;flex-wrap:wrap;gap:8px;">
+  ${durs.map((m) => `
+    <button data-act="m-dur" data-m="${m}" aria-pressed="${s.durMin === m}"
+      style="padding:10px 16px;border-radius:14px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;${mChip(s.durMin === m)}">${esc(mDur(m))}</button>`).join('')}
+</div>`;
+}
+
+function mFlowReview() {
+  const s = state.m;
+  const money = mIsMoney();
+  const rows = money
+    ? [['What', mDraftLabel() || 'Untitled', 3], ['Amount', (s.dir === 'in' ? '+' : '−') + mMoney(s.amount), 2],
+      ['Purpose', s.cat || '—', 3], ['When', mDayChipLabel(), 1]]
+    : [['What', mDraftLabel() || 'Untitled', 2], ['Category', s.cat || '—', 2],
+      ['Time', mRange(s.startMin, s.durMin), 3], ['When', mDayChipLabel(), 1]];
+  return `
+<div class="card" style="border-radius:20px;padding:18px;box-shadow:0 4px 14px rgba(47,28,102,.1);gap:13px;margin-bottom:14px;">
+  ${rows.map((r) => `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;">
+      <span style="font-size:13px;color:#756f88;">${esc(r[0])}</span>
+      <button data-act="m-jump" data-step="${r[2]}"
+        style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-weight:600;font-size:14.5px;color:#16131f;text-align:right;padding:0;">${esc(r[1])} <span style="color:#7450e4;font-size:12.5px;font-weight:600;">edit</span></button>
+    </div>`).join('')}
+</div>
+${s.noteOpen
+    ? `<textarea class="input" data-k="m-note" data-sync="m.note" placeholder="Anything worth remembering?"
+        style="min-height:88px;padding:12px 14px;font-size:14.5px;border:1.5px solid #7856f5;border-radius:16px;box-shadow:0 0 0 3px rgba(120,86,245,.18);">${esc(s.note)}</textarea>`
+    : `<button data-act="m-note-open"
+        style="width:100%;padding:14px;border-radius:16px;cursor:pointer;font-family:var(--font-body);font-size:14px;font-weight:600;color:#7450e4;background:transparent;border:1px dashed rgba(120,86,245,.5);text-align:left;">+ Add a note</button>`}`;
+}
+
+function mFlowDone() {
+  const money = mIsMoney();
+  const logged = mLoggedMins(todayIso);
+  const sub = money
+    ? `That is ${mMoney(mOutToday(todayIso))} out today. Zimpan folded it into your week.`
+    : `You have logged ${mDur(logged)} today. ${mDur(1440 - logged)} still unaccounted for.`;
+  return `
+<div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding:30px 0 10px;animation:zPop .3s ease both;">
+  <div style="width:78px;height:78px;border-radius:50%;background:${M_GRAD_FLAT};box-shadow:0 14px 32px rgba(79,70,229,.35);display:grid;place-items:center;font-size:34px;color:#fff;">✓</div>
+  <div style="font-family:var(--font-heading);font-weight:700;font-size:26px;color:#16131f;margin-top:20px;">${money ? 'Money logged' : 'Time logged'}</div>
+  <p style="margin:8px 0 0;font-size:14.5px;color:#575168;line-height:1.5;max-width:28ch;">${esc(sub)}</p>
+</div>`;
+}
+
+function mFlowBody() {
+  const s = state.m;
+  const money = mIsMoney();
+  if (s.step === 5) return mFlowDone();
+  if (s.step === 1) return mFlowKind();
+  if (s.step === 2) return money ? mFlowAmount() : mFlowCategory();
+  if (s.step === 3) return money ? mFlowCategory() : mFlowWhen();
+  return mFlowReview();
+}
+
+function mFlow() {
+  const s = state.m;
+  const money = mIsMoney();
+  const copy = s.step >= 5 ? ['', ''] : (s.step === 2 || s.step === 3
+    ? M_FLOW_COPY[s.step][money ? 'money' : 'time']
+    : M_FLOW_COPY[s.step]);
+  const can = mCanAdvance();
+  const done = s.step === 5;
+  return `
+<div style="min-height:100vh;padding-bottom:140px;">
+${mStepChrome({
+    step: s.step, total: 4, label: done ? 'Saved' : `Step ${s.step} of 4`,
+    back: 'm-flow-back', hideBack: s.step === 1 || done, close: 'm-flow-close'
+  })}
+<div style="padding:18px 22px 12px;">
+  <div style="animation:zStep .28s ease both;">
+    ${copy[0] ? mHead(copy[0], copy[1]) : ''}
+    <div id="m-step-body">${mFlowBody()}</div>
+  </div>
+</div>
+${mFooter({
+    act: 'm-flow-next', can: can || done,
+    label: done ? 'Back to today' : s.step === 4 ? 'Save entry' : 'Continue',
+    skip: s.step === 4 && !s.noteOpen ? 'm-flow-skip' : '', skipLabel: 'Skip for now'
+  })}
+</div>`;
+}
+
+/* ── 5. day review ── */
+
+function mReview() {
+  const gaps = mGaps(todayIso);
+  const total = mGapTotal(gaps);
+  return `
+<div style="padding:6px 22px 34px;">
+  <button data-act="m-go-home"
+    style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:14px;color:#7450e4;padding:6px 0;font-weight:600;">← Today</button>
+  <div style="margin:12px 0 20px;">
+    <div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#7450e4;font-weight:600;">Close out the day</div>
+    <div style="font-family:var(--font-heading);font-weight:700;font-size:28px;line-height:1.1;color:#16131f;margin-top:4px;">${esc(mDur(total))} unaccounted for</div>
+    <p style="margin:8px 0 0;font-size:14px;color:#756f88;line-height:1.45;">${gaps.length} ${gaps.length === 1 ? 'stretch' : 'stretches'} with nothing logged. Fill what you remember, mark the rest untracked.</p>
+  </div>
+  ${gaps.length ? `
+  <div style="display:flex;flex-direction:column;gap:11px;">
+    ${gaps.map((g) => `
+    <div class="card" style="padding:16px;border-radius:18px;box-shadow:${M_SHADOW_SM};gap:0;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;">
+        <span style="font-family:var(--font-heading);font-weight:700;font-size:19px;color:#16131f;">${esc(mClock(g.a))} – ${esc(mClock(g.b))}</span>
+        <span style="font-size:13px;font-weight:600;color:#7450e4;">${esc(mDur(g.b - g.a))}</span>
+      </div>
+      <div style="height:8px;border-radius:999px;background:#e8e6ef;margin:12px 0 14px;overflow:hidden;">
+        <div class="m-hatch" style="height:100%;border-radius:999px;width:${Math.min(100, Math.round(((g.b - g.a) / 240) * 100))}%;"></div>
+      </div>
+      <div style="display:flex;gap:9px;">
+        <button class="btn btn-primary" data-act="m-gap-fill" data-a="${g.a}" data-b="${g.b}"
+          style="flex:1;min-height:44px;font-size:14px;box-shadow:0 4px 12px rgba(79,70,229,.28);">Fill this in</button>
+        <button data-act="m-gap-skip" data-a="${g.a}" data-b="${g.b}"
+          style="flex:none;min-height:44px;padding:0 16px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;color:#575168;background:#fff;border:1px solid rgba(47,28,102,.14);">Untracked</button>
+      </div>
+    </div>`).join('')}
+  </div>`
+    : `
+  <div style="padding:26px;border-radius:20px;background:#efedf6;text-align:center;">
+    <div style="font-size:30px;">✓</div>
+    <div style="font-family:var(--font-heading);font-weight:700;font-size:20px;color:#16131f;margin-top:10px;">Nothing left open</div>
+    <p style="margin:6px 0 0;font-size:14px;color:#575168;">Every stretch from 6am is accounted for.</p>
+  </div>`}
+</div>`;
+}
+
+/* ── 8. entry detail ── */
+
+function mDetail() {
+  const s = state.m;
+  const money = s.selectedKind === 'money';
+  const row = findRow(money ? 'money' : 'entries', s.selected);
+  if (!row) return mHome();
+  const cat = money ? row.purpose : row.category;
+  const dir = money ? (mCents(row.in) > 0 ? 'in' : 'out') : '';
+  const amt = money ? (dir === 'in' ? Number(row.in) : Number(row.out)) : 0;
+  const rows = money
+    ? [['Purpose', cat], ['Direction', dir === 'in' ? 'Money in' : 'Money out'],
+      ['Date', mLongDate(row.date)], ['Note', row.note || '—']]
+    : [['Category', cat], ['Started', mClock(Number(row.from) || 0)],
+      ['Ended', mClock(Number(row.to) || 0)], ['Date', mLongDate(row.date)], ['Note', row.note || '—']];
+  return `
+<div style="padding:6px 22px 34px;">
+  <button data-act="m-go-home"
+    style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:14px;color:#7450e4;padding:6px 0;font-weight:600;">← Today</button>
+  <div class="card" style="margin-top:14px;border-radius:22px;box-shadow:0 4px 14px rgba(47,28,102,.1);padding:20px;gap:0;">
+    <div><span class="tag ${money ? 'tag-accent-2' : 'tag-accent'}" style="padding:4px 11px;">${money ? 'Money' : 'Time'} · ${esc(cat)}</span></div>
+    <div style="font-family:var(--font-heading);font-weight:700;font-size:27px;line-height:1.15;color:#16131f;margin-top:12px;">${esc(row.activity)}</div>
+    <div style="font-family:var(--font-heading);font-weight:700;font-size:40px;line-height:1.1;margin-top:6px;color:${money && dir === 'in' ? '#1c8a63' : '#16131f'};">${esc(money ? (dir === 'in' ? '+' : '−') + mMoney(amt) : mDur(span(row)))}</div>
+    <div style="height:1px;background:rgba(22,19,31,.12);margin:18px 0;"></div>
+    <div style="display:flex;flex-direction:column;gap:13px;">
+      ${rows.map((r) => `
+        <div style="display:flex;justify-content:space-between;gap:16px;font-size:14px;">
+          <span style="color:#756f88;">${esc(r[0])}</span>
+          <span style="font-weight:600;color:#16131f;text-align:right;">${esc(r[1])}</span>
+        </div>`).join('')}
+    </div>
+  </div>
+  <div style="display:flex;gap:10px;margin-top:16px;">
+    <button class="btn btn-secondary" data-act="m-detail-edit" style="flex:1;min-height:48px;font-size:15px;">Edit</button>
+    <button class="btn" data-act="m-detail-delete"
+      style="flex:1;min-height:48px;font-size:15px;color:#8a2f4a;background:#fff;border:1px solid rgba(138,47,74,.3);">Delete</button>
+  </div>
+</div>`;
+}
+
+/* ── 6. insights ── */
+
+function mInsights() {
+  const money = state.m.insightTab === 'money';
+  const series = mWeekSeries(money);
+  const max = Math.max.apply(null, series.map((w) => w.v).concat([1]));
+  const split = mWeekSplit(money);
+  const splitMax = split.length ? split[0].raw : 1;
+  const total = money
+    ? mMoney(series.reduce((a, w) => a + mCents(w.v), 0) / 100)
+    : mDur(series.reduce((a, w) => a + w.v, 0));
+  const opt = (tab, label) => `
+    <label class="seg-opt" style="flex:1;justify-content:center;min-height:38px;border-radius:999px;border-left:0;font-family:var(--font-heading);font-weight:700;font-size:14px;color:${(state.m.insightTab === tab) ? '#fff' : '#575168'};">
+      <input type="radio" name="m-insight" data-act="m-insight-tab" data-tab="${tab}"${state.m.insightTab === tab ? ' checked' : ''}><span>${label}</span>
+    </label>`;
+  return `
+<div style="padding:6px 22px 108px;">
+  <div style="margin-bottom:18px;">
+    <div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#7450e4;font-weight:600;">Last 7 days</div>
+    <div style="font-family:var(--font-heading);font-weight:700;font-size:29px;line-height:1.1;color:#16131f;margin-top:3px;">The pattern</div>
+  </div>
+  <div class="seg" style="display:flex;width:100%;gap:6px;padding:4px;background:#e8e6ef;border-color:transparent;margin-bottom:18px;">
+    ${opt('time', 'Time')}${opt('money', 'Money')}
+  </div>
+
+  <div class="card" style="border-radius:20px;box-shadow:${M_SHADOW_MD};padding:18px;gap:0;margin-bottom:14px;">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:16px;">
+      <span style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;">${money ? 'Spent per day' : 'Hours logged per day'}</span>
+      <span style="font-family:var(--font-heading);font-weight:700;font-size:22px;color:#16131f;">${esc(total)}</span>
+    </div>
+    <div style="display:flex;align-items:flex-end;gap:8px;height:118px;">
+      ${series.map((w, i) => `
+        <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:7px;justify-content:flex-end;height:100%;">
+          <div style="width:100%;border-radius:8px 8px 4px 4px;min-height:5px;height:${Math.round((w.v / max) * 100)}%;background:${i === series.length - 1 ? 'linear-gradient(180deg,#8b5cf6,#4f46e5)' : '#e4dcfd'};"></div>
+          <span style="font-size:10.5px;color:#9995ab;font-weight:500;">${esc(w.label)}</span>
+        </div>`).join('')}
+    </div>
+  </div>
+
+  ${split.length ? `
+  <div class="card" style="border-radius:20px;box-shadow:${M_SHADOW_MD};padding:18px;gap:14px;margin-bottom:14px;">
+    <span style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;">Where it went</span>
+    ${split.map((r) => `
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="display:flex;justify-content:space-between;font-size:13.5px;">
+          <span style="font-weight:600;color:#16131f;">${esc(r.name)}</span>
+          <span style="color:#756f88;">${esc(r.value)}</span>
+        </div>
+        <div style="height:8px;border-radius:999px;background:#e8e6ef;overflow:hidden;">
+          <div style="height:100%;border-radius:999px;background:${esc(r.color)};width:${Math.round((r.raw / splitMax) * 100)}%;"></div>
+        </div>
+      </div>`).join('')}
+  </div>` : ''}
+
+  <div style="border-radius:20px;padding:18px;background:#efedf6;border:1px solid rgba(47,28,102,.07);margin-bottom:14px;">
+    <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#7450e4;margin-bottom:7px;">Noticed</div>
+    <p style="margin:0;font-size:14.5px;line-height:1.5;color:#3b3648;">${esc(mNotice(money))}</p>
+  </div>
+
+  ${mDonateCard()}
+</div>`;
+}
+
+/* ── 9. tab bar, sheets ── */
+
+function mTabs() {
+  const on = state.m.screen;
+  const tab = (act, glyph, label, active) => `
+    <button data-act="${act}"${active ? ' aria-current="page"' : ''}
+      style="border:0;background:transparent;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;font-family:var(--font-body);font-size:11px;font-weight:600;min-width:60px;min-height:44px;color:${active ? '#7450e4' : '#9995ab'};">
+      <span style="font-size:19px;line-height:1;">${glyph}</span>${label}
+    </button>`;
+  return `
+<div style="position:fixed;left:0;right:0;bottom:0;z-index:10;height:92px;display:flex;align-items:center;justify-content:space-around;padding:0 26px 22px;background:linear-gradient(180deg,rgba(248,247,251,0),rgba(248,247,251,.96) 42%);backdrop-filter:blur(8px);">
+  ${tab('m-go-home', '◱', 'Today', on === 'home')}
+  <button data-act="m-flow-open" aria-label="Log something"
+    style="width:58px;height:58px;flex:none;border:0;border-radius:50%;cursor:pointer;background:${M_GRAD_FLAT};box-shadow:0 10px 24px rgba(79,70,229,.4);color:#fff;font-size:26px;font-weight:300;line-height:1;margin-bottom:12px;">+</button>
+  ${tab('m-go-insights', '◲', 'Insights', on === 'insights')}
+</div>`;
+}
+
+const mSheet = (inner, pad) => `
+<div data-backdrop="m-sheet-close" style="position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(36,31,48,.5);">
+  <div style="background:#fff;border-radius:28px 28px 0 0;padding:${pad};box-shadow:0 -18px 44px rgba(47,28,102,.24);animation:zStep .26s ease both;">${inner}</div>
+</div>`;
+
+/* ── 7. donate ──
+   The button is a real link to PayPal, which reports nothing back. Tapping it
+   records interest — donate_clicks — and nothing more; the money itself is
+   reconciled by hand into `donations`, and the two must not be confused. */
+function mDonateSheet() {
+  const s = state.m;
+  if (s.donateThanks) {
+    return mSheet(`
+  <div style="text-align:center;">
+    <div style="width:66px;height:66px;margin:0 auto;border-radius:50%;background:${M_GRAD_FLAT};display:grid;place-items:center;font-size:28px;color:#fff;box-shadow:0 12px 28px rgba(79,70,229,.34);">♥</div>
+    <div style="font-family:var(--font-heading);font-weight:700;font-size:23px;color:#16131f;margin-top:18px;">Thank you</div>
+    <p style="margin:8px auto 20px;font-size:14px;line-height:1.5;color:#575168;max-width:30ch;">You will get a receipt by email. Nothing about your app changes — that is the point.</p>
+    <button class="btn btn-primary" data-act="m-donate-close" style="width:100%;min-height:50px;font-size:15.5px;">Back to Zimpan</button>
+  </div>`, '30px 22px 34px');
+  }
+  return mSheet(`
+  <div style="width:38px;height:4px;border-radius:999px;background:#d5d2df;margin:0 auto 18px;"></div>
+  <div style="font-family:var(--font-heading);font-weight:700;font-size:25px;line-height:1.15;color:#16131f;">Keep Zimpan going</div>
+  <p style="margin:8px 0 18px;font-size:14px;line-height:1.5;color:#575168;">Voluntary, one-off, and it buys no extra features — everyone gets the same app. Thank you either way.</p>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:18px;">
+    ${[20, 50, 100, 250].map((a) => `
+      <button data-act="m-donate-amt" data-amt="${a}" aria-pressed="${s.donateAmt === a}"
+        style="min-height:46px;border-radius:14px;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;${mChip(s.donateAmt === a)}">${esc(mMoney(a))}</button>`).join('')}
+  </div>
+  <a class="btn btn-primary" href="${DONATE_URL}" data-donate data-m-donate target="_blank" rel="noopener noreferrer"
+    style="width:100%;min-height:52px;font-size:16px;box-shadow:0 6px 18px rgba(79,70,229,.32);">Give ${esc(mMoney(s.donateAmt))}</a>
+  <button data-act="m-donate-close"
+    style="width:100%;min-height:42px;border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;color:#756f88;margin-top:4px;">Not now</button>`, '24px 22px 30px');
+}
+
+/* The avatar's sheet. Not in the design, and it is here for two things the
+   nine screens have no other home for: signing out, and getting back to the
+   full layout on a phone. */
+function mAccountSheet() {
+  const email = (state.auth && state.auth.email) || '';
+  return mSheet(`
+  <div style="width:38px;height:4px;border-radius:999px;background:#d5d2df;margin:0 auto 18px;"></div>
+  <div style="font-family:var(--font-heading);font-weight:700;font-size:23px;color:#16131f;">${esc(state.displayName || 'Your account')}</div>
+  ${email ? `<p style="margin:4px 0 18px;font-size:13.5px;color:#756f88;">${esc(email)}</p>` : '<div style="height:18px;"></div>'}
+  <button class="btn btn-secondary" data-act="m-classic" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">Full view</button>
+  <button class="btn" data-act="m-sign-out"
+    style="width:100%;min-height:48px;font-size:15px;color:#8a2f4a;background:#fff;border:1px solid rgba(138,47,74,.3);margin-bottom:8px;">Sign out</button>
+  <button data-act="m-sheet-close"
+    style="width:100%;min-height:42px;border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;color:#756f88;">Close</button>`, '24px 22px 30px');
+}
+
+/* The whole phone experience, assembled. */
+function mobileApp() {
+  const s = state.m;
+  const tabbed = s.screen === 'home' || s.screen === 'insights';
+  return `
+<div style="min-height:100vh;background:#f8f7fb;color:#16131f;font-family:var(--font-body);">
+  ${s.screen === 'setup' ? mSetup() : ''}
+  ${s.screen === 'home' ? mHome() : ''}
+  ${s.screen === 'insights' ? mInsights() : ''}
+  ${s.screen === 'flow' ? mFlow() : ''}
+  ${s.screen === 'review' ? mReview() : ''}
+  ${s.screen === 'detail' ? mDetail() : ''}
+  ${tabbed ? mTabs() : ''}
+  ${s.accountOpen ? mAccountSheet() : ''}
+  ${s.donateOpen ? mDonateSheet() : ''}
+</div>`;
+}
+
+/* ── odds and ends the screens lean on ── */
+
+const mElapsedSec = () => (state.timerStart ? Math.floor((Date.now() - state.timerStart) / 1000) : 0);
+const mElapsedLabel = (t) => {
+  const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, sec = t % 60;
+  return `${h ? h + ':' + pad(m) : m}:${pad(sec)}`;
+};
+
+function mInitials() {
+  const from = state.displayName || (state.auth && state.auth.email) || '';
+  const words = from.replace(/@.*$/, '').split(/[^A-Za-z]+/).filter(Boolean);
+  if (!words.length) return 'Z';
+  return (words[0][0] + (words[1] ? words[1][0] : '')).toUpperCase();
+}
+
+/* "10:30pm", "22:30", "10.30 pm" — a bedtime typed the way people type one.
+   With no am/pm an evening hour is read as the evening, because that is what
+   the question asked; midnight typed as 12 is read as midnight. */
+function mParseClock(text) {
+  const t = String(text || '').trim().toLowerCase().replace(/\./g, ':');
+  if (!t) return null;
+  const hit = t.match(/^(\d{1,2})(?::(\d{1,2}))?\s*(am|pm)?$/);
+  if (!hit) return null;
+  let h = Number(hit[1]);
+  const mins = Number(hit[2] || 0);
+  if (h > 23 || mins > 59) return null;
+  const ap = hit[3];
+  if (ap === 'pm' && h < 12) h += 12;
+  else if (ap === 'am' && h === 12) h = 0;
+  else if (!ap && h === 12) h = 0;
+  else if (!ap && h >= 6 && h <= 11) h += 12;
+  return h * 60 + mins;
+}
+
+// The phone takes the whole app unless it has been sent back to the full
+// layout by hand.
+const mobileOn = () => isPhone() && !state.mClassic;
+
+function mResetDraft() {
+  Object.assign(state.m, {
+    step: 1, kind: null, day: 'today', earlierIso: '',
+    cat: null, activity: null, typing: false, activityText: '',
+    dir: 'out', amount: '', startMin: mDefaultStart(), durMin: 60,
+    note: '', noteOpen: false, editId: null, editKind: null
+  });
+}
+
+/* ── writing it down ──
+   The one place the draft becomes a row. Ids are minted here rather than
+   asked for, so this works with no network at all; `touch` stamps updated_at
+   and drops the row in the outbox, which is what makes the sync resolve. */
+function mCommit() {
+  const s = state.m;
+  const date = mDraftIso();
+  const label = (mDraftLabel() || (mIsMoney() ? 'Money' : 'Time')).slice(0, 200);
+  const note = s.note.trim().slice(0, 500);
+
+  if (mIsMoney()) {
+    /* Parsed through minor units so what was tapped is what is stored: the
+       column is DECIMAL and 0.1 + 0.2 has no business anywhere near it. */
+    const value = Math.round(Number(s.amount || 0) * 100) / 100;
+    const patch = {
+      date, activity: label, purpose: s.cat,
+      in: s.dir === 'in' ? value : 0, out: s.dir === 'in' ? 0 : value, note
+    };
+    if (s.editId) {
+      state.money = state.money.map((r) => (r.id === s.editId ? touch('money', Object.assign({}, r, patch)) : r));
+    } else {
+      state.money = state.money.concat([touch('money', Object.assign({ id: 'mn' + Date.now() }, patch))]);
+    }
+  } else {
+    const from = s.startMin;
+    const dur = Math.max(1, Math.min(1439, s.durMin));
+    const to = (from + dur) % 1440;
+    /* Past midnight the entry belongs to the morning it ended, which is the
+       rule the rest of the app already reads `to < from` by. */
+    const patch = { date: to < from ? nextDay(date) : date, activity: label, category: s.cat, from, to, note };
+    if (s.editId) {
+      state.entries = state.entries.map((r) => (r.id === s.editId ? touch('entries', Object.assign({}, r, patch)) : r));
+    } else {
+      state.entries = state.entries.concat([touch('entries', Object.assign({ id: 'm' + Date.now() }, patch))]);
+    }
+  }
+  state.selectedDate = date;
+  state.m.step = 5;
+  save();
+  queueSync(0);
+  render();
+}
+
+/* Setup's one write. Everything it collected lands at once, and the taxonomy
+   is replaced rather than added to — setup only ever runs on an account with
+   nothing logged, so there is nothing to orphan. */
+function mFinishSetup() {
+  const s = state.m;
+  const at = Date.now();
+
+  if (s.setupCurrency && s.setupCurrency !== state.currency
+      && CURRENCIES.some((c) => c.code === s.setupCurrency)) {
+    state.currency = s.setupCurrency;
+    state.currencyUpdatedAt = at;
+    state.dirty.currency = true;
+  }
+  const name = s.setupName.trim();
+  if (name) { state.displayName = name.slice(0, 120); state.nameUpdatedAt = at; state.dirty.name = true; }
+
+  const kg = Math.round(Number(s.weight));
+  if (kg >= 20 && kg <= 400) { state.weightKg = kg; state.weightUpdatedAt = at; state.dirty.weight = true; }
+
+  const sleep = mParseClock(s.sleep);
+  if (sleep != null) { state.sleepMin = sleep; state.sleepUpdatedAt = at; state.dirty.sleep = true; }
+
+  state.tracksUpdatedAt = at;
+  state.dirty.tracks = true;
+
+  // Categories: what was picked, in the order it was offered.
+  const chosen = s.setupCats.slice();
+  state.categories.slice().forEach((c) => {
+    if (chosen.indexOf(c.name) < 0) {
+      state.categories = state.categories.filter((x) => x.name !== c.name);
+      bury('categories', c.name);
+    }
+  });
+  chosen.forEach((nm, i) => {
+    const color = (M_CATS.find((c) => c.name === nm) || {}).color || '#5f3ac9';
+    const held = state.categories.find((c) => c.name === nm);
+    if (held) { held.color = color; held.position = i; touch('categories', held); }
+    else state.categories = state.categories.concat([touch('categories', { name: nm, color, position: i })]);
+  });
+
+  // Purposes are not offered at setup, so the six the flow asks about are
+  // seeded whole. Same rule: nothing has been logged against what is here.
+  const wanted = M_PURPOSES.map((p) => p.name);
+  state.purposes.slice().forEach((p) => {
+    if (wanted.indexOf(p.name) < 0) {
+      state.purposes = state.purposes.filter((x) => x.name !== p.name);
+      bury('purposes', p.name);
+    }
+  });
+  M_PURPOSES.forEach((p, i) => {
+    const held = state.purposes.find((x) => x.name === p.name);
+    if (held) { held.color = p.color; held.position = i; touch('purposes', held); }
+    else state.purposes = state.purposes.concat([touch('purposes', { name: p.name, color: p.color, position: i })]);
+  });
+
+  state.setupDone = true;
+  state.m.screen = 'home';
+  save();
+  queueSync(0);
+  render();
+}
+
+/* ── the drag track ──
+   Pointer events on the window rather than the element, because a finger that
+   leaves the 38px hit area mid-drag is still dragging. The rect is measured
+   once on the way down: the track does not move, and measuring it on every
+   move would read a layout this very handler is busy changing. */
+let mDrag = null;
+let mDragFrame = 0;
+
+function mDragTo(x) {
+  if (!mDrag || !mDrag.width) return;
+  const pct = Math.min(1, Math.max(0, (x - mDrag.left) / mDrag.width));
+  // 6am to midnight across the rail, at the resolution of a single minute.
+  const at = Math.round(360 + pct * 1080);
+  const next = Math.max(0, Math.min(1439 - state.m.durMin, at));
+  if (next === state.m.startMin) return;
+  state.m.startMin = next;
+  /* Only the step's own body is redrawn. A full render would replace the shell
+     and replay the step animation on every frame of the drag — and every
+     control on this step is inside the body anyway, so the chips and the
+     minute readout still follow the handle. */
+  const body = document.getElementById('m-step-body');
+  if (body) body.innerHTML = mFlowWhen();
+}
+
+function mDragWire() {
+  root.addEventListener('pointerdown', (ev) => {
+    const track = ev.target.closest('[data-m-track]');
+    if (!track) return;
+    const r = track.getBoundingClientRect();
+    mDrag = { left: r.left, width: r.width };
+    // Tapping the rail jumps the start time there and starts the drag from it.
+    mDragTo(ev.clientX);
+  });
+  window.addEventListener('pointermove', (ev) => {
+    if (!mDrag) return;
+    ev.preventDefault();
+    if (mDragFrame) return;
+    const x = ev.clientX;
+    mDragFrame = requestAnimationFrame(() => { mDragFrame = 0; mDragTo(x); });
+  }, { passive: false });
+  const end = () => { mDrag = null; };
+  window.addEventListener('pointerup', end);
+  window.addEventListener('pointercancel', end);
+}
+
+/* The running timer repaints its own two lines every second. Re-rendering for
+   a clock would rebuild the screen underneath whatever the user was reaching
+   for, once a second, forever. */
+function mTick() {
+  if (!state.timerStart || !mobileOn() || state.m.screen !== 'home') return;
+  const secs = mElapsedSec();
+  const el = document.getElementById('m-elapsed');
+  if (el) el.textContent = mElapsedLabel(secs);
+  const warn = document.getElementById('m-timer-long');
+  if (warn) warn.style.display = secs > 4 * 3600 ? 'block' : 'none';
+}
+
+/* ── actions ── */
+
+/* Which screen the phone opens on is decided once per session, and again if
+   the account changes underneath it. */
+let mBooted = false;
+
+const mGo = (screen) => { state.m.screen = screen; render(); };
+const mSet = (patch) => { Object.assign(state.m, patch); render(); };
+
+const M_ACTIONS = {
+  /* sign in — both buttons open the real credential panel, and both land in
+     setup once it closes, exactly as the design intends. */
+  'm-signup': () => { state.authOpen = true; setAuthMode('register'); },
+  'm-signin': () => { state.authOpen = true; setAuthMode('login'); },
+
+  /* setup */
+  // Step 1 has nothing behind it — the account already exists by then — so the
+  // chevron is not drawn there and this only ever steps back.
+  'm-setup-back': () => {
+    if (state.m.setupStep <= 1) return;
+    mSet({ setupStep: state.m.setupStep - 1, nameTyping: false, catTyping: false });
+  },
+  'm-setup-next': () => {
+    if (!mSetupCan()) return;
+    if (state.m.setupStep >= 3) { mFinishSetup(); return; }
+    mSet({ setupStep: state.m.setupStep + 1, nameTyping: false, catTyping: false });
+  },
+  // "Skip both" leaves the two optional fields empty and finishes anyway.
+  'm-setup-skip': () => { state.m.weight = ''; state.m.sleep = ''; mFinishSetup(); },
+  'm-name-open': () => { state.focusField = 'm-name'; mSet({ nameTyping: true }); },
+  'm-currency': (el) => mSet({ setupCurrency: el.dataset.code }),
+  'm-track': (el) => {
+    const key = el.dataset.key;
+    state.tracks = Object.assign({}, state.tracks, { [key]: !state.tracks[key] });
+    render();
+  },
+  'm-setup-cat': (el) => {
+    const name = el.dataset.name;
+    const held = state.m.setupCats;
+    mSet({ setupCats: held.indexOf(name) >= 0 ? held.filter((n) => n !== name) : held.concat([name]) });
+  },
+  'm-newcat-open': () => { state.focusField = 'm-newcat'; mSet({ catTyping: true }); },
+  'm-newcat-add': () => {
+    const name = state.m.catText.trim().slice(0, 60);
+    // An empty submit is a change of mind, not an error.
+    if (!name) { mSet({ catTyping: false, catText: '' }); return; }
+    const known = M_CATS.some((c) => c.name === name) || state.m.customCats.indexOf(name) >= 0;
+    mSet({
+      customCats: known ? state.m.customCats : state.m.customCats.concat([name]),
+      setupCats: state.m.setupCats.indexOf(name) >= 0 ? state.m.setupCats : state.m.setupCats.concat([name]),
+      catText: '', catTyping: false
+    });
+  },
+
+  /* getting about */
+  'm-go-home': () => mGo('home'),
+  'm-go-insights': () => mGo('insights'),
+  'm-go-review': () => mGo('review'),
+  'm-insight-tab': (el) => mSet({ insightTab: el.dataset.tab }),
+  'm-open-entry': (el) => mSet({ screen: 'detail', selected: el.dataset.id, selectedKind: el.dataset.kind }),
+  'm-account-open': () => mSet({ accountOpen: true }),
+  'm-sheet-close': () => mSet({ accountOpen: false, donateOpen: false, donateThanks: false }),
+  'm-classic': () => { state.mClassic = true; state.m.accountOpen = false; save(); render(); },
+  'm-mobile': () => { state.mClassic = false; save(); render(); },
+  // The next account to sign in gets its own answer about setup.
+  'm-sign-out': () => { state.m.accountOpen = false; mBooted = false; signOut(); },
+
+  /* the flow */
+  'm-flow-open': () => { mResetDraft(); mGo('flow'); },
+  'm-log-time': () => { mResetDraft(); mSet({ screen: 'flow', kind: 'time', step: 2 }); },
+  'm-log-money': () => { mResetDraft(); mSet({ screen: 'flow', kind: 'money', step: 2 }); },
+  'm-flow-close': () => { mResetDraft(); mGo('home'); },
+  'm-flow-back': () => {
+    if (state.m.step <= 1) { mResetDraft(); mGo('home'); return; }
+    mSet({ step: state.m.step - 1, typing: false });
+  },
+  'm-flow-next': () => {
+    const s = state.m;
+    if (s.step === 5) { mResetDraft(); mGo('home'); return; }
+    if (!mCanAdvance()) return;
+    if (s.step === 4) { mCommit(); return; }
+    mSet({ step: s.step + 1, typing: false });
+  },
+  // "Skip for now" skips the note, not the entry — the entry still saves.
+  'm-flow-skip': () => mCommit(),
+  'm-jump': (el) => mSet({ step: Number(el.dataset.step) || 1, typing: false }),
+
+  'm-kind': (el) => mSet({ kind: el.dataset.kind, cat: null, activity: null, activityText: '', typing: false }),
+  'm-day': (el) => mSet({ day: el.dataset.day }),
+  'm-earlier': (el) => mSet({ earlierIso: el.dataset.iso }),
+  'm-cat': (el) => mSet({ cat: el.dataset.name, activity: null, activityText: '', typing: false }),
+  // Picking a pill clears what was typed, and typing clears the pill: the two
+  // are the same field entered two ways, not two fields.
+  'm-act': (el) => mSet({ activity: el.dataset.name, typing: false, activityText: '' }),
+  'm-type-open': () => { state.focusField = 'm-activity'; mSet({ typing: true, activity: null }); },
+  'm-note-open': () => { state.focusField = 'm-note'; mSet({ noteOpen: true }); },
+
+  'm-dir': (el) => mSet({ dir: el.dataset.dir }),
+  'm-key': (el) => {
+    const k = el.dataset.key;
+    const held = state.m.amount;
+    if (k === 'del') { mSet({ amount: held.slice(0, -1) }); return; }
+    // One decimal point, and a bare "." opens with the zero it implies.
+    if (k === 'dot') { if (held.indexOf('.') < 0) mSet({ amount: (held || '0') + '.' }); return; }
+    // Eight digits is more money than any of these currencies needs on a phone.
+    if (held.replace(/[^0-9]/g, '').length >= 8) return;
+    // Two decimal places is the whole minor unit; a third has nowhere to go.
+    const dot = held.indexOf('.');
+    if (dot >= 0 && held.length - dot > 2) return;
+    mSet({ amount: held === '0' ? k : held + k });
+  },
+
+  'm-hour': (el) => mSet({ startMin: Number(el.dataset.h) * 60 + (state.m.startMin % 60) }),
+  'm-min': (el) => mSet({ startMin: Math.floor(state.m.startMin / 60) * 60 + Number(el.dataset.m) }),
+  'm-min-step': (el) => mSet({ startMin: Math.max(0, Math.min(1439, state.m.startMin + Number(el.dataset.d))) }),
+  'm-dur': (el) => {
+    const dur = Number(el.dataset.m);
+    mSet({ durMin: dur, startMin: Math.min(state.m.startMin, 1439 - dur) });
+  },
+  'm-now': () => {
+    const n = new Date();
+    mSet({ startMin: Math.min(1439 - state.m.durMin, n.getHours() * 60 + n.getMinutes()) });
+  },
+  // Half of it, landed on the nearest quarter hour — the shape of a trim
+  // someone makes by eye when a timer ran on past the thing it was timing.
+  'm-halve': () => mSet({ durMin: Math.max(15, Math.round(state.m.durMin / 2 / 15) * 15) }),
+
+  /* the timer */
+  'm-timer-start': () => {
+    state.timerStart = Date.now();
+    state.timerUpdatedAt = Date.now();
+    state.dirty.timer = true;
+    save(); queueSync(0); render();
+  },
+  /* Stopping does not save anything. It opens the flow at step 2 with the
+     start and the length already filled in, so the only work left is saying
+     what it was — which is the whole point of timing first and naming after. */
+  'm-timer-stop': () => {
+    const started = new Date(state.timerStart);
+    const mins = Math.max(1, Math.min(1439, Math.round(mElapsedSec() / 60)));
+    state.timerStart = null;
+    state.timerUpdatedAt = Date.now();
+    state.dirty.timer = true;
+    mResetDraft();
+    Object.assign(state.m, {
+      screen: 'flow', kind: 'time', step: 2, day: 'today',
+      startMin: Math.max(0, Math.min(1439 - mins, started.getHours() * 60 + started.getMinutes())),
+      durMin: mins
+    });
+    save(); queueSync(0); render();
+  },
+
+  /* day review */
+  'm-gap-fill': (el) => {
+    const a = Number(el.dataset.a), b = Number(el.dataset.b);
+    mResetDraft();
+    Object.assign(state.m, { screen: 'flow', kind: 'time', step: 2, day: 'today', startMin: a, durMin: b - a });
+    render();
+  },
+  /* "Untracked" is still an entry. A stretch nobody can account for is a fact
+     about the day, and writing it down is what stops the review asking again. */
+  'm-gap-skip': (el) => {
+    const a = Number(el.dataset.a), b = Number(el.dataset.b);
+    const rest = state.categories.find((c) => c.name === 'Rest');
+    if (!rest) {
+      state.categories = state.categories.concat([touch('categories', {
+        name: 'Rest', color: '#9995ab', position: state.categories.length
+      })]);
+    }
+    state.entries = state.entries.concat([touch('entries', {
+      id: 'g' + Date.now(), date: todayIso, activity: 'Unlogged',
+      category: 'Rest', from: a, to: b % 1440, note: 'Marked as untracked'
+    })]);
+    save(); queueSync(0); render();
+  },
+
+  /* entry detail */
+  'm-detail-edit': () => {
+    const s = state.m;
+    const money = s.selectedKind === 'money';
+    const row = findRow(money ? 'money' : 'entries', s.selected);
+    if (!row) { mGo('home'); return; }
+    mResetDraft();
+    const held = {
+      screen: 'flow', step: 4, kind: money ? 'money' : 'time',
+      editId: row.id, editKind: s.selectedKind,
+      cat: money ? row.purpose : row.category,
+      activityText: row.activity, typing: true,
+      note: row.note || '', noteOpen: !!row.note,
+      day: row.date === todayIso ? 'today'
+        : row.date === mShiftIso(todayIso, -1) ? 'yesterday' : 'earlier',
+      earlierIso: row.date
+    };
+    if (money) {
+      const income = mCents(row.in) > 0;
+      held.dir = income ? 'in' : 'out';
+      held.amount = String(money2(income ? row.in : row.out));
+    } else {
+      held.startMin = Number(row.from) || 0;
+      held.durMin = span(row);
+    }
+    Object.assign(state.m, held);
+    render();
+  },
+  'm-detail-delete': () => {
+    const s = state.m;
+    if (s.selectedKind === 'money') {
+      state.money = state.money.filter((e) => e.id !== s.selected);
+      bury('money', s.selected);
+    } else {
+      state.entries = state.entries.filter((e) => e.id !== s.selected);
+      bury('entries', s.selected);
+    }
+    state.m.selected = null;
+    state.m.screen = 'home';
+    save(); queueSync(0); render();
+  },
+
+  /* donate */
+  'm-donate-open': () => mSet({ donateOpen: true, donateThanks: false }),
+  'm-donate-close': () => mSet({ donateOpen: false, donateThanks: false }),
+  'm-donate-amt': (el) => mSet({ donateAmt: Number(el.dataset.amt) }),
+};
+
+/* PayPal reports nothing back, so the thanks state is put up on the way out
+   and stands in for the return trip. Deliberately not an action: the delegate
+   cancels the default on anything it handles, and cancelling this one would
+   mean the tap never reached PayPal at all. */
+root.addEventListener('click', (ev) => {
+  if (!ev.target.closest('[data-m-donate]')) return;
+  state.m.donateThanks = true;
+  scheduleRender();
+});
+
+Object.assign(ACTIONS, M_ACTIONS);
+
+
 /* ─────────────────────────── wiring ─────────────────────────── */
 
 /* A lightbox closes when you click the sheet's surround. Checked before the
@@ -6748,7 +8450,16 @@ function tickLive() {
   }
 }
 
+mDragWire();
+
 setInterval(tickLive, 1000);
+setInterval(mTick, 1000);
+
+/* Crossing the phone breakpoint swaps the whole experience, so the app has to
+   be told rather than left showing the layout for a width it no longer has. */
+try {
+  window.matchMedia(PHONE_QUERY).addEventListener('change', () => render());
+} catch (err) { /* older Safari — the layout still resolves on the next render */ }
 
 try {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
