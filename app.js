@@ -6864,6 +6864,21 @@ function mEntryRow(e) {
 </button>`;
 }
 
+/* The way into the report deck. The deck itself is the desktop's — a stack of
+   written cards you swipe — and it needed no porting: it is a self-contained
+   overlay that reads its own window and draws over whatever is behind it. All
+   this does is give it a door on the phone. */
+function mReportCard(money) {
+  return `
+<div class="card" style="border-radius:20px;padding:18px;border:1px solid rgba(120,86,245,.25);box-shadow:0 4px 14px rgba(47,28,102,.08);gap:0;margin-bottom:14px;">
+  <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#7450e4;margin-bottom:7px;">Your report</div>
+  <div style="font-family:var(--font-heading);font-weight:700;font-size:19px;color:#16131f;">${money ? 'Where the money went' : 'Where the time went'}</div>
+  <p style="margin:7px 0 14px;font-size:14px;line-height:1.5;color:#575168;">A short stack of cards, written out in sentences rather than charts. Swipe through them, and pick the stretch they cover once you are in.</p>
+  <button class="btn btn-primary" data-act="m-report-open"
+    style="width:100%;min-height:48px;font-size:15px;box-shadow:0 5px 16px rgba(79,70,229,.3);">Open the report</button>
+</div>`;
+}
+
 function mDonateCard() {
   return `
 <div class="card" style="border-radius:20px;padding:18px;border:1px solid rgba(120,86,245,.25);box-shadow:0 4px 14px rgba(47,28,102,.08);gap:0;margin-top:22px;">
@@ -7345,6 +7360,8 @@ function mInsights() {
     ${opt('time', 'Time')}${opt('money', 'Money')}
   </div>
 
+  ${mReportCard(money)}
+
   <div class="card" style="border-radius:20px;box-shadow:${M_SHADOW_MD};padding:18px;gap:0;margin-bottom:14px;">
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:16px;">
       <span style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;">${money ? 'Spent per day' : 'Hours logged per day'}</span>
@@ -7467,6 +7484,7 @@ function mobileApp() {
   ${tabbed ? mTabs() : ''}
   ${s.accountOpen ? mAccountSheet() : ''}
   ${s.donateOpen ? mDonateSheet() : ''}
+  ${state.reportOpen ? reportSheet() : ''}
 </div>`;
 }
 
@@ -7895,6 +7913,17 @@ const M_ACTIONS = {
     state.m.selected = null;
     state.m.screen = 'home';
     save(); queueSync(0); render();
+  },
+
+  /* the report deck */
+  /* `deckCards` branches on state.app, which the desktop drives from its
+     tracker switch. On the phone the Insights tab is that same choice, so it
+     is pointed at the deck before the existing action opens it — everything
+     after that (the warm-up flag, the summary fetch, the card index) is the
+     desktop's and is reused whole. */
+  'm-report-open': () => {
+    state.app = state.m.insightTab === 'money' ? 'money' : 'time';
+    ACTIONS['open-report']();
   },
 
   /* donate */

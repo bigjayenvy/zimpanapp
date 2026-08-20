@@ -1578,8 +1578,12 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     /* Five windows do not fit a phone on one line, and a switch that breaks
        three-and-two reads as a mistake. It scrolls instead — the same treatment
        the landing nav and the sticky bar's controls already use. */
+    /* Margin, not padding: padding pads the scrolling content, so a pill
+       scrolled to the start still slides underneath the close button and reads
+       as a collision. A margin moves the scroller's own edge clear of it, and
+       the overflow is then clipped where the row ends. */
     .deck-ranges {
-      gap: 3px; padding-right: 40px; justify-content: flex-start;
+      gap: 3px; margin-right: 40px; padding-right: 0; justify-content: flex-start;
       overflow-x: auto; scrollbar-width: none;
     }
     .deck-ranges::-webkit-scrollbar { display: none; }
