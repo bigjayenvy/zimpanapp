@@ -3575,7 +3575,7 @@ const donateSeenOn = () => { try { return localStorage.getItem(DONATE_SEEN_KEY) 
 const markDonateSeen = () => { try { localStorage.setItem(DONATE_SEEN_KEY, iso(new Date())); } catch (err) { /* private mode */ } };
 
 function tickDonate() {
-  if (!state.auth || state.donateOpen) return;
+  if (!state.auth || state.donateOpen || (state.m && state.m.donateOpen)) return;
   // Still only counts while the tab is actually on screen — a window left in a
   // background tab for an hour has not been used for an hour.
   if (document.visibilityState !== 'visible') return;
@@ -3587,7 +3587,10 @@ function tickDonate() {
   if (donateSeenOn() === iso(new Date())) return;
 
   markDonateSeen();
-  state.donateOpen = true;
+  /* The two layouts keep their sheets on different flags, and for a while this
+     set only the desktop's — so the nudge never once appeared on a phone. */
+  if (mobileOn()) { state.m.donateOpen = true; state.m.donateThanks = false; }
+  else state.donateOpen = true;
   render();
 }
 setInterval(tickDonate, DONATE_TICK_MS);
@@ -5594,6 +5597,8 @@ function render() {
       state.focusField = null;
       if (want) want.focus();
     }
+    // The tree was just replaced, so the scroll-driven button has to be told.
+    mPaintTop();
     return;
   }
 
@@ -6701,7 +6706,7 @@ const mDefaultStart = () => {
 state.m = {
   screen: 'home', step: 1, setupStep: 1,
   // draft
-  kind: null, day: 'today', earlierIso: '',
+  kind: null, day: 'today', earlierIso: '', calMonth: '',
   cat: null, activity: null, typing: false, activityText: '',
   dir: 'out', amount: '', startMin: mDefaultStart(), durMin: 60,
   note: '', noteOpen: false,
@@ -6716,6 +6721,7 @@ state.m = {
   // the rest
   range: 'today', reviewDay: '',
   insightTab: 'time', insightRange: 'week', accountOpen: false,
+  stepsOpen: false, stepsDraft: '', weightOpen: false, weightDraft: '',
   donateOpen: false, donateAmt: 50, donateThanks: false
 };
 
@@ -6993,13 +6999,46 @@ function mReportCard(money) {
 </div>`;
 }
 
+/* Steps and weight: the two numbers the calorie estimates need that the flow
+   never asks for, because neither is an entry. They sit under the day's gaps
+   because that is where the reckoning of a day already happens.
+
+   Closed, each is a button. Only tapping one mints an input, which is the same
+   rule every other field in this flow follows. */
+function mBodyCard(day) {
+  const s = state.m;
+  const steps = Number(state.steps[day]) || 0;
+  const kg = Number(state.weightKg) || 0;
+
+  const field = (open, act, key, sync, label, shown, placeholder, suffix) => `
+  <div style="flex:1;min-width:0;">
+    <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;margin-bottom:6px;">${esc(label)}</div>
+    ${open
+      ? `<div style="display:flex;gap:6px;">
+          <input class="input" type="text" inputmode="numeric" data-k="${key}" data-sync="${sync}"
+            value="${esc(String(state.m[sync.split('.')[1]] || ''))}" placeholder="${esc(placeholder)}" data-enter="${esc(act)}-save"
+            style="flex:1;min-width:0;min-height:42px;padding:8px 12px;font-size:15px;border-radius:12px;border:1.5px solid #7856f5;box-shadow:0 0 0 3px rgba(120,86,245,.18);">
+          <button class="btn btn-primary" data-act="${esc(act)}-save" style="flex:none;min-height:42px;padding:0 14px;font-size:14px;border-radius:12px;">Save</button>
+        </div>`
+      : `<button data-act="${esc(act)}-open"
+          style="width:100%;min-height:42px;padding:0 12px;border-radius:12px;cursor:pointer;text-align:left;font-family:var(--font-body);font-size:15px;font-weight:600;
+                 background:#fff;border:1px solid rgba(47,28,102,.12);color:${shown ? '#16131f' : '#756f88'};">${esc(shown ? shown + (suffix || '') : placeholder)}</button>`}
+  </div>`;
+
+  return `
+<div class="card" style="border-radius:16px;padding:14px;gap:12px;flex-direction:row;box-shadow:${M_SHADOW_SM};margin-bottom:22px;">
+  ${field(s.stepsOpen, 'm-steps', 'm-steps-input', 'm.stepsDraft', 'Steps', steps ? steps.toLocaleString('en-US') : '', 'Add steps', '')}
+  ${field(s.weightOpen, 'm-weight', 'm-weight-input', 'm.weightDraft', 'Weight', kg ? String(kg) : '', 'Add weight', ' kg')}
+</div>`;
+}
+
 function mDonateCard() {
   return `
 <div class="card" style="border-radius:20px;padding:18px;border:1px solid rgba(120,86,245,.25);box-shadow:0 4px 14px rgba(47,28,102,.08);gap:0;margin-top:22px;">
   <div style="font-family:var(--font-heading);font-weight:700;font-size:19px;color:#16131f;">Zimpan is free, and stays free</div>
   <p style="margin:7px 0 14px;font-size:14px;line-height:1.5;color:#575168;">No ads, no paid tier, and nothing you log is ever sold. If it has been worth something to you, a small gift keeps it being built.</p>
-  <button class="btn btn-primary" data-act="m-donate-open"
-    style="width:100%;min-height:48px;font-size:15px;box-shadow:0 5px 16px rgba(79,70,229,.3);">Donate</button>
+  <a class="btn btn-primary" href="${DONATE_URL}" data-donate target="_blank" rel="noopener noreferrer"
+    style="width:100%;min-height:48px;font-size:15px;box-shadow:0 5px 16px rgba(79,70,229,.3);">Donate</a>
 </div>`;
 }
 
@@ -7008,8 +7047,11 @@ function mDonateCard() {
    and a logo on them is only a second thing to look at. The avatar moves up
    here too, which hands the day's heading the full width it was drawn for. */
 function mBrandBar() {
+  /* Sticky, and bled out to the screen edges with negative margins: the column
+     it sits in carries 22px of padding, and without the bleed the page would
+     scroll visibly through the gutters either side of the bar. */
   return `
-<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+<div style="position:sticky;top:0;z-index:15;background:#f8f7fb;margin:0 -22px 14px;padding:6px 22px 10px;display:flex;align-items:center;justify-content:space-between;">
   <span style="display:flex;align-items:center;gap:9px;">
     ${LOGO_BADGE(26)}
     <span style="font-family:var(--font-heading);font-weight:600;font-size:19px;letter-spacing:.02em;line-height:1;color:#16131f;">ZIMPAN<span style="color:#5f3ac9;">.</span></span>
@@ -7100,6 +7142,8 @@ function mHome() {
     <span style="font-size:17px;color:#7450e4;">→</span>
   </button>` : ''}
 
+  ${single ? mBodyCard(day) : ''}
+
   ${searchField()}
 
   <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;">
@@ -7155,9 +7199,9 @@ function mCanAdvance() {
   return true;
 }
 
-/* The date the draft lands on. Today and Yesterday are the two answers that
-   cover almost everything; Earlier opens a row of the days before them, which
-   is a date picker made of taps rather than a field that summons a keyboard. */
+/* The date the draft lands on. Today and Yesterday cover almost everything;
+   "Pick a date" opens a calendar, which is a date picker made of taps rather
+   than a field that summons a keyboard. */
 function mDraftIso() {
   const s = state.m;
   if (s.day === 'today') return todayIso;
@@ -7170,6 +7214,67 @@ const mDayChipLabel = () => {
   if (s.day === 'yesterday') return 'Yesterday';
   return dayLabel(mDraftIso());
 };
+
+/* ── the calendar ──
+   Money may be dated forwards: a bill you have already committed to is a real
+   thing to record before it lands. Time may not — hours you have not spent yet
+   are not hours, and a tracker that let you log them would be measuring
+   intention rather than fact. So the future is open on one kind and closed on
+   the other, and the grid greys out what it will not take. */
+const mCalMax = () => (mIsMoney() ? mShiftIso(todayIso, 365) : todayIso);
+
+const mMonthOf = (isoDate) => isoDate.slice(0, 7);
+const mCalCursor = () => state.m.calMonth || mMonthOf(mDraftIso());
+const mShiftMonth = (ym, delta) => {
+  const d = new Date(ym + '-01T00:00:00');
+  d.setMonth(d.getMonth() + delta);
+  return iso(d).slice(0, 7);
+};
+
+function mCalendar() {
+  const cursor = mCalCursor();
+  const selected = mDraftIso();
+  const max = mCalMax();
+  const first = new Date(cursor + '-01T00:00:00');
+  // Monday-first, which is how a week is written everywhere the app is used.
+  const lead = (first.getDay() + 6) % 7;
+  const days = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  const monthLabel = first.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+
+  const cells = [];
+  for (let i = 0; i < lead; i++) cells.push('<span></span>');
+  for (let d = 1; d <= days; d++) {
+    const date = `${cursor}-${pad(d)}`;
+    const on = date === selected;
+    const today = date === todayIso;
+    const beyond = date > max;
+    cells.push(`
+      <button data-act="m-cal-pick" data-iso="${date}"${beyond ? ' aria-disabled="true"' : ''}
+        aria-pressed="${on}" aria-label="${esc(mLongDate(date))}"
+        style="min-height:40px;border-radius:11px;cursor:${beyond ? 'default' : 'pointer'};font-family:var(--font-body);
+               font-size:13.5px;font-weight:${on || today ? 700 : 500};border:1px solid ${on ? 'transparent' : today ? 'rgba(120,86,245,.45)' : 'transparent'};
+               background:${on ? M_GRAD_FLAT : 'transparent'};
+               color:${on ? '#fff' : beyond ? '#c9c5d4' : today ? '#5f3ac9' : '#3b3648'};
+               opacity:${beyond ? 0.55 : 1};">${d}</button>`);
+  }
+  // Stepping past the last allowed month has nothing to show.
+  const nextBlocked = mShiftMonth(cursor, 1) > mMonthOf(max);
+
+  return `
+<div class="card" style="margin-top:10px;padding:14px;border-radius:16px;gap:0;box-shadow:${M_SHADOW_SM};">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+    <button data-act="m-cal-step" data-d="-1" aria-label="Previous month"
+      style="width:36px;height:36px;border-radius:50%;border:1px solid rgba(120,86,245,.35);background:#fff;color:#5f3ac9;font-size:15px;line-height:1;cursor:pointer;">‹</button>
+    <span style="font-family:var(--font-heading);font-weight:700;font-size:15.5px;color:#16131f;">${esc(monthLabel)}</span>
+    <button data-act="m-cal-step" data-d="1"${nextBlocked ? ' aria-disabled="true"' : ''} aria-label="Next month"
+      style="width:36px;height:36px;border-radius:50%;border:1px solid rgba(120,86,245,.35);background:#fff;color:#5f3ac9;font-size:15px;line-height:1;cursor:pointer;opacity:${nextBlocked ? 0.4 : 1};">›</button>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:4px;">
+    ${['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d) => `<span style="text-align:center;font-size:10.5px;font-weight:600;color:#9995ab;">${d}</span>`).join('')}
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;">${cells.join('')}</div>
+</div>`;
+}
 
 function mFlowKind() {
   const s = state.m;
@@ -7188,9 +7293,6 @@ function mFlowKind() {
   const chip = (day, label) => `
     <button data-act="m-day" data-day="${day}" aria-pressed="${s.day === day}"
       style="padding:9px 16px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;${mChip(s.day === day)}">${esc(label)}</button>`;
-  // The five days before yesterday, so "Earlier" resolves to a real date
-  // without ever opening a keyboard.
-  const earlier = [2, 3, 4, 5, 6].map((n) => mShiftIso(todayIso, -n));
   return `
 <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:24px;">
   ${card('time', '◷', 'Time', 'Something you did', '#f2eefe', '#5f3ac9')}
@@ -7198,14 +7300,9 @@ function mFlowKind() {
 </div>
 ${mLabel('When')}
 <div style="display:flex;flex-wrap:wrap;gap:8px;">
-  ${chip('today', 'Today')}${chip('yesterday', 'Yesterday')}${chip('earlier', 'Earlier')}
+  ${chip('today', 'Today')}${chip('yesterday', 'Yesterday')}${chip('earlier', s.day === 'earlier' ? esc(dayLabel(mDraftIso())) : 'Pick a date')}
 </div>
-${s.day === 'earlier' ? `
-<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">
-  ${earlier.map((d) => `
-    <button data-act="m-earlier" data-iso="${d}" aria-pressed="${mDraftIso() === d}"
-      style="padding:9px 15px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;${mChip(mDraftIso() === d)}">${esc(dayLabel(d))}</button>`).join('')}
-</div>` : ''}`;
+${s.day === 'earlier' ? mCalendar() : ''}`;
 }
 
 /* The category grid, shared by time's step 2 and money's step 3. Drawn from the
@@ -7601,6 +7698,16 @@ function mInsights() {
 
 /* ── 9. tab bar, sheets ── */
 
+/* Shown only once there is something to come back from — toggled by a scroll
+   listener rather than a render, since scrolling is not a state change. */
+function mTopButton() {
+  return `
+<button id="m-top" data-act="m-scroll-top" aria-label="Back to top"
+  style="display:none;position:fixed;right:18px;bottom:104px;z-index:12;width:44px;height:44px;border-radius:50%;
+         border:1px solid rgba(120,86,245,.3);background:#fff;color:#5f3ac9;font-size:17px;line-height:1;
+         box-shadow:0 6px 18px rgba(47,28,102,.18);cursor:pointer;">↑</button>`;
+}
+
 function mTabs() {
   const on = state.m.screen;
   const tab = (act, glyph, label, active) => `
@@ -7610,7 +7717,7 @@ function mTabs() {
     </button>`;
   return `
 <div style="position:fixed;left:0;right:0;bottom:0;z-index:10;height:92px;display:flex;align-items:center;justify-content:space-around;padding:0 26px 22px;background:linear-gradient(180deg,rgba(248,247,251,0),rgba(248,247,251,.96) 42%);backdrop-filter:blur(8px);">
-  ${tab('m-go-home', '◱', 'Today', on === 'home')}
+  ${tab('m-go-home', '◱', 'Home', on === 'home')}
   <button data-act="m-flow-open" aria-label="Log something"
     style="width:58px;height:58px;flex:none;border:0;border-radius:50%;cursor:pointer;background:${M_GRAD_FLAT};box-shadow:0 10px 24px rgba(79,70,229,.4);color:#fff;font-size:26px;font-weight:300;line-height:1;margin-bottom:12px;">+</button>
   ${tab('m-go-insights', '◲', 'Insights', on === 'insights')}
@@ -7680,7 +7787,7 @@ function mobileApp() {
   ${s.screen === 'flow' ? mFlow() : ''}
   ${s.screen === 'review' ? mReview() : ''}
   ${s.screen === 'detail' ? mDetail() : ''}
-  ${tabbed ? mTabs() : ''}
+  ${tabbed ? mTabs() + mTopButton() : ''}
   ${s.accountOpen ? mAccountSheet() : ''}
   ${s.donateOpen ? mDonateSheet() : ''}
   ${state.reportOpen ? reportSheet() : ''}
@@ -7729,7 +7836,7 @@ const mDraftDayFromRange = () => (mRangeKey() === 'yesterday' ? 'yesterday' : 't
 
 function mResetDraft() {
   Object.assign(state.m, {
-    step: 1, kind: null, day: 'today', earlierIso: '',
+    step: 1, kind: null, day: 'today', earlierIso: '', calMonth: '',
     cat: null, activity: null, typing: false, activityText: '',
     dir: 'out', amount: '', startMin: mDefaultStart(), durMin: 60,
     note: '', noteOpen: false, editId: null, editKind: null
@@ -7953,6 +8060,50 @@ const M_ACTIONS = {
   },
 
   /* getting about */
+  'm-scroll-top': () => window.scrollTo({ top: 0, behavior: 'smooth' }),
+
+  /* Steps and weight. Both write through the same stamps the desktop uses, so
+     a count entered on the phone merges with one entered on the laptop rather
+     than one of them quietly winning. */
+  'm-steps-open': () => {
+    const day = mSelectedDay();
+    state.focusField = 'm-steps-input';
+    mSet({ stepsOpen: true, stepsDraft: String(state.steps[day] || ''), weightOpen: false });
+  },
+  'm-steps-save': () => {
+    const day = mSelectedDay();
+    const n = Math.round(Number(state.m.stepsDraft));
+    // Blank or zero clears the day rather than storing a nought — the stamp
+    // stays, so the clearing itself is what travels to the other devices.
+    if (Number.isFinite(n) && n > 0) state.steps[day] = Math.min(200000, n);
+    else delete state.steps[day];
+    state.stepsAt[day] = Date.now();
+    state.dirty.steps = true;
+    state.m.stepsOpen = false;
+    state.m.stepsDraft = '';
+    save(); queueSync(0); render();
+  },
+  'm-weight-open': () => {
+    state.focusField = 'm-weight-input';
+    mSet({ weightOpen: true, weightDraft: state.weightKg ? String(state.weightKg) : '', stepsOpen: false });
+  },
+  'm-weight-save': () => {
+    const n = Math.round(Number(state.m.weightDraft));
+    // The server takes 20–400kg or nothing; anything else is a typo, and a
+    // typo should leave what is already stored alone.
+    if (Number.isFinite(n) && n >= 20 && n <= 400) {
+      state.weightKg = n;
+      state.weightUpdatedAt = Date.now();
+      state.dirty.weight = true;
+    } else if (!String(state.m.weightDraft).trim()) {
+      state.weightKg = null;
+      state.weightUpdatedAt = Date.now();
+      state.dirty.weight = true;
+    }
+    state.m.weightOpen = false;
+    state.m.weightDraft = '';
+    save(); queueSync(0); render();
+  },
   'm-go-home': () => mGo('home'),
   'm-go-insights': () => mGo('insights'),
   'm-range': (el) => mSet({ range: el.dataset.key }),
@@ -7993,7 +8144,16 @@ const M_ACTIONS = {
 
   'm-kind': (el) => mSet({ kind: el.dataset.kind, cat: null, activity: null, activityText: '', typing: false }),
   'm-day': (el) => mSet({ day: el.dataset.day }),
-  'm-earlier': (el) => mSet({ earlierIso: el.dataset.iso }),
+  'm-cal-step': (el) => {
+    const next = mShiftMonth(mCalCursor(), Number(el.dataset.d));
+    if (next > mMonthOf(mCalMax())) return;
+    mSet({ calMonth: next });
+  },
+  'm-cal-pick': (el) => {
+    const date = el.dataset.iso;
+    if (date > mCalMax()) return;
+    mSet({ earlierIso: date, calMonth: mMonthOf(date) });
+  },
   'm-cat': (el) => mSet({ cat: el.dataset.name, activity: null, activityText: '', typing: false }),
   /* Deliberately no `focusField` here, unlike the desktop's `pick-open`: the
      list opens ready to be tapped, and the keyboard waits to be asked for. */
@@ -8928,6 +9088,16 @@ function tickLive() {
 }
 
 mDragWire();
+
+/* The back-to-top button appears past a screen and a half of scrolling. Bound
+   once and driven straight off the scroll position: a render per scroll frame
+   would be an absurd price for one button changing its mind. */
+function mPaintTop() {
+  const el = document.getElementById('m-top');
+  if (!el) return;
+  el.style.display = window.scrollY > 600 ? 'block' : 'none';
+}
+window.addEventListener('scroll', mPaintTop, { passive: true });
 
 setInterval(tickLive, 1000);
 setInterval(mTick, 1000);
