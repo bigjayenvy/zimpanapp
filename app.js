@@ -7287,7 +7287,10 @@ function mFlowWhen() {
   const minute = s.startMin % 60;
   const hours = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22];
   const mins = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
-  const durs = [15, 30, 45, 60, 90, 120, 180];
+  /* Up to a full night. Stopping at three hours meant sleep — the longest
+     thing most people log, and the one they log every day — could not be
+     entered at all. */
+  const durs = [15, 30, 45, 60, 90, 120, 180, 240, 360, 480];
   const left = Math.max(0, Math.min(100, ((s.startMin - 360) / 1080) * 100));
   const width = Math.max(0, Math.min(100 - left, (s.durMin / 1080) * 100));
   const smallChip = (act, data, label, on) => `
@@ -7819,7 +7822,7 @@ function mDragTo(x) {
   const pct = Math.min(1, Math.max(0, (x - mDrag.left) / mDrag.width));
   // 6am to midnight across the rail, at the resolution of a single minute.
   const at = Math.round(360 + pct * 1080);
-  const next = Math.max(0, Math.min(1439 - state.m.durMin, at));
+  const next = Math.max(0, Math.min(1439, at));
   if (next === state.m.startMin) return;
   state.m.startMin = next;
   /* Only the step's own body is redrawn. A full render would replace the shell
@@ -7995,13 +7998,13 @@ const M_ACTIONS = {
   'm-hour': (el) => mSet({ startMin: Number(el.dataset.h) * 60 + (state.m.startMin % 60) }),
   'm-min': (el) => mSet({ startMin: Math.floor(state.m.startMin / 60) * 60 + Number(el.dataset.m) }),
   'm-min-step': (el) => mSet({ startMin: Math.max(0, Math.min(1439, state.m.startMin + Number(el.dataset.d))) }),
-  'm-dur': (el) => {
-    const dur = Number(el.dataset.m);
-    mSet({ durMin: dur, startMin: Math.min(state.m.startMin, 1439 - dur) });
-  },
+  // Choosing how long something ran must not move when it started. It used to
+  // pull the start back so the two fitted inside one day, which silently
+  // rewrote 11pm into the afternoon the moment you asked for seven hours.
+  'm-dur': (el) => mSet({ durMin: Number(el.dataset.m) }),
   'm-now': () => {
     const n = new Date();
-    mSet({ startMin: Math.min(1439 - state.m.durMin, n.getHours() * 60 + n.getMinutes()) });
+    mSet({ startMin: n.getHours() * 60 + n.getMinutes() });
   },
   // Half of it, landed on the nearest quarter hour — the shape of a trim
   // someone makes by eye when a timer ran on past the thing it was timing.
@@ -8026,7 +8029,7 @@ const M_ACTIONS = {
     mResetDraft();
     Object.assign(state.m, {
       screen: 'flow', kind: 'time', step: 2, day: 'today',
-      startMin: Math.max(0, Math.min(1439 - mins, started.getHours() * 60 + started.getMinutes())),
+      startMin: Math.max(0, Math.min(1439, started.getHours() * 60 + started.getMinutes())),
       durMin: mins
     });
     save(); queueSync(0); render();
