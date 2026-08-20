@@ -125,6 +125,20 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      covering it, so anything subtler is invisible. */
   .m-key:active { background: var(--color-accent-200) !important; }
 
+  /* The category picker borrows the desktop popover wholesale; what it cannot
+     borrow is the desktop's hit target. A 31px row is a comfortable click and
+     a poor tap, so the rows grow to the 44px this flow holds everything else
+     to, and the popover sits on white rather than the surface tint so it reads
+     as a sheet over the step rather than part of it. */
+  .m-pick .pick-pop { background: #fff; padding: 10px; }
+  .m-pick .pick-opt {
+    display: flex; align-items: center; gap: 9px;
+    min-height: 44px; padding: 8px 10px; font-size: 15px; border-radius: 10px;
+  }
+  .m-pick .pick-opt.is-on { background: var(--color-accent-100); }
+  .m-pick .pick-list { gap: 2px; }
+  .m-pick .pick-btn { box-shadow: var(--shadow-sm); }
+
   @media (prefers-reduced-motion: reduce) {
     .m-timer-dot { animation: none; }
     [style*="zStep"], [style*="zPop"] { animation: none !important; }

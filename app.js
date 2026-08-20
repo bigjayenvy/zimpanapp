@@ -7075,23 +7075,53 @@ ${s.day === 'earlier' ? `
 /* The category grid, shared by time's step 2 and money's step 3. Drawn from the
    account's own categories, with the activity pills under it drawn from what
    has actually been logged under the one that is selected. */
+/* A list rather than a grid of cards. The grid was drawn against the six
+   categories the handoff proposed; an account that has grown its own runs to a
+   dozen or more, and a dozen 86px cards is a screen and a half of scrolling
+   before the question can even be answered.
+
+   The popover, its filtering, its backdrop and its Escape key are the ones the
+   desktop already uses — same classes, same generic `filterPicker`. What
+   differs is the caret: the desktop lands it in the search box on open, and
+   here it does not. A keyboard that appears over a list you were about to tap
+   is the thing this whole flow is built to avoid, so search is a field you
+   choose to tap, sitting above a list you can thumb through instead. */
 function mFlowCategory() {
   const s = state.m;
   const money = mIsMoney();
   const rows = mVocab(money);
   const acts = s.cat ? mActs(s.cat, money) : [];
+  const open = state.pickOpen === 'm-cat';
+  const label = money ? 'purpose' : 'category';
   return `
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:22px;">
-  ${rows.map((c) => {
-    const on = s.cat === c.name;
-    return `
-    <button data-act="m-cat" data-name="${esc(c.name)}" aria-pressed="${on}"
-      style="display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:14px;border-radius:16px;cursor:pointer;text-align:left;min-height:86px;background:${on ? '#f2eefe' : '#fff'};border:1.5px solid ${on ? '#7856f5' : 'rgba(47,28,102,.1)'};">
-      <span style="width:11px;height:11px;border-radius:50%;background:${esc(mColor(c.name, money))};"></span>
-      <span style="font-family:var(--font-heading);font-weight:700;font-size:15.5px;color:#16131f;">${esc(c.name)}</span>
-      <span style="font-size:11.5px;color:${on ? '#5f3ac9' : '#756f88'};">${esc(mSub(c.name, money))}</span>
-    </button>`;
-  }).join('')}
+<div class="pick-field m-pick" data-pick-field="m-cat" style="margin-bottom:22px;">
+  <button type="button" class="pick-btn" data-act="m-pick-open"
+    aria-haspopup="listbox" aria-expanded="${open}"
+    style="width:100%;min-height:50px;padding:0 14px;border-radius:16px;background:#fff;
+      border:1.5px solid ${s.cat ? '#7856f5' : 'rgba(47,28,102,.12)'};font-family:var(--font-body);font-size:15px;">
+    ${s.cat
+      ? `<span style="width:11px;height:11px;flex:none;border-radius:50%;background:${esc(mColor(s.cat, money))};"></span>
+         <span style="flex:1;min-width:0;font-weight:600;color:#16131f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(s.cat)}</span>`
+      : `<span style="flex:1;color:#756f88;font-weight:600;">Choose a ${label}</span>`}
+    <span class="pick-caret" aria-hidden="true" style="color:#7450e4;">▾</span>
+  </button>
+  ${open ? `
+  <div class="pick-pop" role="listbox" style="border-radius:16px;">
+    <input class="input pick-search" data-k="m-pick-search" data-pick-search="m-cat"
+      type="text" placeholder="Search ${esc(label)}…" autocomplete="off"
+      aria-label="Search ${esc(label)}" style="min-height:42px;font-size:15px;">
+    <div class="pick-list" data-pick-list style="max-height:46vh;">
+      ${rows.map((c) => `
+        <button type="button" class="pick-opt${c.name === s.cat ? ' is-on' : ''}" role="option"
+          aria-selected="${c.name === s.cat}" data-act="m-pick-choose"
+          data-name="${esc(c.name)}" data-find="${esc(c.name.toLowerCase())}">
+          <span style="width:9px;height:9px;flex:none;border-radius:50%;background:${esc(mColor(c.name, money))};"></span>
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;">${esc(c.name)}</span>
+        </button>`).join('')}
+      <div class="pick-empty" hidden style="padding:12px 10px;font-size:14px;color:#756f88;">Nothing matches that.</div>
+    </div>
+  </div>
+  <div class="pick-shade" data-backdrop="pick-close"></div>` : ''}
 </div>
 ${mLabel(s.cat ? `${s.cat} — usual ones` : 'Pick a category first')}
 <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
@@ -7815,6 +7845,18 @@ const M_ACTIONS = {
   'm-day': (el) => mSet({ day: el.dataset.day }),
   'm-earlier': (el) => mSet({ earlierIso: el.dataset.iso }),
   'm-cat': (el) => mSet({ cat: el.dataset.name, activity: null, activityText: '', typing: false }),
+  /* Deliberately no `focusField` here, unlike the desktop's `pick-open`: the
+     list opens ready to be tapped, and the keyboard waits to be asked for. */
+  'm-pick-open': () => {
+    state.pickOpen = state.pickOpen === 'm-cat' ? null : 'm-cat';
+    state.pickQuery = '';
+    render();
+  },
+  'm-pick-choose': (el) => {
+    state.pickOpen = null;
+    state.pickQuery = '';
+    mSet({ cat: el.dataset.name, activity: null, activityText: '', typing: false });
+  },
   // Picking a pill clears what was typed, and typing clears the pill: the two
   // are the same field entered two ways, not two fields.
   'm-act': (el) => mSet({ activity: el.dataset.name, typing: false, activityText: '' }),
@@ -8089,8 +8131,10 @@ document.addEventListener('keydown', (ev) => {
   if (el.dataset && el.dataset.pickSearch) {
     if (ev.key === 'Enter') {
       ev.preventDefault();
+      // Dispatch the row's own action rather than the desktop's by name —
+      // there are two pickers now, and they commit to different places.
       const hit = el.parentElement.querySelector('.pick-opt:not([hidden])');
-      if (hit) ACTIONS['pick-choose'](hit);
+      if (hit) { const pick = ACTIONS[hit.dataset.act]; if (pick) pick(hit); }
       return;
     }
     if (ev.key === 'Escape') { ev.preventDefault(); state.pickOpen = null; state.pickQuery = ''; render(); return; }
