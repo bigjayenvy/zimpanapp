@@ -6472,42 +6472,99 @@ function mSub(name, money) {
 // the assumption the flow was designed against.
 const mDayEnd = () => (state.sleepMin == null ? 1320 : state.sleepMin);
 
-const mTimeRows = (dateIso) => state.entries.filter((e) => e.date === dateIso);
-const mMoneyRows = (dateIso) => state.money.filter((e) => e.date === dateIso);
+/* ── the window ──
+   The five spans Today can be read over. DECK_RANGES is the source rather than
+   a second list of the same five: the report deck already defines them, and two
+   lists of windows are two chances for them to disagree about what "2 Weeks"
+   means. */
+const mRangeKey = () => state.m.range || 'today';
+const mRangeDef = (key) => DECK_RANGES.find((r) => r[0] === (key || mRangeKey())) || DECK_RANGES[0];
+
+function mRangeDates(key) {
+  const def = mRangeDef(key);
+  const days = RANGE_DAYS[def[2]] || 1;
+  const end = mShiftIso(todayIso, -def[3]);
+  const out = [];
+  for (let i = days - 1; i >= 0; i--) out.push(mShiftIso(end, -i));
+  return out;
+}
+const mIsSingleDay = (key) => mRangeDates(key).length === 1;
+// The one day a per-day reading applies to. Only meaningful on the two
+// single-day windows; the gap banner and review are hidden on the others.
+const mSelectedDay = () => mRangeDates()[mRangeDates().length - 1];
+
+const mRangeHeading = (key) => {
+  const k = key || mRangeKey();
+  if (k === 'today') return 'Today';
+  if (k === 'yesterday') return 'Yesterday';
+  return { week: 'This week', fortnight: 'Last 2 weeks', month: 'This month' }[k] || 'This week';
+};
+const mRangeKicker = (key) => {
+  const dates = mRangeDates(key);
+  if (dates.length === 1) return mKicker(dates[0]);
+  return `${dayLabel(dates[0])} — ${dayLabel(dates[dates.length - 1])}`;
+};
+
+// Every reading below takes the window as a list of dates, so one day and
+// thirty are the same code path rather than two that can drift.
+const mTimeRows = (dates) => state.entries.filter((e) => dates.indexOf(e.date) >= 0);
+const mMoneyRows = (dates) => state.money.filter((e) => dates.indexOf(e.date) >= 0);
 
 /* One list, timed rows in clock order and the money after them — money has no
    position on a clock, and interleaving it by insertion time made the day read
    as though it had happened out of order. */
-function mDayList(dateIso) {
-  const time = mTimeRows(dateIso).slice()
+function mDayList(dates) {
+  const time = mTimeRows(dates).slice()
     .sort((a, b) => (Number(a.from) || 0) - (Number(b.from) || 0))
     .map((e) => ({
-      kind: 'time', id: e.id, title: e.activity, cat: e.category,
+      kind: 'time', id: e.id, date: e.date, title: e.activity, cat: e.category,
       start: Number(e.from) || 0, dur: span(e), note: e.note || ''
     }));
-  const money = mMoneyRows(dateIso).map((e) => ({
-    kind: 'money', id: e.id, title: e.activity, cat: e.purpose,
+  const money = mMoneyRows(dates).map((e) => ({
+    kind: 'money', id: e.id, date: e.date, title: e.activity, cat: e.purpose,
     dir: mCents(e.in) > 0 ? 'in' : 'out',
     amount: mCents(e.in) > 0 ? Number(e.in) : Number(e.out), note: e.note || ''
   }));
   return time.concat(money);
 }
 
-const mLoggedMins = (dateIso) => mTimeRows(dateIso).reduce((a, e) => a + span(e), 0);
-const mOutToday = (dateIso) => mSumCents(mMoneyRows(dateIso), 'out') / 100;
+/* Over a window, the day is the outer sort and the clock the inner one:
+   newest day first, because a month of entries is read from this end. */
+function mGroupedList(dates) {
+  const rows = mDayList(dates);
+  const byDate = {};
+  rows.forEach((r) => { (byDate[r.date] = byDate[r.date] || []).push(r); });
+  return dates.slice().reverse()
+    .filter((d) => byDate[d] && byDate[d].length)
+    .map((d) => ({ date: d, rows: byDate[d] }));
+}
+
+const mLoggedMins = (dates) => mTimeRows(dates).reduce((a, e) => a + span(e), 0);
+const mOutToday = (dates) => mSumCents(mMoneyRows(dates), 'out') / 100;
 
 /* The day-split bar. One segment per category sized by its minutes, tinted at
    descending opacity largest-first, and whatever is left of the day as a faint
    remainder — which on an empty day is the only thing there is. */
-function mDayBars(dateIso) {
+function mDayBars(dates) {
   const byCat = {};
-  mTimeRows(dateIso).forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + span(e); });
+  mTimeRows(dates).forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + span(e); });
   const names = Object.keys(byCat).sort((a, b) => byCat[b] - byCat[a]);
   const logged = names.reduce((a, k) => a + byCat[k], 0);
   const bars = names.map((k, i) => ({
     grow: byCat[k], color: `rgba(255,255,255,${Math.max(0.3, 0.94 - i * 0.13).toFixed(2)})`
   }));
-  if (logged < 1440) bars.push({ grow: 1440 - logged, color: 'rgba(255,255,255,.22)' });
+  /* The remainder — the part of the day nothing was logged against — is the
+     point of this bar on a single day: 24 hours is a budget you can read
+     against. Over a week it is not. Nobody logs sleep, so the unlogged share
+     of any multi-day window is most of it, and the bar collapses into a sliver
+     of colour against a wash of nothing whatever the person actually did.
+
+     So the budget framing belongs to one day. Over a window the bar shows how
+     the logged time divided, which is the question a week is actually asking. */
+  if (dates.length === 1) {
+    const capacity = 1440;
+    if (logged < capacity) bars.push({ grow: capacity - logged, color: 'rgba(255,255,255,.22)' });
+  }
   return bars;
 }
 
@@ -6517,7 +6574,7 @@ function mDayBars(dateIso) {
    not worth being asked about. */
 function mGaps(dateIso) {
   const end = mDayEnd();
-  const spans = mTimeRows(dateIso)
+  const spans = mTimeRows([dateIso])
     .map((e) => ({ a: Number(e.from) || 0, b: (Number(e.from) || 0) + span(e) }))
     .sort((x, y) => x.a - y.a);
   const out = [];
@@ -6545,7 +6602,7 @@ function mWeekSeries(money) {
   return mWeekDates().map((d) => ({
     date: d,
     label: new Date(d + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'narrow' }),
-    v: money ? mSumCents(mMoneyRows(d), 'out') / 100 : mLoggedMins(d)
+    v: money ? mSumCents(mMoneyRows([d]), 'out') / 100 : mLoggedMins([d])
   }));
 }
 
@@ -6554,8 +6611,8 @@ function mWeekSeries(money) {
 function mWeekSplit(money) {
   const totals = {};
   mWeekDates().forEach((d) => {
-    if (money) mMoneyRows(d).forEach((e) => { totals[e.purpose] = (totals[e.purpose] || 0) + mCents(e.out); });
-    else mTimeRows(d).forEach((e) => { totals[e.category] = (totals[e.category] || 0) + span(e); });
+    if (money) mMoneyRows([d]).forEach((e) => { totals[e.purpose] = (totals[e.purpose] || 0) + mCents(e.out); });
+    else mTimeRows([d]).forEach((e) => { totals[e.category] = (totals[e.category] || 0) + span(e); });
   });
   return Object.keys(totals)
     .filter((k) => totals[k] > 0)
@@ -6586,16 +6643,16 @@ function mNotice(money) {
 
   if (money) {
     const dates = mWeekDates();
-    const inCents = dates.reduce((a, d) => a + mSumCents(mMoneyRows(d), 'in'), 0);
+    const inCents = dates.reduce((a, d) => a + mSumCents(mMoneyRows([d]), 'in'), 0);
     // Every purpose, not the handful the card had room for.
-    const outCents = dates.reduce((a, d) => a + mSumCents(mMoneyRows(d), 'out'), 0);
+    const outCents = dates.reduce((a, d) => a + mSumCents(mMoneyRows([d]), 'out'), 0);
     const covered = outCents > 0 && inCents >= outCents;
     return `${top.name} is ${share}% of your spending this week, and ${busiestDay} was the heaviest day of it. `
       + (covered
         ? `What came in more than covered what went out.`
         : `Nothing logged coming in to set against it.`);
   }
-  const days = mWeekDates().filter((d) => mLoggedMins(d) > 0).length;
+  const days = mWeekDates().filter((d) => mLoggedMins([d]) > 0).length;
   return `${top.name} took ${share}% of your logged week, spread over ${days} ${days === 1 ? 'day' : 'days'}. `
     + `${busiestDay} was your longest day at ${mDur(busiest.v)}.`;
 }
@@ -6626,6 +6683,7 @@ state.m = {
   setupCats: ['Work', 'Health', 'Food', 'Rest'], customCats: [],
   catTyping: false, catText: '', weight: '', sleep: '',
   // the rest
+  range: 'today', reviewDay: '',
   insightTab: 'time', accountOpen: false,
   donateOpen: false, donateAmt: 50, donateThanks: false
 };
@@ -6919,23 +6977,44 @@ function mBrandBar() {
 </div>`;
 }
 
+/* The five windows, as a row that scrolls rather than wraps: five chips do not
+   fit across 393px at a tappable size, and a second line of them pushes the
+   day's figures below the fold. */
+function mRangeChips() {
+  const on = mRangeKey();
+  return `
+<div style="display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;margin-bottom:16px;padding-bottom:2px;">
+  ${DECK_RANGES.map(([key, label]) => `
+    <button data-act="m-range" data-key="${key}" aria-pressed="${key === on}"
+      style="flex:none;padding:9px 15px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;white-space:nowrap;min-height:40px;${mChip(key === on)}">${esc(label)}</button>`).join('')}
+</div>`;
+}
+
 function mHome() {
-  const list = mDayList(todayIso);
-  const logged = mLoggedMins(todayIso);
-  const bars = mDayBars(todayIso);
-  const gaps = mGaps(todayIso);
+  const dates = mRangeDates();
+  const single = dates.length === 1;
+  const day = dates[dates.length - 1];
+  const list = mDayList(dates);
+  const logged = mLoggedMins(dates);
+  const bars = mDayBars(dates);
+  /* A gap is a hole in one day's clock. Over a fortnight the idea does not
+     survive — every night would read as an eight-hour gap — so the banner and
+     the review it opens belong to the two single-day windows only. */
+  const gaps = single ? mGaps(day) : [];
+  const capacity = dates.length * 1440;
   return `
 <div style="padding:6px 22px 108px;">
   ${mBrandBar()}
-  <div style="margin-bottom:20px;">
-    <div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#7450e4;font-weight:600;">${esc(mKicker(todayIso))}</div>
-    <div style="font-family:var(--font-heading);font-weight:700;font-size:29px;line-height:1.1;color:#16131f;margin-top:3px;">Today</div>
+  <div style="margin-bottom:16px;">
+    <div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#7450e4;font-weight:600;">${esc(mRangeKicker())}</div>
+    <div style="font-family:var(--font-heading);font-weight:700;font-size:29px;line-height:1.1;color:#16131f;margin-top:3px;">${esc(mRangeHeading())}</div>
   </div>
+  ${mRangeChips()}
 
   <div style="border-radius:20px;padding:18px;background:${M_GRAD};box-shadow:${M_LIFT};color:#fff;margin-bottom:14px;">
     <div style="display:flex;justify-content:space-between;align-items:baseline;">
       <div>
-        <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;opacity:.78;">Logged today</div>
+        <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;opacity:.78;">${single ? 'Logged today' : 'Logged'}</div>
         <div style="font-family:var(--font-heading);font-weight:700;font-size:32px;line-height:1.1;margin-top:4px;">${esc(mDur(logged))}</div>
       </div>
       <div style="text-align:right;">
@@ -6947,12 +7026,12 @@ function mHome() {
       ${bars.map((b) => `<div style="height:100%;flex-basis:0;border-radius:999px;background:${b.color};flex-grow:${b.grow};"></div>`).join('')}
     </div>
     <div style="display:flex;justify-content:space-between;margin-top:9px;font-size:11.5px;opacity:.85;">
-      <span>${esc(mDur(1440 - logged))} unlogged</span>
+      <span>${single ? `${esc(mDur(Math.max(0, capacity - logged)))} unlogged` : `${esc(mDur(logged))} across ${dates.length} days`}</span>
       <span>${list.length} ${list.length === 1 ? 'entry' : 'entries'}</span>
     </div>
   </div>
 
-  ${mTimerCard()}
+  ${mRangeKey() === 'today' ? mTimerCard() : ''}
 
   <div style="display:flex;gap:10px;margin-bottom:22px;">
     ${[['m-log-time', '#f2eefe', '#5f3ac9', '◷', 'Log time', '15px'],
@@ -6965,7 +7044,7 @@ function mHome() {
   </div>
 
   ${gaps.length ? `
-  <button data-act="m-go-review"
+  <button data-act="m-go-review" data-day="${day}"
     style="display:flex;align-items:center;gap:12px;width:100%;padding:14px 16px;border-radius:16px;cursor:pointer;text-align:left;background:#efedf6;border:1px solid rgba(120,86,245,.22);margin-bottom:22px;">
     <span class="m-hatch-tile" style="width:34px;height:34px;flex:none;border-radius:11px;"></span>
     <span style="flex:1;">
@@ -6976,17 +7055,24 @@ function mHome() {
   </button>` : ''}
 
   <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;">
-    <h4 style="margin:0;font-family:var(--font-heading);font-weight:700;font-size:19px;color:#16131f;">Your day</h4>
+    <h4 style="margin:0;font-family:var(--font-heading);font-weight:700;font-size:19px;color:#16131f;">${single ? 'Your day' : 'Your entries'}</h4>
     <span style="font-size:12.5px;color:#756f88;">${list.length} ${list.length === 1 ? 'entry' : 'entries'}</span>
   </div>
 
-  ${list.length ? `
-  <div style="display:flex;flex-direction:column;gap:9px;">${list.map(mEntryRow).join('')}</div>`
+  ${list.length ? (single
+    ? `<div style="display:flex;flex-direction:column;gap:9px;">${list.map(mEntryRow).join('')}</div>`
+    : mGroupedList(dates).map((g) => `
+      <div style="margin-bottom:18px;">
+        <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;margin-bottom:8px;">${esc(mKicker(g.date))}</div>
+        <div style="display:flex;flex-direction:column;gap:9px;">${g.rows.map(mEntryRow).join('')}</div>
+      </div>`).join(''))
     : `
   <div style="padding:30px 24px;border-radius:20px;background:#fff;border:1px dashed rgba(120,86,245,.35);text-align:center;">
     <div style="width:46px;height:46px;margin:0 auto;border-radius:14px;background:#f2eefe;display:grid;place-items:center;font-size:19px;color:#5f3ac9;">◷</div>
-    <div style="font-family:var(--font-heading);font-weight:700;font-size:19px;color:#16131f;margin-top:14px;">Nothing logged yet</div>
-    <p style="margin:7px 0 0;font-size:14px;color:#756f88;line-height:1.45;">Start a timer for what you are doing now, or log something that already happened.</p>
+    <div style="font-family:var(--font-heading);font-weight:700;font-size:19px;color:#16131f;margin-top:14px;">Nothing logged ${single ? 'yet' : 'in this stretch'}</div>
+    <p style="margin:7px 0 0;font-size:14px;color:#756f88;line-height:1.45;">${single
+      ? 'Start a timer for what you are doing now, or log something that already happened.'
+      : 'Nothing was logged across these days. Pick a shorter window, or start filling one in.'}</p>
   </div>`}
 
   ${mDonateCard()}
@@ -7259,9 +7345,9 @@ ${s.noteOpen
 
 function mFlowDone() {
   const money = mIsMoney();
-  const logged = mLoggedMins(todayIso);
+  const logged = mLoggedMins([todayIso]);
   const sub = money
-    ? `That is ${mMoney(mOutToday(todayIso))} out today. Zimpan folded it into your week.`
+    ? `That is ${mMoney(mOutToday([todayIso]))} out today. Zimpan folded it into your week.`
     : `You have logged ${mDur(logged)} today. ${mDur(1440 - logged)} still unaccounted for.`;
   return `
 <div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding:30px 0 10px;animation:zPop .3s ease both;">
@@ -7312,14 +7398,15 @@ ${mFooter({
 /* ── 5. day review ── */
 
 function mReview() {
-  const gaps = mGaps(todayIso);
+  const day = state.m.reviewDay || todayIso;
+  const gaps = mGaps(day);
   const total = mGapTotal(gaps);
   return `
 <div style="padding:6px 22px 34px;">
   <button data-act="m-go-home"
-    style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:14px;color:#7450e4;padding:6px 0;font-weight:600;">← Today</button>
+    style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:14px;color:#7450e4;padding:6px 0;font-weight:600;">← ${esc(mRangeHeading())}</button>
   <div style="margin:12px 0 20px;">
-    <div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#7450e4;font-weight:600;">Close out the day</div>
+    <div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#7450e4;font-weight:600;">${day === todayIso ? 'Close out the day' : esc(mKicker(day))}</div>
     <div style="font-family:var(--font-heading);font-weight:700;font-size:28px;line-height:1.1;color:#16131f;margin-top:4px;">${esc(mDur(total))} unaccounted for</div>
     <p style="margin:8px 0 0;font-size:14px;color:#756f88;line-height:1.45;">${gaps.length} ${gaps.length === 1 ? 'stretch' : 'stretches'} with nothing logged. Fill what you remember, mark the rest untracked.</p>
   </div>
@@ -7335,9 +7422,9 @@ function mReview() {
         <div class="m-hatch" style="height:100%;border-radius:999px;width:${Math.min(100, Math.round(((g.b - g.a) / 240) * 100))}%;"></div>
       </div>
       <div style="display:flex;gap:9px;">
-        <button class="btn btn-primary" data-act="m-gap-fill" data-a="${g.a}" data-b="${g.b}"
+        <button class="btn btn-primary" data-act="m-gap-fill" data-a="${g.a}" data-b="${g.b}" data-day="${day}"
           style="flex:1;min-height:44px;font-size:14px;box-shadow:0 4px 12px rgba(79,70,229,.28);">Fill this in</button>
-        <button data-act="m-gap-skip" data-a="${g.a}" data-b="${g.b}"
+        <button data-act="m-gap-skip" data-a="${g.a}" data-b="${g.b}" data-day="${day}"
           style="flex:none;min-height:44px;padding:0 16px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;color:#575168;background:#fff;border:1px solid rgba(47,28,102,.14);">Untracked</button>
       </div>
     </div>`).join('')}
@@ -7583,6 +7670,8 @@ function mParseClock(text) {
 // layout by hand.
 const mobileOn = () => isPhone() && !state.mClassic;
 
+const mDraftDayFromRange = () => (mRangeKey() === 'yesterday' ? 'yesterday' : 'today');
+
 function mResetDraft() {
   Object.assign(state.m, {
     step: 1, kind: null, day: 'today', earlierIso: '',
@@ -7811,7 +7900,8 @@ const M_ACTIONS = {
   /* getting about */
   'm-go-home': () => mGo('home'),
   'm-go-insights': () => mGo('insights'),
-  'm-go-review': () => mGo('review'),
+  'm-range': (el) => mSet({ range: el.dataset.key }),
+  'm-go-review': (el) => mSet({ reviewDay: (el && el.dataset.day) || todayIso, screen: 'review' }),
   'm-insight-tab': (el) => mSet({ insightTab: el.dataset.tab }),
   'm-open-entry': (el) => mSet({ screen: 'detail', selected: el.dataset.id, selectedKind: el.dataset.kind }),
   'm-account-open': () => mSet({ accountOpen: true }),
@@ -7822,9 +7912,13 @@ const M_ACTIONS = {
   'm-sign-out': () => { state.m.accountOpen = false; mBooted = false; signOut(); },
 
   /* the flow */
-  'm-flow-open': () => { mResetDraft(); mGo('flow'); },
-  'm-log-time': () => { mResetDraft(); mSet({ screen: 'flow', kind: 'time', step: 2 }); },
-  'm-log-money': () => { mResetDraft(); mSet({ screen: 'flow', kind: 'money', step: 2 }); },
+  /* Opening the flow from a day you are reading defaults the draft to that
+     day — logging into yesterday while looking at yesterday should not need
+     the WHEN chip changed as well. A multi-day window has no one day to mean,
+     so those fall back to today. */
+  'm-flow-open': () => { mResetDraft(); mSet({ screen: 'flow', day: mDraftDayFromRange() }); },
+  'm-log-time': () => { mResetDraft(); mSet({ screen: 'flow', kind: 'time', step: 2, day: mDraftDayFromRange() }); },
+  'm-log-money': () => { mResetDraft(); mSet({ screen: 'flow', kind: 'money', step: 2, day: mDraftDayFromRange() }); },
   'm-flow-close': () => { mResetDraft(); mGo('home'); },
   'm-flow-back': () => {
     if (state.m.step <= 1) { mResetDraft(); mGo('home'); return; }
@@ -7921,8 +8015,13 @@ const M_ACTIONS = {
   /* day review */
   'm-gap-fill': (el) => {
     const a = Number(el.dataset.a), b = Number(el.dataset.b);
+    const on = el.dataset.day || todayIso;
     mResetDraft();
-    Object.assign(state.m, { screen: 'flow', kind: 'time', step: 2, day: 'today', startMin: a, durMin: b - a });
+    Object.assign(state.m, {
+      screen: 'flow', kind: 'time', step: 2, startMin: a, durMin: b - a,
+      day: on === todayIso ? 'today' : on === mShiftIso(todayIso, -1) ? 'yesterday' : 'earlier',
+      earlierIso: on
+    });
     render();
   },
   /* "Untracked" is still an entry. A stretch nobody can account for is a fact
@@ -7936,7 +8035,7 @@ const M_ACTIONS = {
       })]);
     }
     state.entries = state.entries.concat([touch('entries', {
-      id: 'g' + Date.now(), date: todayIso, activity: 'Unlogged',
+      id: 'g' + Date.now(), date: el.dataset.day || todayIso, activity: 'Unlogged',
       category: 'Rest', from: a, to: b % 1440, note: 'Marked as untracked'
     })]);
     save(); queueSync(0); render();
