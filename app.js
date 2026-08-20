@@ -7099,9 +7099,14 @@ function mFlowWhen() {
   const s = state.m;
   const long = s.durMin > 240;
   const crosses = s.startMin + s.durMin > 1440;
+  /* The handoff copy promised a split across the two days; the app has always
+     kept a run past midnight as one row dated the morning it ended, which is
+     what makes last night's sleep show up on today. The behaviour is the older
+     of the two and the one the rest of the app reads, so the sentence gives
+     way rather than the storage. */
   const warning = long
     ? 'That is a long stretch. If the timer kept running after you stopped, trim it here.'
-    : (crosses ? 'This crosses midnight — Zimpan will split it across the two days.' : '');
+    : (crosses ? 'This crosses midnight — Zimpan will file it on the morning it ends.' : '');
   const hour = Math.floor(s.startMin / 60);
   const minute = s.startMin % 60;
   const hours = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22];
