@@ -606,6 +606,8 @@ const state = {
   timerActivity: stored.timerActivity || '',
   timerCategory: stored.timerCategory || (stored.categories[0] || {}).name || 'Chores',
   reportOpen: false,
+  // Session only: a search is something you are doing, not a preference.
+  searchOpen: false, searchQuery: '',
   donateOpen: false,
   resyncArmed: false,
 
@@ -3088,6 +3090,7 @@ function header(v) {
         </span>` : ''}
       <span class="appbar-cta" style="display:flex;align-items:center;gap:10px;">
         <a class="btn btn-donate" href="${DONATE_URL}" data-donate target="_blank" rel="noopener noreferrer">${NAV_ICONS.donate}<span>Donate</span></a>
+        <button class="btn btn-secondary" data-act="search-open" title="Search everything you have logged" style="font-size:13px;">⌕ Search</button>
         <button class="btn btn-primary" data-act="open-report" style="position:relative">Your Report Cards</button>
       </span>
     </div>
@@ -5610,6 +5613,7 @@ function render() {
   ${pillarSheet(v)}
   ${stepsSheet()}
   ${state.reportOpen ? reportSheet() : ''}
+  ${searchPanel()}
   ${notePromptDialog()}
   ${donateSheet()}
   ${aiConsentDialog()}
@@ -6902,14 +6906,25 @@ function mTimerCard() {
 </div>`;
 }
 
-function mEntryRow(e) {
+function mEntryRow(e, opts) {
+  const o = opts || {};
   const money = e.kind === 'money';
   const value = money
     ? (e.dir === 'in' ? '+' : '−') + mMoney(e.amount)
     : mDur(e.dur);
-  const meta = money
+  const base = money
     ? `${e.cat} · money ${e.dir}`
     : `${e.cat} · ${mRange(e.start, e.dur)}`;
+  // A search result is only useful with the day on it; a row in today's list
+  // already knows what day it is.
+  const dated = o.showDate ? `${dayLabel(e.date)} · ${base}` : base;
+  /* When the only reason a row matched is something written in its note, say
+     so. Without it a search for "met" turns up "Database Error" and looks
+     like a bug rather than a note that mentions metabase. */
+  const q = String(o.hint || '').trim().toLowerCase();
+  const inNote = q && (e.note || '').toLowerCase().indexOf(q) >= 0
+    && `${e.title} ${e.cat}`.toLowerCase().indexOf(q) < 0;
+  const meta = inNote ? `${dated} · “${e.note}”` : dated;
   /* Which of the two things this is, at a glance. The tints are the ones the
      quick actions and the kind cards already use, so a row and the button that
      created it read as the same family.
@@ -6924,7 +6939,7 @@ function mEntryRow(e) {
     background:${money ? '#eceefe' : '#f2eefe'};color:${money ? '#3f4bc4' : '#5f3ac9'};
     font-size:${glyphSize}px;font-weight:700;line-height:1;">${esc(glyph)}</span>`;
   return `
-<button class="card" data-act="m-open-entry" data-id="${esc(e.id)}" data-kind="${money ? 'money' : 'time'}"
+<button class="card" data-act="${esc(o.act || 'm-open-entry')}" data-id="${esc(e.id)}" data-kind="${money ? 'money' : 'time'}"
   style="flex-direction:row;align-items:center;gap:10px;width:100%;padding:13px 14px;border-radius:16px;box-shadow:${M_SHADOW_SM};cursor:pointer;text-align:left;">
   <span style="width:9px;height:38px;border-radius:999px;flex:none;background:${esc(mColor(e.cat, money))};"></span>
   ${tile}
@@ -6972,8 +6987,12 @@ function mBrandBar() {
     ${LOGO_BADGE(26)}
     <span style="font-family:var(--font-heading);font-weight:600;font-size:19px;letter-spacing:.02em;line-height:1;color:#16131f;">ZIMPAN<span style="color:#5f3ac9;">.</span></span>
   </span>
-  <button data-act="m-account-open" aria-label="Account"
-    style="width:38px;height:38px;flex:none;border:0;border-radius:50%;background:#e4dcfd;display:grid;place-items:center;font-family:var(--font-body);font-weight:600;font-size:14px;color:#472b97;cursor:pointer;">${esc(mInitials())}</button>
+  <span style="display:flex;align-items:center;gap:8px;">
+    <button data-act="search-open" aria-label="Search entries"
+      style="width:38px;height:38px;flex:none;border:0;border-radius:50%;background:#f2eefe;display:grid;place-items:center;font-size:16px;color:#5f3ac9;cursor:pointer;">⌕</button>
+    <button data-act="m-account-open" aria-label="Account"
+      style="width:38px;height:38px;flex:none;border:0;border-radius:50%;background:#e4dcfd;display:grid;place-items:center;font-family:var(--font-body);font-weight:600;font-size:14px;color:#472b97;cursor:pointer;">${esc(mInitials())}</button>
+  </span>
 </div>`;
 }
 
@@ -7629,6 +7648,7 @@ function mobileApp() {
   ${s.accountOpen ? mAccountSheet() : ''}
   ${s.donateOpen ? mDonateSheet() : ''}
   ${state.reportOpen ? reportSheet() : ''}
+  ${searchPanel()}
 </div>`;
 }
 
@@ -8113,6 +8133,216 @@ root.addEventListener('click', (ev) => {
 Object.assign(ACTIONS, M_ACTIONS);
 
 
+/* ═════════════════════════ search ═════════════════════════
+
+   One engine and one panel, opened from the phone's brand bar and from the
+   desktop header. Searching is the same question on both — "when did I last
+   do that" — and the answer is a list of entries with dates on them, which is
+   not a thing either layout already knows how to draw.
+
+   It looks across everything ever logged rather than the window on screen.
+   A search that could only find what you were already looking at would be a
+   filter, and the list is right there. */
+
+const SEARCH_SUGGESTIONS = 6;
+const SEARCH_RESULTS = 40;
+
+/* Everything logged, flattened into the one shape the results list draws.
+   Built per keystroke rather than cached: a few thousand rows is nothing next
+   to the render that follows, and a stale index after an edit is a bug that
+   only shows up for the person who just made the edit. */
+function searchRows() {
+  const time = state.entries.map((e) => ({
+    kind: 'time', id: e.id, date: e.date, title: e.activity || '', cat: e.category || '',
+    note: e.note || '', start: Number(e.from) || 0, dur: span(e)
+  }));
+  const money = state.money.map((e) => ({
+    kind: 'money', id: e.id, date: e.date, title: e.activity || '', cat: e.purpose || '',
+    note: e.note || '', dir: mCents(e.in) > 0 ? 'in' : 'out',
+    amount: mCents(e.in) > 0 ? Number(e.in) : Number(e.out)
+  }));
+  return time.concat(money);
+}
+
+/* The words this account actually uses, with how often and how recently each
+   was used. That is the whole of the prediction: no model, no corpus, just the
+   fact that someone who types "met" has almost certainly written the rest of
+   it before. */
+function searchVocabulary() {
+  const seen = new Map();
+  const add = (raw, kind, date) => {
+    const term = String(raw || '').trim();
+    if (!term) return;
+    const key = kind + ' ' + term.toLowerCase();
+    const held = seen.get(key);
+    if (held) {
+      held.count += 1;
+      if (date > held.last) held.last = date;
+      return;
+    }
+    seen.set(key, { term, kind, count: 1, last: date || '' });
+  };
+  state.entries.forEach((e) => { add(e.activity, 'activity', e.date); add(e.category, 'category', e.date); });
+  state.money.forEach((e) => { add(e.activity, 'activity', e.date); add(e.purpose, 'purpose', e.date); });
+  return [...seen.values()];
+}
+
+/* Ranked so that the obvious answer is first. A prefix match outranks a match
+   buried mid-word — someone typing "met" means Meta Ads, not "Set up meeting"
+   — then how often the term is used, then how recently. Frequency before
+   recency on purpose: the thing you log every day should beat the thing you
+   logged once, yesterday. */
+function searchSuggest(query) {
+  const q = String(query || '').trim().toLowerCase();
+  if (q.length < 1) return [];
+  const scored = [];
+  searchVocabulary().forEach((v) => {
+    const at = v.term.toLowerCase().indexOf(q);
+    if (at < 0) return;
+    // An exact match is not a suggestion, it is what is already typed.
+    if (v.term.toLowerCase() === q) return;
+    scored.push({
+      term: v.term, kind: v.kind,
+      score: (at === 0 ? 10000 : 0) + Math.min(v.count, 200) * 20 + (v.last ? Number(v.last.replace(/-/g, '')) / 1e6 : 0)
+    });
+  });
+  scored.sort((a, b) => b.score - a.score || a.term.localeCompare(b.term));
+  // One row per word, whichever kind it came from — "Food" being both a
+  // category and a purpose is one thing to search for, not two.
+  const out = [];
+  const taken = {};
+  scored.forEach((s) => {
+    const key = s.term.toLowerCase();
+    if (taken[key] || out.length >= SEARCH_SUGGESTIONS) return;
+    taken[key] = true;
+    out.push(s);
+  });
+  return out;
+}
+
+// Title, category and note all count: a note is where the detail that makes an
+// entry findable usually ended up.
+function searchMatches(query) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return [];
+  return searchRows()
+    .filter((r) => `${r.title} ${r.cat} ${r.note}`.toLowerCase().indexOf(q) >= 0)
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (b.start || 0) - (a.start || 0)))
+    .slice(0, SEARCH_RESULTS);
+}
+
+/* The suggestions and the results, which are the only parts that change per
+   keystroke. Kept apart from the panel so typing can repaint them without
+   rebuilding the field the caret is in. */
+function searchBody() {
+  const q = state.searchQuery || '';
+  const suggestions = searchSuggest(q);
+  const hits = searchMatches(q);
+
+  if (!q.trim()) {
+    return `
+    <div style="padding:26px 4px;text-align:center;color:#756f88;font-size:14px;line-height:1.5;">
+      Search everything you have logged — an activity, a category, or something you wrote in a note.
+    </div>`;
+  }
+
+  const chips = suggestions.length ? `
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
+      ${suggestions.map((s) => `
+        <button data-act="search-suggest" data-term="${esc(s.term)}"
+          style="display:inline-flex;align-items:center;gap:7px;padding:8px 14px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;background:#fff;color:#3b3648;border:1px solid rgba(47,28,102,.12);">
+          <span style="width:7px;height:7px;border-radius:50%;flex:none;background:${s.kind === 'activity' ? '#cbbcfa' : esc(mColor(s.term, s.kind === 'purpose'))};"></span>
+          ${esc(s.term)}
+        </button>`).join('')}
+    </div>` : '';
+
+  if (!hits.length) {
+    return `${chips}
+    <div style="padding:22px 4px;text-align:center;color:#756f88;font-size:14px;line-height:1.5;">
+      Nothing logged matches “${esc(q.trim())}”.
+    </div>`;
+  }
+
+  return `${chips}
+  <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;margin-bottom:9px;">
+    ${hits.length}${hits.length >= SEARCH_RESULTS ? '+' : ''} ${hits.length === 1 ? 'entry' : 'entries'}
+  </div>
+  <div style="display:flex;flex-direction:column;gap:9px;">
+    ${hits.map((r) => mEntryRow(r, { showDate: true, act: 'search-result', hint: q })).join('')}
+  </div>`;
+}
+
+/* The panel. One markup for both layouts: a phone fills it edge to edge, a
+   desktop gets a 560px dialog against the same backdrop. Top-aligned rather
+   than centred, because results grow downwards and a centred panel would walk
+   up the screen as they arrive. */
+function searchPanel() {
+  if (!state.searchOpen) return '';
+  return `
+<div class="dialog-backdrop" data-backdrop="search-close"
+  style="align-items:start;justify-content:center;padding:0;z-index:60;overflow-y:auto;">
+  <div class="dialog" style="width:min(560px,100%);max-width:560px;margin:0;border-radius:0 0 20px 20px;
+    padding:16px 18px 22px;gap:0;box-shadow:0 18px 44px rgba(47,28,102,.24);">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+      <input class="input" type="text" data-k="search-q" value="${esc(state.searchQuery || '')}"
+        placeholder="Search everything you have logged" autocomplete="off"
+        style="flex:1;min-height:46px;padding:10px 14px;font-size:15.5px;border-radius:14px;">
+      <button data-act="search-close" aria-label="Close search"
+        style="flex:none;border:0;background:transparent;cursor:pointer;font-size:19px;color:#575168;min-width:44px;min-height:44px;">✕</button>
+    </div>
+    <div id="search-body">${searchBody()}</div>
+  </div>
+</div>`;
+}
+
+/* Typing repaints the two lists and nothing else. A full render would rebuild
+   the input the caret is sitting in, which is the same reason the category
+   picker filters by hand rather than re-rendering. */
+function paintSearch() {
+  const box = document.getElementById('search-body');
+  if (box) box.innerHTML = searchBody();
+}
+
+const SEARCH_ACTIONS = {
+  'search-open': () => {
+    state.searchOpen = true;
+    state.searchQuery = '';
+    // The one field in the app that exists to be typed into.
+    state.focusField = 'search-q';
+    render();
+  },
+  'search-close': () => { state.searchOpen = false; state.searchQuery = ''; render(); },
+  'search-suggest': (el) => {
+    state.searchQuery = el.dataset.term || '';
+    const field = root.querySelector('[data-k="search-q"]');
+    if (field) { field.value = state.searchQuery; field.focus(); }
+    paintSearch();
+  },
+  /* A result is a place as much as a row: it moves the app to the day the
+     entry is on, so closing the panel leaves you where you searched to get. */
+  'search-result': (el) => {
+    const id = el.dataset.id, kind = el.dataset.kind;
+    const row = findRow(kind === 'money' ? 'money' : 'entries', id);
+    state.searchOpen = false;
+    state.searchQuery = '';
+    if (!row) { render(); return; }
+    state.selectedDate = row.date;
+    state.app = kind === 'money' ? 'money' : 'time';
+    if (mobileOn()) {
+      // The phone has a screen for one entry; the desktop shows it in place.
+      state.m.range = row.date === todayIso ? 'today'
+        : row.date === mShiftIso(todayIso, -1) ? 'yesterday' : 'month';
+      Object.assign(state.m, { screen: 'detail', selected: id, selectedKind: kind === 'money' ? 'money' : 'time' });
+    }
+    render();
+  }
+};
+
+// Registered here rather than alongside the mobile module's: that runs first,
+// and a `const` cannot be named before the line that declares it has run.
+Object.assign(ACTIONS, SEARCH_ACTIONS);
+
+
 /* ─────────────────────────── wiring ─────────────────────────── */
 
 /* A lightbox closes when you click the sheet's surround. Checked before the
@@ -8186,6 +8416,13 @@ root.addEventListener('input', (ev) => {
   filterPicker(el);
 });
 
+root.addEventListener('input', (ev) => {
+  const el = ev.target;
+  if (!el.dataset || el.dataset.k !== 'search-q') return;
+  state.searchQuery = el.value;
+  paintSearch();
+});
+
 // Text fields feed state without re-rendering, so typing is never interrupted.
 root.addEventListener('input', (ev) => {
   const el = ev.target;
@@ -8239,6 +8476,7 @@ document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') { ev.preventDefault(); state.pickOpen = null; state.pickQuery = ''; render(); return; }
   }
   // Topmost first: the follow-up dialog sits above the report sheet.
+  if (ev.key === 'Escape' && state.searchOpen) { ACTIONS['search-close'](); return; }
   if (ev.key === 'Escape' && state.notePrompt) { closeFollowUp(false); return; }
   if (ev.key === 'Escape' && state.donateOpen) { state.donateOpen = false; render(); return; }
   if (ev.key === 'Escape' && state.legalOpen) { state.legalOpen = null; render(); return; }
