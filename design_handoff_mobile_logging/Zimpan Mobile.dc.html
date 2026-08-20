@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700;800&display=swap" />
+<style>
+  body { margin:0; background:#1a1725; font-family:"Barlow",system-ui,sans-serif; }
+  *, *::before, *::after { box-sizing:border-box; }
+  input, textarea { font-family:inherit; box-sizing:border-box; max-width:100%; }
+  @keyframes zPulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+  a { color:#7450e4; text-decoration:none; }
+  a:hover { color:#5f3ac9; }
+  @keyframes zStep { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+  @keyframes zPop { from { opacity:0; transform:scale(.9); } to { opacity:1; transform:none; } }
+  .zscroll::-webkit-scrollbar { display:none; }
+</style>
+</helmet>
+
+<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:40px 20px;background:radial-gradient(120% 90% at 50% 0%, #2b2440 0%, #17141f 60%, #100e17 100%);">
+  <div style="width:393px;height:852px;flex:none;position:relative;border-radius:52px;padding:11px;background:linear-gradient(160deg,#3a3350,#14121c);box-shadow:0 40px 90px rgba(20,10,50,.55), 0 0 0 1px rgba(255,255,255,.06) inset;">
+    <div style="position:relative;width:100%;height:100%;border-radius:42px;overflow:hidden;background:#f8f7fb;display:flex;flex-direction:column;">
+
+      <div style="height:52px;flex:none;display:flex;align-items:flex-end;justify-content:space-between;padding:0 26px 6px;font-size:13px;font-weight:600;color:#16131f;letter-spacing:.02em;">
+        <span>9:41</span>
+        <span style="display:flex;gap:5px;align-items:center;">
+          <span style="width:17px;height:9px;border:1.4px solid #16131f;border-radius:2.5px;display:inline-block;position:relative;">
+            <span style="position:absolute;inset:1.4px;width:70%;background:#16131f;border-radius:1px;display:block;"></span>
+          </span>
+        </span>
+      </div>
+
+      <sc-if value="{{ isSignin }}" hint-placeholder-val="{{ true }}">
+        <div style="flex:1;display:flex;flex-direction:column;padding:0 28px 34px;background:linear-gradient(180deg,#f8f7fb 0%,#efedf6 100%);">
+          <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:26px;">
+            <div style="display:flex;align-items:center;gap:13px;">
+              <svg viewBox="0 0 100 100" role="img" aria-label="ZIMPAN" style="width:56px;height:56px;flex:none;filter:drop-shadow(0 10px 24px rgba(79,70,229,.34));">
+                <defs>
+                  <linearGradient id="zmark" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0" stop-color="#a78bfa"></stop>
+                    <stop offset="50%" stop-color="#7856f5"></stop>
+                    <stop offset="100%" stop-color="#4f46e5"></stop>
+                  </linearGradient>
+                </defs>
+                <rect x="2" y="2" width="96" height="96" rx="28" fill="url(#zmark)"></rect>
+                <path d="M28 27 H72 L28 73 H72" fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"></path>
+                <circle cx="28" cy="27" r="7.5" fill="#fff"></circle>
+                <circle cx="72" cy="73" r="7.5" fill="#fff"></circle>
+              </svg>
+              <span style="font-family:'Playfair Display',serif;font-weight:600;font-size:30px;letter-spacing:.02em;line-height:1;color:#16131f;">ZIMPAN<span style="color:#5f3ac9;">.</span></span>
+            </div>
+            <div>
+              <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:38px;line-height:1.05;letter-spacing:-.01em;color:#16131f;">Where did<br />it all go?</div>
+              <p style="margin:14px 0 0;font-size:15.5px;line-height:1.5;color:#575168;text-wrap:pretty;max-width:31ch;">Log your time and money in a few taps. Zimpan finds the pattern for you.</p>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px;margin-top:6px;">
+              <button type="button" onClick="{{ goSetup }}" style="width:100%;min-height:52px;border:0;border-radius:999px;cursor:pointer;font-family:'Playfair Display',serif;font-weight:700;font-size:16px;color:#fff;background:linear-gradient(115deg,#8b5cf6 0%,#6d54f0 45%,#4f46e5 100%);box-shadow:0 6px 18px rgba(79,70,229,.34);">Create an account</button>
+              <button type="button" onClick="{{ goSetup }}" style="width:100%;min-height:52px;border-radius:999px;cursor:pointer;font-family:'Playfair Display',serif;font-weight:700;font-size:16px;color:#5f3ac9;background:#fff;border:1px solid rgba(120,86,245,.42);">Continue with Google</button>
+            </div>
+            <div style="font-size:12.5px;color:#756f88;line-height:1.5;">Free forever · no ads · your data stays yours</div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isSetup }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:1;display:flex;flex-direction:column;background:#f8f7fb;">
+          <div style="flex:none;padding:2px 22px 0;">
+            <div style="display:flex;align-items:center;justify-content:space-between;min-height:44px;">
+              <button type="button" onClick="{{ setupBack }}" style="border:0;background:transparent;cursor:pointer;font-size:20px;color:#575168;padding:6px 8px 6px 0;">←</button>
+              <span style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;font-weight:600;">{{ setupLabel }}</span>
+              <span style="width:22px;"></span>
+            </div>
+            <div style="display:flex;gap:5px;margin:8px 0 4px;">
+              <sc-for list="{{ setupProgress }}" as="p" hint-placeholder-count="3">
+                <div style="flex:1;height:4px;border-radius:999px;background:{{ p.bg }};"></div>
+              </sc-for>
+            </div>
+          </div>
+          <div class="zscroll" style="flex:1;overflow-y:auto;padding:18px 22px 12px;scrollbar-width:none;">
+            <h3 style="margin:0 0 6px;font-family:'Playfair Display',serif;font-weight:700;font-size:26px;line-height:1.15;color:#16131f;">{{ setupTitle }}</h3>
+            <p style="margin:0 0 22px;font-size:14px;color:#756f88;line-height:1.45;">{{ setupHint }}</p>
+
+            <sc-if value="{{ setupStep1 }}" hint-placeholder-val="{{ true }}">
+              <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;margin-bottom:9px;">Your name</div>
+              <sc-if value="{{ nameClosed }}" hint-placeholder-val="{{ true }}">
+                <button type="button" onClick="{{ openName }}" style="width:100%;min-height:50px;padding:0 16px;border-radius:16px;cursor:pointer;font-size:15px;font-weight:600;color:#756f88;background:#fff;border:1px solid rgba(47,28,102,.12);text-align:left;margin-bottom:22px;">{{ nameDisplay }}</button>
+              </sc-if>
+              <sc-if value="{{ nameTyping }}" hint-placeholder-val="{{ false }}">
+                <input type="text" value="{{ nameValue }}" onChange="{{ setName }}" placeholder="What should we call you?" autoFocus="{{ true }}" style="width:100%;min-height:50px;padding:10px 16px;font-size:15px;color:#16131f;background:#fff;border:1.5px solid #7856f5;border-radius:16px;box-shadow:0 0 0 3px rgba(120,86,245,.18);margin-bottom:22px;" />
+              </sc-if>
+              <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;margin-bottom:9px;">Currency for money tracking</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+                <sc-for list="{{ currencyChips }}" as="c" hint-placeholder-count="6">
+                  <button type="button" onClick="{{ c.pick }}" style="min-height:46px;border-radius:14px;cursor:pointer;font-size:13.5px;font-weight:600;background:{{ c.bg }};color:{{ c.fg }};border:1px solid {{ c.border }};">{{ c.label }}</button>
+                </sc-for>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ setupStep2 }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:24px;">
+                <sc-for list="{{ trackCards }}" as="t" hint-placeholder-count="4">
+                  <button type="button" onClick="{{ t.pick }}" style="display:flex;align-items:center;gap:14px;width:100%;padding:15px;border-radius:16px;cursor:pointer;text-align:left;background:{{ t.bg }};border:1.5px solid {{ t.border }};">
+                    <span style="width:26px;height:26px;flex:none;border-radius:50%;display:grid;place-items:center;font-size:13px;background:{{ t.markBg }};color:{{ t.markFg }};">{{ t.mark }}</span>
+                    <span style="flex:1;">
+                      <span style="display:block;font-family:'Playfair Display',serif;font-weight:700;font-size:16px;color:{{ t.fg }};">{{ t.name }}</span>
+                      <span style="display:block;font-size:12.5px;margin-top:2px;color:{{ t.subFg }};">{{ t.sub }}</span>
+                    </span>
+                  </button>
+                </sc-for>
+              </div>
+              <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;margin-bottom:9px;">Starting categories</div>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                <sc-for list="{{ setupCatChips }}" as="c" hint-placeholder-count="6">
+                  <button type="button" onClick="{{ c.pick }}" style="display:inline-flex;align-items:center;gap:7px;padding:9px 15px;border-radius:999px;cursor:pointer;font-size:13.5px;font-weight:600;background:{{ c.bg }};color:{{ c.fg }};border:1px solid {{ c.border }};">
+                    <span style="width:9px;height:9px;border-radius:50%;background:{{ c.dot }};"></span>{{ c.label }}
+                  </button>
+                </sc-for>
+                <sc-if value="{{ catClosed }}" hint-placeholder-val="{{ true }}">
+                  <button type="button" onClick="{{ openCatInput }}" style="padding:9px 15px;border-radius:999px;cursor:pointer;font-size:13.5px;font-weight:600;background:transparent;color:#7450e4;border:1px dashed rgba(120,86,245,.55);">+ Add category</button>
+                </sc-if>
+              </div>
+              <sc-if value="{{ catTyping }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;gap:8px;margin-top:10px;">
+                  <input type="text" value="{{ catText }}" onChange="{{ setCatText }}" placeholder="Name your category" autoFocus="{{ true }}" style="flex:1;min-height:46px;padding:10px 14px;font-size:15px;color:#16131f;background:#fff;border:1.5px solid #7856f5;border-radius:14px;box-shadow:0 0 0 3px rgba(120,86,245,.18);" />
+                  <button type="button" onClick="{{ addCat }}" style="flex:none;min-height:46px;padding:0 18px;border:0;border-radius:14px;cursor:pointer;font-family:'Playfair Display',serif;font-weight:700;font-size:14.5px;color:#fff;background:linear-gradient(115deg,#8b5cf6,#4f46e5);">Add</button>
+                </div>
+              </sc-if>
+            </sc-if>
+
+            <sc-if value="{{ setupStep3 }}" hint-placeholder-val="{{ false }}">
+              <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;margin-bottom:5px;">Weight</div>
+              <p style="margin:0 0 10px;font-size:13px;color:#9995ab;">Only used to estimate calories burned.</p>
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px;">
+                <input type="text" inputMode="decimal" value="{{ weightValue }}" onChange="{{ setWeight }}" placeholder="e.g. 68" style="flex:1;min-height:50px;padding:10px 16px;font-size:15.5px;color:#16131f;background:#fff;border:1px solid rgba(47,28,102,.12);border-radius:16px;" style-focus="border-color:#7856f5;box-shadow:0 0 0 3px rgba(120,86,245,.18);" />
+                <span style="flex:none;font-size:14.5px;font-weight:600;color:#756f88;">kg</span>
+              </div>
+              <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;margin-bottom:5px;">What time do you usually sleep?</div>
+              <p style="margin:0 0 10px;font-size:13px;color:#9995ab;">Sets where Zimpan stops counting your day.</p>
+              <input type="text" value="{{ sleepValue }}" onChange="{{ setSleep }}" placeholder="e.g. 10:30pm" style="width:100%;min-height:50px;padding:10px 16px;font-size:15.5px;color:#16131f;background:#fff;border:1px solid rgba(47,28,102,.12);border-radius:16px;" style-focus="border-color:#7856f5;box-shadow:0 0 0 3px rgba(120,86,245,.18);" />
+            </sc-if>
+          </div>
+          <div style="flex:none;padding:10px 22px 26px;">
+            <button type="button" onClick="{{ setupNext }}" style="width:100%;min-height:54px;border:0;border-radius:999px;cursor:pointer;font-family:'Playfair Display',serif;font-weight:700;font-size:16.5px;color:#fff;background:linear-gradient(115deg,#8b5cf6 0%,#6d54f0 45%,#4f46e5 100%);box-shadow:0 6px 18px rgba(79,70,229,.32);opacity:{{ setupOpacity }};">{{ setupNextLabel }}</button>
+            <sc-if value="{{ setupSkippable }}" hint-placeholder-val="{{ false }}">
+              <button type="button" onClick="{{ goHome }}" style="width:100%;min-height:40px;border:0;background:transparent;cursor:pointer;font-size:13.5px;font-weight:600;color:#756f88;margin-top:4px;">Skip both</button>
+            </sc-if>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isReview }}" hint-placeholder-val="{{ false }}">
+        <div class="zscroll" style="flex:1;overflow-y:auto;padding:6px 22px 34px;scrollbar-width:none;">
+          <button type="button" onClick="{{ backHome }}" style="border:0;background:transparent;cursor:pointer;font-size:14px;color:#7450e4;padding:6px 0;font-weight:600;">← Today</button>
+          <div style="margin:12px 0 20px;">
+            <div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#7450e4;font-weight:600;">Close out the day</div>
+            <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:28px;line-height:1.1;color:#16131f;margin-top:4px;">{{ gapHeadline }}</div>
+            <p style="margin:8px 0 0;font-size:14px;color:#756f88;line-height:1.45;">{{ gapCount }} with nothing logged. Fill what you remember, mark the rest untracked.</p>
+          </div>
+          <sc-if value="{{ hasGaps }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex;flex-direction:column;gap:11px;">
+              <sc-for list="{{ gapCards }}" as="g" hint-placeholder-count="3">
+                <div style="padding:16px;border-radius:18px;background:#fff;border:1px solid rgba(47,28,102,.09);box-shadow:0 1px 2px rgba(47,28,102,.09);">
+                  <div style="display:flex;justify-content:space-between;align-items:baseline;">
+                    <span style="font-family:'Playfair Display',serif;font-weight:700;font-size:19px;color:#16131f;">{{ g.range }}</span>
+                    <span style="font-size:13px;font-weight:600;color:#7450e4;">{{ g.len }}</span>
+                  </div>
+                  <div style="height:8px;border-radius:999px;background:#e8e6ef;margin:12px 0 14px;overflow:hidden;">
+                    <div style="height:100%;border-radius:999px;background:repeating-linear-gradient(115deg,#cbbcfa 0 7px,#e4dcfd 7px 14px);width:{{ g.width }};"></div>
+                  </div>
+                  <div style="display:flex;gap:9px;">
+                    <button type="button" onClick="{{ g.fill }}" style="flex:1;min-height:44px;border:0;border-radius:999px;cursor:pointer;font-family:'Playfair Display',serif;font-weight:700;font-size:14px;color:#fff;background:linear-gradient(115deg,#8b5cf6,#4f46e5);box-shadow:0 4px 12px rgba(79,70,229,.28);">Fill this in</button>
+                    <button type="button" onClick="{{ g.skip }}" style="flex:none;min-height:44px;padding:0 16px;border-radius:999px;cursor:pointer;font-size:13.5px;font-weight:600;color:#575168;background:#fff;border:1px solid rgba(47,28,102,.14);">Untracked</button>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+          <sc-if value="{{ noGaps }}" hint-placeholder-val="{{ false }}">
+            <div style="padding:26px;border-radius:20px;background:#efedf6;text-align:center;">
+              <div style="font-size:30px;">✓</div>
+              <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:20px;color:#16131f;margin-top:10px;">Nothing left open</div>
+              <p style="margin:6px 0 0;font-size:14px;color:#575168;">Every stretch from 6am is accounted for.</p>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isHome }}" hint-placeholder-val="{{ false }}">
+        <div class="zscroll" style="flex:1;overflow-y:auto;padding:6px 22px 108px;scrollbar-width:none;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+            <div>
+              <div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#7450e4;font-weight:600;">Tuesday, 19 Aug</div>
+              <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:29px;line-height:1.1;color:#16131f;margin-top:3px;">Today</div>
+            </div>
+            <div style="width:38px;height:38px;border-radius:50%;background:#e4dcfd;display:grid;place-items:center;font-weight:600;font-size:14px;color:#472b97;">JD</div>
+          </div>
+
+          <div style="border-radius:20px;padding:18px;background:linear-gradient(115deg,#8b5cf6 0%,#6d54f0 45%,#4f46e5 100%);box-shadow:0 14px 34px rgba(79,70,229,.3);color:#fff;margin-bottom:14px;">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;">
+              <div>
+                <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;opacity:.78;">Logged today</div>
+                <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:32px;line-height:1.1;margin-top:4px;">{{ hoursLabel }}</div>
+              </div>
+              <div style="text-align:right;">
+                <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;opacity:.78;">Money out</div>
+                <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:32px;line-height:1.1;margin-top:4px;">{{ outLabel }}</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:3px;margin-top:16px;height:9px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.22);">
+              <sc-for list="{{ dayBars }}" as="b" hint-placeholder-count="4">
+                <div style="height:100%;flex-basis:0;border-radius:999px;background:{{ b.color }};flex-grow:{{ b.grow }};"></div>
+              </sc-for>
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-top:9px;font-size:11.5px;opacity:.85;">
+              <span>{{ gapLabel }}</span>
+              <span>{{ entryCountLabel }}</span>
+            </div>
+          </div>
+
+          <sc-if value="{{ timerRunning }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;align-items:center;gap:14px;padding:16px;border-radius:18px;background:#fff;border:1.5px solid #7856f5;box-shadow:0 8px 22px rgba(120,86,245,.18);margin-bottom:14px;">
+              <span style="width:10px;height:10px;flex:none;border-radius:50%;background:#7856f5;animation:zPulse 1.4s ease-in-out infinite;"></span>
+              <span style="flex:1;min-width:0;">
+                <span style="display:block;font-family:'Playfair Display',serif;font-weight:700;font-size:30px;line-height:1;color:#16131f;font-variant-numeric:tabular-nums;">{{ timerLabel }}</span>
+                <span style="display:block;font-size:12.5px;color:#756f88;margin-top:4px;">{{ timerSince }}</span>
+                <sc-if value="{{ timerLong }}" hint-placeholder-val="{{ false }}">
+                  <span style="display:block;font-size:12.5px;color:#a8631a;margin-top:4px;">Still going? You can trim it when you stop.</span>
+                </sc-if>
+              </span>
+              <button type="button" onClick="{{ onStopTimer }}" style="flex:none;min-height:44px;padding:0 20px;border:0;border-radius:999px;cursor:pointer;font-family:'Playfair Display',serif;font-weight:700;font-size:14.5px;color:#fff;background:linear-gradient(115deg,#8b5cf6,#4f46e5);box-shadow:0 5px 14px rgba(79,70,229,.3);">Stop</button>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ timerIdle }}" hint-placeholder-val="{{ true }}">
+            <button type="button" onClick="{{ onStartTimer }}" style="width:100%;display:flex;align-items:center;gap:14px;padding:18px;border-radius:20px;cursor:pointer;text-align:left;border:0;background:linear-gradient(115deg,#8b5cf6 0%,#6d54f0 45%,#4f46e5 100%);box-shadow:0 14px 34px rgba(79,70,229,.3);color:#fff;margin-bottom:14px;">
+              <span style="width:46px;height:46px;flex:none;border-radius:50%;background:rgba(255,255,255,.2);display:grid;place-items:center;font-size:17px;">▶</span>
+              <span style="flex:1;">
+                <span style="display:block;font-family:'Playfair Display',serif;font-weight:700;font-size:21px;line-height:1.1;">Start timer</span>
+                <span style="display:block;font-size:13px;opacity:.82;margin-top:3px;">Track it live, name it after</span>
+              </span>
+            </button>
+          </sc-if>
+
+          <div style="display:flex;gap:10px;margin-bottom:22px;">
+            <button type="button" onClick="{{ startTime }}" style="flex:1;display:flex;flex-direction:column;gap:6px;align-items:flex-start;padding:14px;border-radius:16px;background:#fff;border:1px solid rgba(47,28,102,.08);box-shadow:0 1px 2px rgba(47,28,102,.1);cursor:pointer;text-align:left;" style-hover="border-color:#7856f5;">
+              <span style="width:30px;height:30px;border-radius:10px;background:#f2eefe;display:grid;place-items:center;font-size:15px;color:#5f3ac9;">◷</span>
+              <span style="font-family:'Playfair Display',serif;font-weight:700;font-size:15px;color:#16131f;">Log time</span>
+            </button>
+            <button type="button" onClick="{{ startMoney }}" style="flex:1;display:flex;flex-direction:column;gap:6px;align-items:flex-start;padding:14px;border-radius:16px;background:#fff;border:1px solid rgba(47,28,102,.08);box-shadow:0 1px 2px rgba(47,28,102,.1);cursor:pointer;text-align:left;" style-hover="border-color:#7856f5;">
+              <span style="width:30px;height:30px;border-radius:10px;background:#eceefe;display:grid;place-items:center;font-size:13px;font-weight:700;color:#3f4bc4;">{{ curGlyph }}</span>
+              <span style="font-family:'Playfair Display',serif;font-weight:700;font-size:15px;color:#16131f;">Log money</span>
+            </button>
+          </div>
+
+          <sc-if value="{{ hasGaps }}" hint-placeholder-val="{{ false }}">
+            <button type="button" onClick="{{ goReview }}" style="display:flex;align-items:center;gap:12px;width:100%;padding:14px 16px;border-radius:16px;cursor:pointer;text-align:left;background:#efedf6;border:1px solid rgba(120,86,245,.22);margin-bottom:22px;">
+              <span style="width:34px;height:34px;flex:none;border-radius:11px;background:repeating-linear-gradient(115deg,#cbbcfa 0 6px,#e4dcfd 6px 12px);"></span>
+              <span style="flex:1;">
+                <span style="display:block;font-weight:600;font-size:14.5px;color:#16131f;">{{ gapHeadline }}</span>
+                <span style="display:block;font-size:12.5px;color:#756f88;margin-top:2px;">Review the day and fill the blanks</span>
+              </span>
+              <span style="font-size:17px;color:#7450e4;">→</span>
+            </button>
+          </sc-if>
+
+          <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;">
+            <h4 style="margin:0;font-family:'Playfair Display',serif;font-weight:700;font-size:19px;color:#16131f;">Your day</h4>
+            <span style="font-size:12.5px;color:#756f88;">{{ entryCountLabel }}</span>
+          </div>
+
+          <sc-if value="{{ entriesEmpty }}" hint-placeholder-val="{{ false }}">
+            <div style="padding:30px 24px;border-radius:20px;background:#fff;border:1px dashed rgba(120,86,245,.35);text-align:center;">
+              <div style="width:46px;height:46px;margin:0 auto;border-radius:14px;background:#f2eefe;display:grid;place-items:center;font-size:19px;color:#5f3ac9;">◷</div>
+              <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:19px;color:#16131f;margin-top:14px;">Nothing logged yet</div>
+              <p style="margin:7px 0 0;font-size:14px;color:#756f88;line-height:1.45;text-wrap:pretty;">Start a timer for what you are doing now, or log something that already happened.</p>
+            </div>
+          </sc-if>
+
+          <div style="display:flex;flex-direction:column;gap:9px;">
+            <sc-for list="{{ entries }}" as="e" hint-placeholder-count="5">
+              <button type="button" onClick="{{ e.open }}" style="display:flex;align-items:center;gap:13px;width:100%;padding:13px 14px;border-radius:16px;background:#fff;border:1px solid rgba(47,28,102,.08);box-shadow:0 1px 2px rgba(47,28,102,.09);cursor:pointer;text-align:left;" style-hover="border-color:rgba(120,86,245,.5);">
+                <span style="width:9px;height:38px;border-radius:999px;flex:none;background:{{ e.color }};"></span>
+                <span style="flex:1;min-width:0;">
+                  <span style="display:block;font-weight:600;font-size:15px;color:#16131f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ e.title }}</span>
+                  <span style="display:block;font-size:12.5px;color:#756f88;margin-top:2px;">{{ e.meta }}</span>
+                </span>
+                <span style="font-family:'Playfair Display',serif;font-weight:700;font-size:15px;color:{{ e.valueColor }};white-space:nowrap;">{{ e.value }}</span>
+              </button>
+            </sc-for>
+          </div>
+
+          <div style="border-radius:20px;padding:18px;background:#fff;border:1px solid rgba(120,86,245,.25);box-shadow:0 4px 14px rgba(47,28,102,.08);margin-top:22px;">
+            <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:19px;color:#16131f;">Zimpan is free, and stays free</div>
+            <p style="margin:7px 0 14px;font-size:14px;line-height:1.5;color:#575168;text-wrap:pretty;">No ads, no paid tier, and nothing you log is ever sold. If it has been worth something to you, a small gift keeps it being built.</p>
+            <button type="button" onClick="{{ openDonate }}" style="width:100%;min-height:48px;border:0;border-radius:999px;cursor:pointer;font-family:'Playfair Display',serif;font-weight:700;font-size:15px;color:#fff;background:linear-gradient(115deg,#8b5cf6,#4f46e5);box-shadow:0 5px 16px rgba(79,70,229,.3);">Donate</button>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isInsights }}" hint-placeholder-val="{{ false }}">
+        <div class="zscroll" style="flex:1;overflow-y:auto;padding:6px 22px 108px;scrollbar-width:none;">
+          <div style="margin-bottom:18px;">
+            <div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#7450e4;font-weight:600;">Last 7 days</div>
+            <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:29px;line-height:1.1;color:#16131f;margin-top:3px;">The pattern</div>
+          </div>
+
+          <div style="display:flex;gap:6px;padding:4px;border-radius:999px;background:#e8e6ef;margin-bottom:18px;">
+            <button type="button" onClick="{{ showTimeInsights }}" style="flex:1;min-height:38px;border:0;border-radius:999px;cursor:pointer;font-family:'Playfair Display',serif;font-weight:700;font-size:14px;background:{{ timeTabBg }};color:{{ timeTabFg }};">Time</button>
+            <button type="button" onClick="{{ showMoneyInsights }}" style="flex:1;min-height:38px;border:0;border-radius:999px;cursor:pointer;font-family:'Playfair Display',serif;font-weight:700;font-size:14px;background:{{ moneyTabBg }};color:{{ moneyTabFg }};">Money</button>
+          </div>
+
+          <div style="border-radius:20px;background:#fff;border:1px solid rgba(47,28,102,.08);box-shadow:0 4px 14px rgba(47,28,102,.09);padding:18px;margin-bottom:14px;">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:16px;">
+              <span style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;">{{ insightKicker }}</span>
+              <span style="font-family:'Playfair Display',serif;font-weight:700;font-size:22px;color:#16131f;">{{ insightTotal }}</span>
+            </div>
+            <div style="display:flex;align-items:flex-end;gap:8px;height:118px;">
+              <sc-for list="{{ weekBars }}" as="w" hint-placeholder-count="7">
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:7px;justify-content:flex-end;height:100%;">
+                  <div style="width:100%;border-radius:8px 8px 4px 4px;background:{{ w.fill }};height:{{ w.h }};min-height:5px;"></div>
+                  <span style="font-size:10.5px;color:#9995ab;font-weight:500;">{{ w.label }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="border-radius:20px;background:#fff;border:1px solid rgba(47,28,102,.08);box-shadow:0 4px 14px rgba(47,28,102,.09);padding:18px;margin-bottom:14px;display:flex;flex-direction:column;gap:14px;">
+            <span style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;">Where it went</span>
+            <sc-for list="{{ splitRows }}" as="r" hint-placeholder-count="4">
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <div style="display:flex;justify-content:space-between;font-size:13.5px;">
+                  <span style="font-weight:600;color:#16131f;">{{ r.name }}</span>
+                  <span style="color:#756f88;">{{ r.value }}</span>
+                </div>
+                <div style="height:8px;border-radius:999px;background:#e8e6ef;overflow:hidden;">
+                  <div style="height:100%;border-radius:999px;background:{{ r.color }};width:{{ r.w }};"></div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="border-radius:20px;padding:18px;background:#efedf6;border:1px solid rgba(47,28,102,.07);margin-bottom:14px;">
+            <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#7450e4;margin-bottom:7px;">Noticed</div>
+            <p style="margin:0;font-size:14.5px;line-height:1.5;color:#3b3648;text-wrap:pretty;">{{ noticeText }}</p>
+          </div>
+
+          <div style="border-radius:20px;padding:18px;background:#fff;border:1px solid rgba(120,86,245,.25);box-shadow:0 4px 14px rgba(47,28,102,.08);">
+            <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:19px;color:#16131f;">Zimpan is free, and stays free</div>
+            <p style="margin:7px 0 14px;font-size:14px;line-height:1.5;color:#575168;text-wrap:pretty;">No ads, no paid tier, and nothing you log is ever sold. If it has been worth something to you, a small gift keeps it being built.</p>
+            <button type="button" onClick="{{ openDonate }}" style="width:100%;min-height:48px;border:0;border-radius:999px;cursor:pointer;font-family:'Playfair Display',serif;font-weight:700;font-size:15px;color:#fff;background:linear-gradient(115deg,#8b5cf6,#4f46e5);box-shadow:0 5px 16px rgba(79,70,229,.3);">Donate</button>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isDetail }}" hint-placeholder-val="{{ false }}">
+        <div class="zscroll" style="flex:1;overflow-y:auto;padding:6px 22px 34px;scrollbar-width:none;">
+          <button type="button" onClick="{{ backHome }}" style="border:0;background:transparent;cursor:pointer;font-size:14px;color:#7450e4;padding:6px 0;font-weight:600;">← Today</button>
+          <div style="margin-top:14px;border-radius:22px;background:#fff;border:1px solid rgba(47,28,102,.08);box-shadow:0 4px 14px rgba(47,28,102,.1);padding:20px;">
+            <div style="display:inline-flex;align-items:center;font-size:11px;letter-spacing:.02em;padding:4px 11px;border-radius:999px;background:{{ detailTagBg }};color:{{ detailTagFg }};">{{ detailTag }}</div>
+            <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:27px;line-height:1.15;color:#16131f;margin-top:12px;">{{ detailTitle }}</div>
+            <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:40px;line-height:1.1;color:{{ detailValueColor }};margin-top:6px;">{{ detailValue }}</div>
+            <div style="height:1px;background:rgba(22,19,31,.12);margin:18px 0;"></div>
+            <div style="display:flex;flex-direction:column;gap:13px;">
+              <sc-for list="{{ detailRows }}" as="d" hint-placeholder-count="4">
+                <div style="display:flex;justify-content:space-between;gap:16px;font-size:14px;">
+                  <span style="color:#756f88;">{{ d.k }}</span>
+                  <span style="font-weight:600;color:#16131f;text-align:right;">{{ d.v }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;margin-top:16px;">
+            <button type="button" onClick="{{ backHome }}" style="flex:1;min-height:48px;border-radius:999px;cursor:pointer;font-family:'Playfair Display',serif;font-weight:700;font-size:15px;color:#5f3ac9;background:#fff;border:1px solid rgba(120,86,245,.42);">Edit</button>
+            <button type="button" onClick="{{ deleteEntry }}" style="flex:1;min-height:48px;border-radius:999px;cursor:pointer;font-family:'Playfair Display',serif;font-weight:700;font-size:15px;color:#8a2f4a;background:#fff;border:1px solid rgba(138,47,74,.3);">Delete</button>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isFlow }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:1;display:flex;flex-direction:column;background:#f8f7fb;">
+          <div style="flex:none;padding:2px 22px 0;">
+            <div style="display:flex;align-items:center;justify-content:space-between;min-height:44px;">
+              <button type="button" onClick="{{ flowBack }}" style="border:0;background:transparent;cursor:pointer;font-size:20px;color:#575168;padding:6px 8px 6px 0;">{{ backGlyph }}</button>
+              <span style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;font-weight:600;">{{ stepLabel }}</span>
+              <button type="button" onClick="{{ closeFlow }}" style="border:0;background:transparent;cursor:pointer;font-size:19px;color:#575168;padding:6px 0 6px 8px;">✕</button>
+            </div>
+            <div style="display:flex;gap:5px;margin:8px 0 4px;">
+              <sc-for list="{{ progress }}" as="p" hint-placeholder-count="4">
+                <div style="flex:1;height:4px;border-radius:999px;background:{{ p.bg }};"></div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div class="zscroll" style="flex:1;overflow-y:auto;padding:18px 22px 12px;scrollbar-width:none;">
+            <div style="animation:zStep .28s ease both;" key="{{ stepKey }}">
+              <h3 style="margin:0 0 6px;font-family:'Playfair Display',serif;font-weight:700;font-size:26px;line-height:1.15;color:#16131f;">{{ stepTitle }}</h3>
+              <p style="margin:0 0 20px;font-size:14px;color:#756f88;line-height:1.45;">{{ stepHint }}</p>
+
+              <sc-if value="{{ showKind }}" hint-placeholder-val="{{ true }}">
+                <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:24px;">
+                  <sc-for list="{{ kindCards }}" as="k" hint-placeholder-count="2">
+                    <button type="button" onClick="{{ k.pick }}" style="display:flex;align-items:center;gap:14px;width:100%;padding:16px;border-radius:18px;cursor:pointer;text-align:left;background:{{ k.bg }};border:1.5px solid {{ k.border }};box-shadow:{{ k.shadow }};">
+                      <span style="width:44px;height:44px;flex:none;border-radius:14px;display:grid;place-items:center;font-size:19px;background:{{ k.iconBg }};color:{{ k.iconFg }};">{{ k.icon }}</span>
+                      <span style="flex:1;">
+                        <span style="display:block;font-family:'Playfair Display',serif;font-weight:700;font-size:17px;color:{{ k.titleFg }};">{{ k.title }}</span>
+                        <span style="display:block;font-size:13px;margin-top:2px;color:{{ k.subFg }};">{{ k.sub }}</span>
+                      </span>
+                    </button>
+                  </sc-for>
+                </div>
+                <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;margin-bottom:9px;">When</div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                  <sc-for list="{{ dayChips }}" as="c" hint-placeholder-count="3">
+                    <button type="button" onClick="{{ c.pick }}" style="padding:9px 16px;border-radius:999px;cursor:pointer;font-size:13.5px;font-weight:600;background:{{ c.bg }};color:{{ c.fg }};border:1px solid {{ c.border }};">{{ c.label }}</button>
+                  </sc-for>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ showCategory }}" hint-placeholder-val="{{ false }}">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:22px;">
+                  <sc-for list="{{ catCards }}" as="c" hint-placeholder-count="6">
+                    <button type="button" onClick="{{ c.pick }}" style="display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:14px;border-radius:16px;cursor:pointer;text-align:left;min-height:86px;background:{{ c.bg }};border:1.5px solid {{ c.border }};">
+                      <span style="width:11px;height:11px;border-radius:50%;background:{{ c.dot }};"></span>
+                      <span style="font-family:'Playfair Display',serif;font-weight:700;font-size:15.5px;color:{{ c.fg }};">{{ c.name }}</span>
+                      <span style="font-size:11.5px;color:{{ c.subFg }};">{{ c.sub }}</span>
+                    </button>
+                  </sc-for>
+                </div>
+                <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;margin-bottom:9px;">{{ suggestLabel }}</div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
+                  <sc-for list="{{ activityChips }}" as="a" hint-placeholder-count="4">
+                    <button type="button" onClick="{{ a.pick }}" style="padding:9px 15px;border-radius:999px;cursor:pointer;font-size:13.5px;font-weight:600;background:{{ a.bg }};color:{{ a.fg }};border:1px solid {{ a.border }};">{{ a.label }}</button>
+                  </sc-for>
+                  <button type="button" onClick="{{ openTyping }}" style="padding:9px 15px;border-radius:999px;cursor:pointer;font-size:13.5px;font-weight:600;background:transparent;color:#7450e4;border:1px dashed rgba(120,86,245,.55);">Type it</button>
+                </div>
+                <sc-if value="{{ typing }}" hint-placeholder-val="{{ false }}">
+                  <input type="text" value="{{ activityText }}" onChange="{{ setActivityText }}" placeholder="What was it?" autoFocus="{{ true }}" style="width:100%;min-height:46px;padding:10px 14px;font:inherit;font-size:15px;color:#16131f;background:#fff;border:1.5px solid #7856f5;border-radius:14px;box-shadow:0 0 0 3px rgba(120,86,245,.18);" />
+                </sc-if>
+              </sc-if>
+
+              <sc-if value="{{ showAmount }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;gap:6px;padding:4px;border-radius:999px;background:#e8e6ef;margin-bottom:18px;">
+                  <sc-for list="{{ dirTabs }}" as="d" hint-placeholder-count="2">
+                    <button type="button" onClick="{{ d.pick }}" style="flex:1;min-height:40px;border:0;border-radius:999px;cursor:pointer;font-family:'Playfair Display',serif;font-weight:700;font-size:14px;background:{{ d.bg }};color:{{ d.fg }};">{{ d.label }}</button>
+                  </sc-for>
+                </div>
+                <div style="text-align:center;padding:6px 0 18px;">
+                  <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:52px;line-height:1;color:{{ amountColor }};letter-spacing:-.01em;">{{ amountDisplay }}</div>
+                  <div style="font-size:12.5px;color:#756f88;margin-top:6px;">{{ amountHint }}</div>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:9px;">
+                  <sc-for list="{{ keys }}" as="k" hint-placeholder-count="12">
+                    <button type="button" onClick="{{ k.press }}" style="min-height:56px;border-radius:16px;cursor:pointer;font-family:'Playfair Display',serif;font-weight:700;font-size:22px;color:#16131f;background:#fff;border:1px solid rgba(47,28,102,.08);box-shadow:0 1px 2px rgba(47,28,102,.09);" style-active="background:#e4dcfd;">{{ k.label }}</button>
+                  </sc-for>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ showWhen }}" hint-placeholder-val="{{ false }}">
+                <sc-if value="{{ whenHasWarning }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;gap:11px;align-items:flex-start;padding:13px 14px;border-radius:16px;background:#fdf3e6;border:1px solid rgba(224,145,58,.35);margin-bottom:14px;">
+                    <span style="font-size:15px;line-height:1.3;color:#a8631a;">!</span>
+                    <span style="flex:1;font-size:13.5px;line-height:1.45;color:#7a4a13;">{{ whenWarning }}</span>
+                    <button type="button" onClick="{{ trimHalf }}" style="flex:none;min-height:34px;padding:0 13px;border-radius:999px;cursor:pointer;font-size:12.5px;font-weight:600;color:#7a4a13;background:#fff;border:1px solid rgba(224,145,58,.5);">Halve it</button>
+                  </div>
+                </sc-if>
+                <div style="border-radius:20px;background:#fff;border:1px solid rgba(47,28,102,.08);box-shadow:0 4px 14px rgba(47,28,102,.09);padding:18px;margin-bottom:18px;">
+                  <div style="display:flex;justify-content:space-between;align-items:baseline;">
+                    <span style="font-family:'Playfair Display',serif;font-weight:700;font-size:26px;color:#16131f;">{{ rangeLabel }}</span>
+                    <span style="font-size:13px;color:#7450e4;font-weight:600;">{{ durLabel }}</span>
+                  </div>
+                  <div ref="{{ trackRef }}" onPointerDown="{{ onTrackDown }}" style="position:relative;height:38px;margin-top:12px;cursor:grab;touch-action:none;user-select:none;">
+                    <div style="position:absolute;left:0;right:0;top:14px;height:10px;border-radius:999px;background:#e8e6ef;"></div>
+                    <div style="position:absolute;top:14px;height:10px;border-radius:999px;background:linear-gradient(90deg,#8b5cf6,#4f46e5);left:{{ trackLeft }};width:{{ trackWidth }};"></div>
+                    <div style="position:absolute;top:5px;width:28px;height:28px;border-radius:50%;background:#fff;border:2.5px solid #7856f5;box-shadow:0 4px 12px rgba(79,70,229,.35);margin-left:-14px;left:{{ trackLeft }};"></div>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;font-size:10.5px;color:#9995ab;margin-top:7px;">
+                    <span>6a</span><span>12p</span><span>6p</span><span>12a</span>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;">
+                  <span style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;">Started — hour</span>
+                  <button type="button" onClick="{{ setNow }}" style="border:0;background:transparent;cursor:pointer;font-size:12.5px;font-weight:600;color:#7450e4;padding:0;">Use now</button>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:7px;margin-bottom:16px;">
+                  <sc-for list="{{ startChips }}" as="s" hint-placeholder-count="12">
+                    <button type="button" onClick="{{ s.pick }}" style="min-height:40px;padding:0 4px;border-radius:12px;cursor:pointer;font-size:13px;font-weight:600;background:{{ s.bg }};color:{{ s.fg }};border:1px solid {{ s.border }};">{{ s.label }}</button>
+                  </sc-for>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;">
+                  <span style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;">Minutes</span>
+                  <span style="display:flex;align-items:center;gap:8px;">
+                    <button type="button" onClick="{{ minusMinute }}" style="width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:17px;line-height:1;color:#5f3ac9;background:#fff;border:1px solid rgba(120,86,245,.4);">−</button>
+                    <span style="min-width:38px;text-align:center;font-family:'Playfair Display',serif;font-weight:700;font-size:16px;color:#16131f;font-variant-numeric:tabular-nums;">{{ minuteLabel }}</span>
+                    <button type="button" onClick="{{ plusMinute }}" style="width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:17px;line-height:1;color:#5f3ac9;background:#fff;border:1px solid rgba(120,86,245,.4);">+</button>
+                  </span>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:7px;margin-bottom:16px;">
+                  <sc-for list="{{ minuteChips }}" as="m" hint-placeholder-count="12">
+                    <button type="button" onClick="{{ m.pick }}" style="min-height:40px;padding:0 4px;border-radius:12px;cursor:pointer;font-size:13px;font-weight:600;background:{{ m.bg }};color:{{ m.fg }};border:1px solid {{ m.border }};">{{ m.label }}</button>
+                  </sc-for>
+                </div>
+                <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;margin-bottom:9px;">For how long</div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                  <sc-for list="{{ durChips }}" as="d" hint-placeholder-count="6">
+                    <button type="button" onClick="{{ d.pick }}" style="padding:10px 16px;border-radius:14px;cursor:pointer;font-size:13.5px;font-weight:600;background:{{ d.bg }};color:{{ d.fg }};border:1px solid {{ d.border }};">{{ d.label }}</button>
+                  </sc-for>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ showReview }}" hint-placeholder-val="{{ false }}">
+                <div style="border-radius:20px;background:#fff;border:1px solid rgba(47,28,102,.08);box-shadow:0 4px 14px rgba(47,28,102,.1);padding:18px;margin-bottom:14px;display:flex;flex-direction:column;gap:13px;">
+                  <sc-for list="{{ reviewRows }}" as="r" hint-placeholder-count="4">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;">
+                      <span style="font-size:13px;color:#756f88;">{{ r.k }}</span>
+                      <button type="button" onClick="{{ r.jump }}" style="border:0;background:transparent;cursor:pointer;font-weight:600;font-size:14.5px;color:#16131f;text-align:right;padding:0;">{{ r.v }} <span style="color:#7450e4;font-size:12.5px;font-weight:600;">edit</span></button>
+                    </div>
+                  </sc-for>
+                </div>
+                <sc-if value="{{ noteOpen }}" hint-placeholder-val="{{ false }}">
+                  <textarea value="{{ noteText }}" onChange="{{ setNote }}" placeholder="Anything worth remembering?" autoFocus="{{ true }}" style="width:100%;min-height:88px;padding:12px 14px;font:inherit;font-size:14.5px;color:#16131f;background:#fff;border:1.5px solid #7856f5;border-radius:16px;box-shadow:0 0 0 3px rgba(120,86,245,.18);resize:vertical;"></textarea>
+                </sc-if>
+                <sc-if value="{{ noteClosed }}" hint-placeholder-val="{{ true }}">
+                  <button type="button" onClick="{{ openNote }}" style="width:100%;padding:14px;border-radius:16px;cursor:pointer;font-size:14px;font-weight:600;color:#7450e4;background:transparent;border:1px dashed rgba(120,86,245,.5);text-align:left;">+ Add a note</button>
+                </sc-if>
+              </sc-if>
+
+              <sc-if value="{{ showDone }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding:30px 0 10px;animation:zPop .3s ease both;">
+                  <div style="width:78px;height:78px;border-radius:50%;background:linear-gradient(115deg,#8b5cf6,#4f46e5);box-shadow:0 14px 32px rgba(79,70,229,.35);display:grid;place-items:center;font-size:34px;color:#fff;">✓</div>
+                  <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:26px;color:#16131f;margin-top:20px;">{{ doneTitle }}</div>
+                  <p style="margin:8px 0 0;font-size:14.5px;color:#575168;line-height:1.5;max-width:28ch;">{{ doneSub }}</p>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+
+          <div style="flex:none;padding:10px 22px 26px;background:linear-gradient(180deg,rgba(248,247,251,0),#f8f7fb 30%);">
+            <button type="button" onClick="{{ flowNext }}" disabled="{{ nextDisabled }}" style="width:100%;min-height:54px;border:0;border-radius:999px;cursor:pointer;font-family:'Playfair Display',serif;font-weight:700;font-size:16.5px;color:#fff;background:linear-gradient(115deg,#8b5cf6 0%,#6d54f0 45%,#4f46e5 100%);box-shadow:0 6px 18px rgba(79,70,229,.32);opacity:{{ nextOpacity }};">{{ nextLabel }}</button>
+            <sc-if value="{{ showSkip }}" hint-placeholder-val="{{ false }}">
+              <button type="button" onClick="{{ flowSkip }}" style="width:100%;min-height:40px;border:0;background:transparent;cursor:pointer;font-size:13.5px;font-weight:600;color:#756f88;margin-top:4px;">Skip for now</button>
+            </sc-if>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ donateOpen }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;inset:0;z-index:20;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(36,31,48,.5);">
+          <div style="background:#fff;border-radius:28px 28px 0 0;padding:24px 22px 30px;box-shadow:0 -18px 44px rgba(47,28,102,.24);animation:zStep .26s ease both;">
+            <div style="width:38px;height:4px;border-radius:999px;background:#d5d2df;margin:0 auto 18px;"></div>
+            <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:25px;line-height:1.15;color:#16131f;">Keep Zimpan going</div>
+            <p style="margin:8px 0 18px;font-size:14px;line-height:1.5;color:#575168;text-wrap:pretty;">Voluntary, one-off, and it buys no extra features — everyone gets the same app. Thank you either way.</p>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:18px;">
+              <sc-for list="{{ donateChips }}" as="d" hint-placeholder-count="4">
+                <button type="button" onClick="{{ d.pick }}" style="min-height:46px;border-radius:14px;cursor:pointer;font-size:13px;font-weight:600;background:{{ d.bg }};color:{{ d.fg }};border:1px solid {{ d.border }};">{{ d.label }}</button>
+              </sc-for>
+            </div>
+            <button type="button" onClick="{{ confirmDonate }}" style="width:100%;min-height:52px;border:0;border-radius:999px;cursor:pointer;font-family:'Playfair Display',serif;font-weight:700;font-size:16px;color:#fff;background:linear-gradient(115deg,#8b5cf6,#4f46e5);box-shadow:0 6px 18px rgba(79,70,229,.32);">{{ donateLabel }}</button>
+            <button type="button" onClick="{{ closeDonate }}" style="width:100%;min-height:42px;border:0;background:transparent;cursor:pointer;font-size:13.5px;font-weight:600;color:#756f88;margin-top:4px;">Not now</button>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ donateThanks }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;inset:0;z-index:20;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(36,31,48,.5);">
+          <div style="background:#fff;border-radius:28px 28px 0 0;padding:30px 22px 34px;text-align:center;animation:zStep .26s ease both;">
+            <div style="width:66px;height:66px;margin:0 auto;border-radius:50%;background:linear-gradient(115deg,#8b5cf6,#4f46e5);display:grid;place-items:center;font-size:28px;color:#fff;box-shadow:0 12px 28px rgba(79,70,229,.34);">♥</div>
+            <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:23px;color:#16131f;margin-top:18px;">Thank you</div>
+            <p style="margin:8px auto 20px;font-size:14px;line-height:1.5;color:#575168;max-width:30ch;">You will get a receipt by email. Nothing about your app changes — that is the point.</p>
+            <button type="button" onClick="{{ closeDonate }}" style="width:100%;min-height:50px;border:0;border-radius:999px;cursor:pointer;font-family:'Playfair Display',serif;font-weight:700;font-size:15.5px;color:#fff;background:linear-gradient(115deg,#8b5cf6,#4f46e5);">Back to Zimpan</button>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ showTabs }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;left:0;right:0;bottom:0;height:92px;display:flex;align-items:center;justify-content:space-around;padding:0 26px 22px;background:linear-gradient(180deg,rgba(248,247,251,0),rgba(248,247,251,.96) 42%);backdrop-filter:blur(8px);">
+          <button type="button" onClick="{{ goHome }}" style="border:0;background:transparent;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11px;font-weight:600;color:{{ homeTabFg }};">
+            <span style="font-size:19px;line-height:1;">◱</span>Today
+          </button>
+          <button type="button" onClick="{{ startFlow }}" style="width:58px;height:58px;flex:none;border:0;border-radius:50%;cursor:pointer;background:linear-gradient(115deg,#8b5cf6,#4f46e5);box-shadow:0 10px 24px rgba(79,70,229,.4);color:#fff;font-size:26px;font-weight:300;line-height:1;margin-bottom:12px;">+</button>
+          <button type="button" onClick="{{ goInsights }}" style="border:0;background:transparent;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11px;font-weight:600;color:{{ insightsTabFg }};">
+            <span style="font-size:19px;line-height:1;">◲</span>Insights
+          </button>
+        </div>
+      </sc-if>
+
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:900,&quot;height&quot;:960}}">
+const CATS = [
+  { name: 'Work', color: '#7856f5', sub: 'deep + shallow', acts: ['Client call', 'Focus block', 'Email', 'Standup'] },
+  { name: 'Health', color: '#22a67a', sub: 'move + rest', acts: ['Gym', 'Walk', 'Run', 'Stretch'] },
+  { name: 'Food', color: '#e0913a', sub: 'meals + prep', acts: ['Breakfast', 'Lunch', 'Dinner', 'Cooking'] },
+  { name: 'Family', color: '#e05a8a', sub: 'people time', acts: ['Kids', 'Call home', 'Dinner out'] },
+  { name: 'Learning', color: '#4f46e5', sub: 'books + courses', acts: ['Reading', 'Course', 'Practice'] },
+  { name: 'Rest', color: '#9995ab', sub: 'sleep + idle', acts: ['Nap', 'Scrolling', 'TV'] }
+];
+const PURPOSES = [
+  { name: 'Food', color: '#e0913a', sub: 'groceries, eating out', acts: ['Groceries', 'Coffee', 'Lunch out'] },
+  { name: 'Transport', color: '#3f4bc4', sub: 'fares, fuel', acts: ['Grab', 'Jeepney', 'Fuel'] },
+  { name: 'Bills', color: '#756f88', sub: 'rent, utilities', acts: ['Electric', 'Internet', 'Rent'] },
+  { name: 'Health', color: '#22a67a', sub: 'meds, checkups', acts: ['Pharmacy', 'Clinic'] },
+  { name: 'Fun', color: '#e05a8a', sub: 'going out', acts: ['Movie', 'Drinks'] },
+  { name: 'Income', color: '#7856f5', sub: 'salary, gigs', acts: ['Salary', 'Freelance'] }
+];
+const PILL = { on: { bg: 'linear-gradient(115deg,#8b5cf6,#4f46e5)', fg: '#fff', border: 'transparent' },
+               off: { bg: '#fff', fg: '#3b3648', border: 'rgba(47,28,102,.12)' } };
+
+function fmt(min) {
+  let h = Math.floor(min / 60) % 24, m = min % 60;
+  const ap = h >= 12 ? 'pm' : 'am';
+  let hh = h % 12; if (hh === 0) hh = 12;
+  return hh + (m ? ':' + String(m).padStart(2, '0') : '') + ap;
+}
+function dur(min) {
+  const h = Math.floor(min / 60), m = min % 60;
+  return (h ? h + 'h' : '') + (m ? (h ? ' ' : '') + m + 'm' : (h ? '' : '0m'));
+}
+const SYMBOLS = { AED: 'Dhs ', USD: '$', PHP: '\u20b1', EUR: '\u20ac', SGD: 'S$', HKD: 'HK$' };
+let CUR = 'Dhs ';
+function peso(n) {
+  return CUR + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
+class Component extends DCLogic {
+  state = {
+    screen: 'signin', step: 1, kind: null, day: 'Today',
+    cat: null, activity: null, typing: false, activityText: '',
+    dir: 'out', amount: '', startMin: 9 * 60, durMin: 60,
+    noteOpen: false, note: '', selected: null, insightTab: 'time',
+    timerStart: null, timerCat: null, tick: 0,
+    setupStep: 1, name: '', nameTyping: false, currency: 'AED',
+    tracks: ['Time', 'Money'], setupCats: ['Work', 'Health', 'Food', 'Rest'],
+    weight: '', sleep: '', customCats: [], catTyping: false, catText: '',
+    donateOpen: false, donateAmt: 50, donateThanks: false,
+    entries: [
+      { id: 'e1', kind: 'time', title: 'Focus block', cat: 'Work', startMin: 540, durMin: 105, note: 'Q3 deck' },
+      { id: 'e2', kind: 'money', title: 'Coffee', cat: 'Food', dir: 'out', amount: 22, note: '' },
+      { id: 'e3', kind: 'time', title: 'Gym', cat: 'Health', startMin: 690, durMin: 45, note: 'Legs + 20m bike' },
+      { id: 'e4', kind: 'money', title: 'Taxi to office', cat: 'Transport', dir: 'out', amount: 34, note: '' },
+      { id: 'e5', kind: 'time', title: 'Client call', cat: 'Work', startMin: 810, durMin: 60, note: '' },
+      { id: 'e6', kind: 'money', title: 'Freelance invoice', cat: 'Income', dir: 'in', amount: 3200, note: 'Batch 2' }
+    ]
+  };
+
+  componentDidMount() {
+    this._iv = setInterval(() => { if (this.state.timerStart) this.setState(s => ({ tick: s.tick + 1 })); }, 1000);
+    this._mv = (e) => { if (this._drag) { e.preventDefault(); this.dragTo(e.clientX); } };
+    this._up = () => { this._drag = false; };
+    window.addEventListener('pointermove', this._mv, { passive: false });
+    window.addEventListener('pointerup', this._up);
+  }
+  componentWillUnmount() {
+    clearInterval(this._iv);
+    window.removeEventListener('pointermove', this._mv);
+    window.removeEventListener('pointerup', this._up);
+  }
+
+  dragTo(x) {
+    if (!this._track) return;
+    const r = this._track.getBoundingClientRect();
+    const pct = Math.min(1, Math.max(0, (x - r.left) / r.width));
+    const min = Math.round(360 + pct * 1080);
+    this.setState({ startMin: Math.min(1439 - this.state.durMin, Math.max(0, min)) });
+  }
+
+  elapsedSec() { return this.state.timerStart ? Math.floor((Date.now() - this.state.timerStart) / 1000) : 0; }
+
+  startTimer() {
+    const now = new Date();
+    this.setState({ timerStart: Date.now(), timerCat: null, tick: 0, screen: 'home',
+      startMin: now.getHours() * 60 + now.getMinutes() });
+  }
+
+  stopTimer() {
+    const mins = Math.max(1, Math.round(this.elapsedSec() / 60));
+    this.setState({ timerStart: null, screen: 'flow', kind: 'time', step: 2, durMin: mins,
+      cat: this.state.timerCat, activity: null, activityText: '', note: '', noteOpen: false, day: 'Today' });
+  }
+
+  set(patch) { this.setState(patch); }
+
+  toggle(key, v) {
+    const list = this.state[key];
+    const next = list.includes(v) ? list.filter(x => x !== v) : list.concat(v);
+    this.setState({ [key]: next });
+  }
+
+  // Unlogged stretches between 6am and 10pm, largest first.
+  gaps() {
+    const times = this.state.entries.filter(e => e.kind === 'time')
+      .map(e => ({ a: e.startMin, b: e.startMin + e.durMin }))
+      .sort((x, y) => x.a - y.a);
+    const out = [];
+    let cursor = 360;
+    times.forEach(t => {
+      if (t.a - cursor >= 30) out.push({ a: cursor, b: t.a });
+      cursor = Math.max(cursor, t.b);
+    });
+    if (1320 - cursor >= 30) out.push({ a: cursor, b: 1320 });
+    return out;
+  }
+  pool() { return this.state.kind === 'money' ? PURPOSES : CATS; }
+  catObj() { const p = this.pool().find(c => c.name === this.state.cat); return p || null; }
+
+  label() {
+    const s = this.state;
+    return s.activityText.trim() || s.activity || (s.cat || '');
+  }
+
+  maxStep() { return 4; }
+
+  canAdvance() {
+    const s = this.state;
+    if (s.step === 1) return !!s.kind;
+    if (s.step === 2) return s.kind === 'money' ? Number(s.amount) > 0 : !!s.cat;
+    if (s.step === 3) return s.kind === 'money' ? !!s.cat : s.durMin > 0;
+    return true;
+  }
+
+  next() {
+    const s = this.state;
+    if (s.step === 5) { this.reset('home'); return; }
+    if (!this.canAdvance()) return;
+    if (s.step === 4) { this.commit(); return; }
+    this.set({ step: s.step + 1, typing: false });
+  }
+
+  commit() {
+    const s = this.state;
+    const e = s.kind === 'money'
+      ? { id: 'n' + Date.now(), kind: 'money', title: this.label() || 'Money', cat: s.cat, dir: s.dir, amount: Number(s.amount), note: s.note }
+      : { id: 'n' + Date.now(), kind: 'time', title: this.label() || 'Time', cat: s.cat, startMin: s.startMin, durMin: s.durMin, note: s.note };
+    this.setState({ entries: [e].concat(s.entries), step: 5 });
+  }
+
+  reset(screen) {
+    this.set({ screen: screen, step: 1, kind: null, cat: null, activity: null, typing: false,
+      activityText: '', amount: '', dir: 'out', startMin: 9 * 60, durMin: 60, noteOpen: false, note: '' });
+  }
+
+  back() {
+    const s = this.state;
+    if (s.step <= 1) { this.reset('home'); return; }
+    this.set({ step: s.step - 1, typing: false });
+  }
+
+  press(k) {
+    const s = this.state;
+    if (k === '⌫') return this.set({ amount: s.amount.slice(0, -1) });
+    if (k === '.' && s.amount.includes('.')) return;
+    if (s.amount.replace(/[^0-9]/g, '').length > 8) return;
+    this.set({ amount: s.amount + k });
+  }
+
+  todayTime() { return this.state.entries.filter(e => e.kind === 'time').reduce((a, e) => a + e.durMin, 0); }
+  todayOut() { return this.state.entries.filter(e => e.kind === 'money' && e.dir === 'out').reduce((a, e) => a + e.amount, 0); }
+
+  chip(on) { return on ? PILL.on : PILL.off; }
+
+  renderVals() {
+    const s = this.state;
+    CUR = SYMBOLS[s.currency] || 'Dhs ';
+    const isFlow = s.screen === 'flow';
+    const isMoney = s.kind === 'money';
+    const pool = this.pool();
+    const cObj = this.catObj();
+    const colorOf = (name, kind) => {
+      const src = kind === 'money' ? PURPOSES : CATS;
+      const f = src.find(c => c.name === name);
+      return f ? f.color : '#9995ab';
+    };
+
+    const entries = s.entries.map(e => ({
+      color: colorOf(e.cat, e.kind),
+      title: e.title,
+      meta: e.kind === 'time' ? e.cat + ' · ' + fmt(e.startMin) + ' – ' + fmt(e.startMin + e.durMin) : e.cat + ' · ' + (e.dir === 'in' ? 'money in' : 'money out'),
+      value: e.kind === 'time' ? dur(e.durMin) : (e.dir === 'in' ? '+' : '−') + peso(e.amount),
+      valueColor: e.kind === 'money' && e.dir === 'in' ? '#1c8a63' : '#16131f',
+      open: () => this.set({ screen: 'detail', selected: e.id })
+    }));
+
+    const sel = s.entries.find(e => e.id === s.selected) || s.entries[0];
+    const detailRows = sel ? (sel.kind === 'time'
+      ? [{ k: 'Category', v: sel.cat }, { k: 'Started', v: fmt(sel.startMin) }, { k: 'Ended', v: fmt(sel.startMin + sel.durMin) }, { k: 'Date', v: 'Tue, 19 Aug 2026' }, { k: 'Note', v: sel.note || '—' }]
+      : [{ k: 'Purpose', v: sel.cat }, { k: 'Direction', v: sel.dir === 'in' ? 'Money in' : 'Money out' }, { k: 'Date', v: 'Tue, 19 Aug 2026' }, { k: 'Note', v: sel.note || '—' }]) : [];
+
+    const timeInsights = s.insightTab === 'time';
+    const week = timeInsights
+      ? [{ label: 'W', v: 7.5 }, { label: 'T', v: 9 }, { label: 'F', v: 6 }, { label: 'S', v: 4 }, { label: 'S', v: 3.5 }, { label: 'M', v: 8.5 }, { label: 'T', v: 6.2 }]
+      : [{ label: 'W', v: 96 }, { label: 'T', v: 182 }, { label: 'F', v: 145 }, { label: 'S', v: 320 }, { label: 'S', v: 74 }, { label: 'M', v: 118 }, { label: 'T', v: 56 }];
+    const wMax = Math.max.apply(null, week.map(w => w.v));
+    const weekBars = week.map((w, i) => ({
+      label: w.label, h: Math.round((w.v / wMax) * 100) + '%',
+      fill: i === week.length - 1 ? 'linear-gradient(180deg,#8b5cf6,#4f46e5)' : '#e4dcfd'
+    }));
+
+    const splitSrc = timeInsights
+      ? [{ n: 'Work', v: 21.5, c: '#7856f5', u: 'h' }, { n: 'Rest', v: 9, c: '#9995ab', u: 'h' }, { n: 'Health', v: 4.5, c: '#22a67a', u: 'h' }, { n: 'Family', v: 3.5, c: '#e05a8a', u: 'h' }]
+      : [{ n: 'Food', v: 438, c: '#e0913a', u: '' }, { n: 'Transport', v: 250, c: '#3f4bc4', u: '' }, { n: 'Bills', v: 185, c: '#756f88', u: '' }, { n: 'Fun', v: 118, c: '#e05a8a', u: '' }];
+    const sMax = splitSrc[0].v;
+    const splitRows = splitSrc.map(r => ({
+      name: r.n, color: r.c, w: Math.round((r.v / sMax) * 100) + '%',
+      value: r.u ? r.v + r.u : peso(r.v)
+    }));
+
+    const byCat = {};
+    s.entries.filter(e => e.kind === 'time').forEach(e => { byCat[e.cat] = (byCat[e.cat] || 0) + e.durMin; });
+    const logged = Object.keys(byCat).reduce((a, k) => a + byCat[k], 0);
+    const dayBars = Object.keys(byCat)
+      .sort((a, b) => byCat[b] - byCat[a])
+      .map((k, i) => ({ grow: byCat[k], color: 'rgba(255,255,255,' + (0.94 - i * 0.13) + ')' }))
+      .concat(logged < 1440 ? [{ grow: 1440 - logged, color: 'rgba(255,255,255,.22)' }] : []);
+
+    const kindCards = ['time', 'money'].map(k => {
+      const on = s.kind === k;
+      return {
+        icon: k === 'time' ? '◷' : CUR.trim(),
+        title: k === 'time' ? 'Time' : 'Money',
+        sub: k === 'time' ? 'Something you did' : 'Something you spent or earned',
+        bg: on ? 'linear-gradient(115deg,#8b5cf6,#4f46e5)' : '#fff',
+        border: on ? 'transparent' : 'rgba(47,28,102,.1)',
+        shadow: on ? '0 10px 26px rgba(79,70,229,.3)' : '0 1px 2px rgba(47,28,102,.09)',
+        iconBg: on ? 'rgba(255,255,255,.2)' : (k === 'time' ? '#f2eefe' : '#eceefe'),
+        iconFg: on ? '#fff' : (k === 'time' ? '#5f3ac9' : '#3f4bc4'),
+        titleFg: on ? '#fff' : '#16131f',
+        subFg: on ? 'rgba(255,255,255,.82)' : '#756f88',
+        pick: () => this.set({ kind: k, cat: null, activity: null, activityText: '' })
+      };
+    });
+
+    const dayChips = ['Today', 'Yesterday', 'Earlier'].map(d => {
+      const c = this.chip(s.day === d);
+      return { label: d, bg: c.bg, fg: c.fg, border: c.border, pick: () => this.set({ day: d }) };
+    });
+
+    const catCards = pool.map(c => {
+      const on = s.cat === c.name;
+      return {
+        name: c.name, sub: c.sub, dot: c.color,
+        bg: on ? '#f2eefe' : '#fff',
+        border: on ? '#7856f5' : 'rgba(47,28,102,.1)',
+        fg: '#16131f', subFg: on ? '#5f3ac9' : '#756f88',
+        pick: () => this.set({ cat: c.name, activity: null, activityText: '' })
+      };
+    });
+
+    const acts = cObj ? cObj.acts : [];
+    const activityChips = acts.map(a => {
+      const c = this.chip(s.activity === a);
+      return { label: a, bg: c.bg, fg: c.fg, border: c.border, pick: () => this.set({ activity: a, typing: false, activityText: '' }) };
+    });
+
+    const dirTabs = ['out', 'in'].map(d => {
+      const on = s.dir === d;
+      return {
+        label: d === 'out' ? 'Money out' : 'Money in',
+        bg: on ? 'linear-gradient(115deg,#8b5cf6,#4f46e5)' : 'transparent',
+        fg: on ? '#fff' : '#575168',
+        pick: () => this.set({ dir: d })
+      };
+    });
+
+    const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'].map(k => ({
+      label: k, press: () => this.press(k)
+    }));
+
+    const startHour = Math.floor(s.startMin / 60);
+    const startMinute = s.startMin % 60;
+    const startChips = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22].map(h => {
+      const c = this.chip(startHour === h);
+      const hh = h % 12 === 0 ? 12 : h % 12;
+      return { label: hh + (h >= 12 ? 'p' : 'a'), bg: c.bg, fg: c.fg, border: c.border, pick: () => this.set({ startMin: h * 60 + startMinute }) };
+    });
+    const minuteChips = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map(m => {
+      const c = this.chip(startMinute === m);
+      return { label: ':' + String(m).padStart(2, '0'), bg: c.bg, fg: c.fg, border: c.border,
+        pick: () => this.set({ startMin: startHour * 60 + m }) };
+    });
+    const nudge = (d) => () => this.set({ startMin: Math.min(1439, Math.max(0, s.startMin + d)) });
+    const durChips = [15, 30, 45, 60, 90, 120, 180].map(m => {
+      const c = this.chip(s.durMin === m);
+      return { label: dur(m), bg: c.bg, fg: c.fg, border: c.border, pick: () => this.set({ durMin: m }) };
+    });
+
+    const reviewRows = isMoney
+      ? [{ k: 'What', v: this.label() || 'Untitled', jump: () => this.set({ step: 3 }) },
+         { k: 'Amount', v: (s.dir === 'in' ? '+' : '−') + peso(s.amount), jump: () => this.set({ step: 2 }) },
+         { k: 'Purpose', v: s.cat || '—', jump: () => this.set({ step: 3 }) },
+         { k: 'When', v: s.day, jump: () => this.set({ step: 1 }) }]
+      : [{ k: 'What', v: this.label() || 'Untitled', jump: () => this.set({ step: 2 }) },
+         { k: 'Category', v: s.cat || '—', jump: () => this.set({ step: 2 }) },
+         { k: 'Time', v: fmt(s.startMin) + ' – ' + fmt(s.startMin + s.durMin), jump: () => this.set({ step: 3 }) },
+         { k: 'When', v: s.day, jump: () => this.set({ step: 1 }) }];
+
+    const stepCopy = {
+      1: ['What are you logging?', 'Pick one — you can add the details next.'],
+      2: isMoney ? ['How much?', 'Tap the amount. No keyboard needed.'] : ['What were you doing?', 'Choose a category, then the activity.'],
+      3: isMoney ? ['What was it for?', 'Purpose keeps the weekly split honest.'] : ['When was that?', 'Start time and how long it ran.'],
+      4: ['Look right?', 'Tap anything to change it.'],
+      5: ['', '']
+    };
+    const titles = stepCopy[s.step] || ['', ''];
+    const can = this.canAdvance();
+
+    const totalOut = this.todayOut();
+
+    const gapList = this.gaps();
+    const gapTotal = gapList.reduce((a, g) => a + (g.b - g.a), 0);
+    const setupCopy = {
+      1: ['First, the basics', 'Two things and we are done with settings.'],
+      2: ['What do you want to watch?', 'Pick what Zimpan asks you about. Change it any time.'],
+      3: ['Two optional extras', 'Both can stay empty — nothing here is required.']
+    };
+    const st = setupCopy[s.setupStep] || ['', ''];
+    const setupCan = s.setupStep === 1 ? !!s.currency : s.setupStep === 2 ? s.tracks.length > 0 : true;
+
+    return {
+      isSignin: s.screen === 'signin', isHome: s.screen === 'home', isInsights: s.screen === 'insights',
+      isDetail: s.screen === 'detail', isFlow: isFlow,
+      isSetup: s.screen === 'setup', isReview: s.screen === 'review',
+
+      goSetup: () => this.set({ screen: 'setup', setupStep: 1 }),
+      setupLabel: 'Step ' + s.setupStep + ' of 3',
+      setupTitle: st[0], setupHint: st[1],
+      setupProgress: [1, 2, 3].map(i => ({ bg: i <= s.setupStep ? 'linear-gradient(90deg,#8b5cf6,#4f46e5)' : '#e0dce9' })),
+      setupBack: () => this.set(s.setupStep <= 1 ? { screen: 'signin' } : { setupStep: s.setupStep - 1 }),
+      setupNext: () => { if (!setupCan) return; this.set(s.setupStep >= 3 ? { screen: 'home', entries: [] } : { setupStep: s.setupStep + 1 }); },
+      setupNextLabel: s.setupStep >= 3 ? 'Start tracking' : 'Continue',
+      setupOpacity: setupCan ? 1 : 0.42,
+      setupStep1: s.screen === 'setup' && s.setupStep === 1,
+      setupStep2: s.screen === 'setup' && s.setupStep === 2,
+      setupStep3: s.screen === 'setup' && s.setupStep === 3,
+      setupSkippable: s.setupStep === 3,
+      nameTyping: s.nameTyping, nameClosed: !s.nameTyping, nameValue: s.name,
+      nameDisplay: s.name || 'Add your name',
+      openName: () => this.set({ nameTyping: true }),
+      setName: (e) => this.set({ name: e.target.value }),
+      currencyChips: [['AED', 'Dhs'], ['USD', '$'], ['PHP', '\u20b1'], ['EUR', '\u20ac'], ['SGD', 'S$'], ['HKD', 'HK$']].map(c => {
+        const k = this.chip(s.currency === c[0]);
+        return { label: c[1] + ' ' + c[0], bg: k.bg, fg: k.fg, border: k.border, pick: () => this.set({ currency: c[0] }) };
+      }),
+      trackCards: [
+        { n: 'Time', d: 'Hours by activity' }, { n: 'Money', d: 'In and out' },
+        { n: 'Steps', d: 'From your phone' }, { n: 'Meals', d: 'What you ate' }
+      ].map(t => {
+        const on = s.tracks.includes(t.n);
+        return { name: t.n, sub: t.d, bg: on ? '#f2eefe' : '#fff', border: on ? '#7856f5' : 'rgba(47,28,102,.1)',
+          fg: '#16131f', subFg: on ? '#5f3ac9' : '#756f88', mark: on ? '✓' : '',
+          markBg: on ? 'linear-gradient(115deg,#8b5cf6,#4f46e5)' : '#e8e6ef', markFg: on ? '#fff' : '#e8e6ef',
+          pick: () => this.toggle('tracks', t.n) };
+      }),
+      setupCatChips: CATS.map(c => ({ name: c.name, color: c.color }))
+        .concat(s.customCats.map(n => ({ name: n, color: '#5f3ac9' })))
+        .map(c => {
+          const on = s.setupCats.includes(c.name);
+          const k = this.chip(on);
+          return { label: c.name, bg: k.bg, fg: k.fg, border: k.border, dot: on ? '#fff' : c.color, pick: () => this.toggle('setupCats', c.name) };
+        }),
+      catTyping: s.catTyping, catClosed: !s.catTyping, catText: s.catText,
+      openCatInput: () => this.set({ catTyping: true }),
+      setCatText: (e) => this.set({ catText: e.target.value }),
+      addCat: () => {
+        const n = s.catText.trim();
+        if (!n) return this.set({ catTyping: false });
+        this.setState({ customCats: s.customCats.concat(n), setupCats: s.setupCats.concat(n), catText: '', catTyping: false });
+      },
+      weightValue: s.weight, setWeight: (e) => this.set({ weight: e.target.value.replace(/[^0-9.]/g, '') }),
+      sleepValue: s.sleep, setSleep: (e) => this.set({ sleep: e.target.value }),
+
+      goReview: () => this.set({ screen: 'review' }),
+      hasGaps: gapList.length > 0, noGaps: gapList.length === 0,
+      gapHeadline: dur(gapTotal) + ' unaccounted for',
+      gapCount: gapList.length + (gapList.length === 1 ? ' stretch' : ' stretches'),
+      gapCards: gapList.map(g => ({
+        range: fmt(g.a) + ' – ' + fmt(g.b),
+        len: dur(g.b - g.a),
+        width: Math.round(((g.b - g.a) / 240) * 100) + '%',
+        fill: () => this.setState({ screen: 'flow', kind: 'time', step: 2, cat: null, activity: null,
+          activityText: '', note: '', noteOpen: false, day: 'Today', startMin: g.a, durMin: g.b - g.a }),
+        skip: () => this.setState({ entries: this.state.entries.concat({
+          id: 'g' + g.a, kind: 'time', title: 'Unlogged', cat: 'Rest', startMin: g.a, durMin: g.b - g.a, note: 'Marked as untracked' }) })
+      })),
+
+      entriesEmpty: s.entries.length === 0,
+      curGlyph: CUR.trim(),
+
+      donateOpen: s.donateOpen && !s.donateThanks,
+      donateThanks: s.donateOpen && s.donateThanks,
+      openDonate: () => this.set({ donateOpen: true, donateThanks: false }),
+      closeDonate: () => this.set({ donateOpen: false, donateThanks: false }),
+      confirmDonate: () => this.set({ donateThanks: true }),
+      donateLabel: 'Give ' + peso(s.donateAmt),
+      donateChips: [20, 50, 100, 250].map(a => {
+        const k = this.chip(s.donateAmt === a);
+        return { label: peso(a), bg: k.bg, fg: k.fg, border: k.border, pick: () => this.set({ donateAmt: a }) };
+      }),
+      showTabs: s.screen === 'home' || s.screen === 'insights',
+      homeTabFg: s.screen === 'home' ? '#7450e4' : '#9995ab',
+      insightsTabFg: s.screen === 'insights' ? '#7450e4' : '#9995ab',
+
+      goHome: () => this.set({ screen: 'home' }),
+      goInsights: () => this.set({ screen: 'insights' }),
+      backHome: () => this.set({ screen: 'home' }),
+      startFlow: () => this.reset('flow'),
+      startTime: () => { this.reset('flow'); this.set({ kind: 'time', step: 2 }); },
+      startMoney: () => { this.reset('flow'); this.set({ kind: 'money', step: 2 }); },
+      deleteEntry: () => this.setState({ screen: 'home', entries: s.entries.filter(e => e.id !== (sel && sel.id)) }),
+
+      hoursLabel: dur(this.todayTime()),
+      outLabel: peso(totalOut),
+      gapLabel: dur(1440 - this.todayTime()) + ' unlogged',
+      entryCountLabel: s.entries.length + ' entries',
+      dayBars: dayBars,
+      entries: entries,
+
+      detailTag: sel ? (sel.kind === 'time' ? 'Time · ' + sel.cat : 'Money · ' + sel.cat) : '',
+      detailTagBg: sel && sel.kind === 'money' ? '#eceefe' : '#f2eefe',
+      detailTagFg: sel && sel.kind === 'money' ? '#2f3893' : '#472b97',
+      detailTitle: sel ? sel.title : '',
+      detailValue: sel ? (sel.kind === 'time' ? dur(sel.durMin) : (sel.dir === 'in' ? '+' : '−') + peso(sel.amount)) : '',
+      detailValueColor: sel && sel.kind === 'money' && sel.dir === 'in' ? '#1c8a63' : '#16131f',
+      detailRows: detailRows,
+
+      showTimeInsights: () => this.set({ insightTab: 'time' }),
+      showMoneyInsights: () => this.set({ insightTab: 'money' }),
+      timeTabBg: timeInsights ? 'linear-gradient(115deg,#8b5cf6,#4f46e5)' : 'transparent',
+      timeTabFg: timeInsights ? '#fff' : '#575168',
+      moneyTabBg: timeInsights ? 'transparent' : 'linear-gradient(115deg,#8b5cf6,#4f46e5)',
+      moneyTabFg: timeInsights ? '#575168' : '#fff',
+      insightKicker: timeInsights ? 'Hours logged per day' : 'Spent per day',
+      insightTotal: timeInsights ? '44.7h' : peso(991),
+      weekBars: weekBars, splitRows: splitRows,
+      noticeText: timeInsights
+        ? 'Work took 48% of your logged week, and every one of your four gym sessions started before 11am. Tuesdays are your longest days.'
+        : 'Food is 44% of your spending and Saturday is twice any other day. Your freelance income covered it twice over.',
+
+      stepKey: 'k' + s.step + (s.kind || ''),
+      stepLabel: s.step === 5 ? 'Saved' : 'Step ' + s.step + ' of ' + this.maxStep(),
+      stepTitle: s.step === 5 ? '' : titles[0],
+      stepHint: s.step === 5 ? '' : titles[1],
+      progress: [1, 2, 3, 4].map(i => ({ bg: i <= s.step ? 'linear-gradient(90deg,#8b5cf6,#4f46e5)' : '#e0dce9' })),
+      backGlyph: s.step === 1 || s.step === 5 ? '' : '←',
+      flowBack: () => this.back(),
+      closeFlow: () => this.reset('home'),
+      flowNext: () => this.next(),
+      flowSkip: () => this.set({ step: s.step + 1 }),
+      showSkip: s.step === 4 && !s.noteOpen,
+      nextLabel: s.step === 5 ? 'Back to today' : s.step === 4 ? 'Save entry' : 'Continue',
+      nextDisabled: !can && s.step !== 5,
+      nextOpacity: can || s.step === 5 ? 1 : 0.42,
+
+      showKind: isFlow && s.step === 1,
+      showCategory: isFlow && ((s.step === 2 && !isMoney) || (s.step === 3 && isMoney)),
+      showAmount: isFlow && s.step === 2 && isMoney,
+      showWhen: isFlow && s.step === 3 && !isMoney,
+      showReview: isFlow && s.step === 4,
+      showDone: isFlow && s.step === 5,
+
+      kindCards: kindCards, dayChips: dayChips, catCards: catCards, activityChips: activityChips,
+      suggestLabel: cObj ? cObj.name + ' — usual ones' : 'Pick a category first',
+      typing: s.typing, activityText: s.activityText,
+      openTyping: () => this.set({ typing: true }),
+      setActivityText: (e) => this.set({ activityText: e.target.value, activity: null }),
+
+      dirTabs: dirTabs, keys: keys,
+      amountDisplay: CUR + (s.amount || '0'),
+      amountColor: Number(s.amount) > 0 ? (s.dir === 'in' ? '#1c8a63' : '#16131f') : '#c3bfd0',
+      amountHint: s.dir === 'in' ? 'Coming in' : 'Going out',
+
+      rangeLabel: fmt(s.startMin) + ' – ' + fmt(s.startMin + s.durMin),
+      durLabel: dur(s.durMin),
+      trackLeft: Math.max(0, ((s.startMin - 360) / 1080) * 100) + '%',
+      trackWidth: Math.min(100, (s.durMin / 1080) * 100) + '%',
+      trackRef: (el) => { this._track = el; },
+      onTrackDown: (e) => { this._drag = true; this.dragTo(e.clientX); },
+      startChips: startChips, durChips: durChips, minuteChips: minuteChips,
+      minuteLabel: ':' + String(startMinute).padStart(2, '0'),
+      minusMinute: nudge(-1), plusMinute: nudge(1),
+      setNow: () => { const n = new Date(); this.set({ startMin: n.getHours() * 60 + n.getMinutes() }); },
+
+      timerRunning: !!s.timerStart, timerIdle: !s.timerStart,
+      timerLong: this.elapsedSec() > 4 * 3600,
+      whenWarning: s.durMin > 240
+        ? 'That is a long stretch. If the timer kept running after you stopped, trim it here.'
+        : (s.startMin + s.durMin > 1440 ? 'This crosses midnight — Zimpan will split it across the two days.' : ''),
+      whenHasWarning: s.durMin > 240 || s.startMin + s.durMin > 1440,
+      trimHalf: () => this.set({ durMin: Math.max(15, Math.round(s.durMin / 2 / 15) * 15) }),
+      timerLabel: (function (t) {
+        const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, sec = t % 60;
+        return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(sec).padStart(2, '0');
+      })(this.elapsedSec()),
+      timerSince: s.timerStart ? 'Tracking since ' + fmt(s.startMin) : '',
+      onStartTimer: () => this.startTimer(),
+      onStopTimer: () => this.stopTimer(),
+
+      reviewRows: reviewRows,
+      noteOpen: s.noteOpen, noteClosed: !s.noteOpen, noteText: s.note,
+      openNote: () => this.set({ noteOpen: true }),
+      setNote: (e) => this.set({ note: e.target.value }),
+
+      doneTitle: isMoney ? 'Money logged' : 'Time logged',
+      doneSub: isMoney
+        ? 'That is ' + peso(this.todayOut()) + ' out today. Zimpan folded it into your week.'
+        : 'You have logged ' + dur(this.todayTime()) + ' today. ' + dur(1440 - this.todayTime()) + ' still unaccounted for.'
+    };
+  }
+}
+</script>
+</body>
+</html>
