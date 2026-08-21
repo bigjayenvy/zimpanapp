@@ -55,10 +55,17 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .seg-opt { padding-inline: 15px; }
   /* Four options at full padding need 307px, and the insights column on a
      320px phone offers about 270. The labels stay whole and the padding gives
-     way — "Yesterday" abbreviated would be worse than a tighter pill. */
+     way — "Yesterday" abbreviated would be worse than a tighter pill.
+
+     With the three long windows there are seven, which no amount of padding
+     will fit, so the control scrolls inside itself and keeps its pill shape.
+     "3 Months" cut down to "3M" would save the row and lose the reader. */
   @media (max-width: 560px) {
     .seg-opt { padding-inline: 9px; font-size: 12px; }
   }
+  .seg { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+  .seg::-webkit-scrollbar { display: none; }
+  .seg-opt { flex: none; }
   input[type="time"]::-webkit-calendar-picker-indicator { opacity: .35; }
 
   /* ── the mobile logging flow ──

@@ -545,6 +545,21 @@ const storedRaw = load();
    brand new account on first sign-in. */
 const stored = storedRaw || Object.assign({ entries: [], money: [] }, seedTaxonomy());
 
+/* The three long windows: key, label, length. One table because both layouts
+   offer them, the deck offers them, and the stored preference is validated
+   against them — four lists of the same three windows are four chances for
+   them to disagree.
+
+   91, 182 and 365 rather than 3, 6 and 12 calendar months: every other window
+   here is a trailing count of days, and one that changed length depending on
+   which months it happened to cross could not be set against the one before
+   it. "3 Months" is what it is called; 91 days is what it means.
+
+   Declared above `state` rather than beside RANGE_DAYS because the state
+   literal reads it — a const referenced before its declaration throws, and a
+   throw at this depth leaves the whole module half-built. */
+const LONG_RANGES = [['quarter', '3 Months', 91], ['half', '6 Months', 182], ['year', '12 Months', 365]];
+
 const state = {
   app: 'time',
   range: CONFIG.defaultRange,
@@ -646,7 +661,8 @@ const state = {
 
   /* The report deck's own window, independent of the range the page is on:
      switching it must not move the donut or the insight sections. */
-  deckRange: ['today', 'yesterday', 'week', 'fortnight', 'month'].includes(stored.deckRange) ? stored.deckRange : 'week',
+  deckRange: ['today', 'yesterday', 'week', 'fortnight', 'month'].concat(LONG_RANGES.map((r) => r[0]))
+    .includes(stored.deckRange) ? stored.deckRange : 'week',
 
   /* The date whose step count is being edited, or nothing. */
   stepsOpen: null,
@@ -1391,7 +1407,8 @@ const purposeColor = (name) => {
    date, so the day you are looking at is always the last one in it. Keeping the
    lengths in one table is what lets a new range be added without hunting down
    the arithmetic in four different places. */
-const RANGE_DAYS = { day: 1, week: 7, fortnight: 14, month: 30 };
+const RANGE_DAYS = Object.assign({ day: 1, week: 7, fortnight: 14, month: 30 },
+  Object.fromEntries(LONG_RANGES.map(([key, , days]) => [key, days])));
 const rangeDays = () => RANGE_DAYS[state.range] || 1;
 
 // ISO dates sort lexically, so plain string comparison beats Date round-trips.
@@ -3768,9 +3785,14 @@ function fieldError(scope) {
     : '';
 }
 
+/* Seven options where there were four. Past a month the control is wider than
+   the column it sits in on a narrow screen, so it scrolls inside itself rather
+   than forcing the labels down to initials — the same answer the landing nav
+   and the phone's chip row already give to the same problem. */
 function segRange(name, labels) {
   const opt = (val, label) => `<label class="seg-opt"><input type="radio" name="${name}" data-act="range-${val}"${state.range === val ? ' checked' : ''}><span>${label}</span></label>`;
-  return `<div class="seg">${opt('day', labels[0])}${opt('week', labels[1])}${opt('fortnight', labels[2])}${opt('month', labels[3])}</div>`;
+  return `<div class="seg">${opt('day', labels[0])}${opt('week', labels[1])}${opt('fortnight', labels[2])}${opt('month', labels[3])}`
+    + `${LONG_RANGES.map(([val, label]) => opt(val, label)).join('')}</div>`;
 }
 
 /* The centre overlay covers the whole ring, so it stays click-through and only
@@ -5406,7 +5428,8 @@ const DECK_RANGES = [
   ['yesterday', 'Yesterday', 'day', 1],
   ['week', 'Week', 'week', 0],
   ['fortnight', '2 Weeks', 'fortnight', 0],
-  ['month', 'Month', 'month', 0]
+  ['month', 'Month', 'month', 0],
+  ...LONG_RANGES.map(([key, label]) => [key, label, key, 0])
 ];
 
 /* compute() reads the window off `state`, and the deck needs a different one
@@ -6108,6 +6131,9 @@ const ACTIONS = {
   'range-week': () => { state.range = 'week'; render(); },
   'range-fortnight': () => { state.range = 'fortnight'; render(); },
   'range-month': () => { state.range = 'month'; render(); },
+  'range-quarter': () => { state.range = 'quarter'; render(); },
+  'range-half': () => { state.range = 'half'; render(); },
+  'range-year': () => { state.range = 'year'; render(); },
 
   'prev-day': () => shiftDay(-1),
   'next-day': () => shiftDay(1),
@@ -6697,18 +6723,35 @@ const mRangeHeading = (key) => {
   const k = key || mRangeKey();
   if (k === 'today') return 'Today';
   if (k === 'yesterday') return 'Yesterday';
-  return { week: 'This week', fortnight: 'Last 2 weeks', month: 'This month' }[k] || 'This week';
+  return { week: 'This week', fortnight: 'Last 2 weeks', month: 'This month',
+    quarter: 'Last 3 months', half: 'Last 6 months', year: 'Last 12 months' }[k] || 'This week';
 };
 const mRangeKicker = (key) => {
   const dates = mRangeDates(key);
   if (dates.length === 1) return mKicker(dates[0]);
-  return `${dayLabel(dates[0])} — ${dayLabel(dates[dates.length - 1])}`;
+  const from = dates[0], to = dates[dates.length - 1];
+  /* A year's window runs from one August to the next, and "Aug 22 — Aug 21"
+     reads as a day short of nothing at all. Once the two ends fall in
+     different years, both of them say which. */
+  const label = from.slice(0, 4) === to.slice(0, 4)
+    ? dayLabel
+    : (d) => new Date(d + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  return `${label(from)} — ${label(to)}`;
 };
 
 // Every reading below takes the window as a list of dates, so one day and
 // thirty are the same code path rather than two that can drift.
-const mTimeRows = (dates) => state.entries.filter((e) => dates.indexOf(e.date) >= 0);
-const mMoneyRows = (dates) => state.money.filter((e) => dates.indexOf(e.date) >= 0);
+/* A Set rather than indexOf on the array. These are called once per day of
+   the window and once per bucket on top of that, so a linear scan of the dates
+   for every row was fine at 30 days and quadratic at 365: a year's window over
+   a couple of thousand entries came to nine figures of string comparisons per
+   render, which is a phone locking up rather than a chart appearing. */
+const mRowsIn = (list, dates) => {
+  const set = dates instanceof Set ? dates : new Set(dates);
+  return list.filter((e) => set.has(e.date));
+};
+const mTimeRows = (dates) => mRowsIn(state.entries, dates);
+const mMoneyRows = (dates) => mRowsIn(state.money, dates);
 
 /* One list, timed rows in clock order and the money after them — money has no
    position on a clock, and interleaving it by insertion time made the day read
@@ -6826,23 +6869,68 @@ const mInsightDates = () => mRangeDates(mInsightKey());
    in both is what produced "of your spending your logged month". */
 const mInsightPhrase = () => ({
   today: 'today', yesterday: 'yesterday', week: 'your logged week',
-  fortnight: 'your last two weeks', month: 'your logged month'
+  fortnight: 'your last two weeks', month: 'your logged month',
+  quarter: 'your last three months', half: 'your last six months', year: 'your logged year'
 }[mInsightKey()] || 'your logged week');
 const mInsightWhen = () => ({
   today: 'today', yesterday: 'yesterday', week: 'this week',
-  fortnight: 'over the last two weeks', month: 'this month'
+  fortnight: 'over the last two weeks', month: 'this month',
+  quarter: 'over the last three months', half: 'over the last six months', year: 'over the last year'
 }[mInsightKey()] || 'this week');
 
 /* The bars. Over several days that is one bar per day; over a single day a
    day-by-day chart would be one bar and six blanks, so it becomes one bar per
    category instead — the same question, asked at the only resolution the
    window can answer it. */
+/* Past a month a bar per day is a picket fence — 365 columns nobody can read
+   and no shape you could call a pattern. So the window is bucketed at the
+   grain the question is actually asked at: a bar per week over three months,
+   a bar per month over six or twelve. Under a month it stays a bar per day,
+   which is what "was Tuesday heavy" needs.
+
+   Weeks start on Monday, which is where the working week starts for most
+   people who would ask this of a tracker. */
+const mGrain = (n) => (n <= 31 ? 'day' : n <= 100 ? 'week' : 'month');
+
+const mMonday = (d) => {
+  const t = new Date(d + 'T00:00:00');
+  t.setDate(t.getDate() - ((t.getDay() + 6) % 7));
+  return iso(t);
+};
+
+/* Buckets of dates, each with the label its bar wears. A day gets its weekday
+   initial, a week the date it starts on, a month its short name — every one of
+   them short enough to sit under a 26px column. */
+function mBuckets(dates) {
+  const grain = mGrain(dates.length);
+  const at = (d) => new Date(d + 'T00:00:00');
+  if (grain === 'day') {
+    return dates.map((d) => ({ key: d, label: at(d).toLocaleDateString('en-GB', { weekday: 'narrow' }), dates: [d] }));
+  }
+  const out = [];
+  let cur = null;
+  dates.forEach((d) => {
+    const key = grain === 'month' ? d.slice(0, 7) : mMonday(d);
+    if (!cur || cur.key !== key) {
+      cur = {
+        key, dates: [],
+        label: grain === 'month'
+          ? at(key + '-01').toLocaleDateString('en-GB', { month: 'short' })
+          : String(at(key).getDate())
+      };
+      out.push(cur);
+    }
+    cur.dates.push(d);
+  });
+  return out;
+}
+
 function mRangeSeries(money) {
   const dates = mInsightDates();
   if (dates.length > 1) {
-    return dates.map((d) => ({
-      label: new Date(d + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'narrow' }),
-      v: money ? mSumCents(mMoneyRows([d]), 'out') / 100 : mLoggedMins([d]),
+    return mBuckets(dates).map((b) => ({
+      label: b.label,
+      v: money ? mSumCents(mMoneyRows(b.dates), 'out') / 100 : mLoggedMins(b.dates),
       color: null
     }));
   }
@@ -6896,7 +6984,13 @@ function mNotice(money) {
   const window = mInsightDates();
   const series = window.map((d) => ({ date: d, v: money ? mSumCents(mMoneyRows([d]), 'out') / 100 : mLoggedMins([d]) }));
   const busiest = series.slice().sort((a, b) => b.v - a.v)[0];
-  const busiestDay = new Date(busiest.date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long' });
+  /* Over a week or two the heaviest day is worth naming by its weekday: it is
+     a claim about Tuesdays. Over three months it is a claim about one date in
+     March that happens to be a Tuesday, and calling it "Tuesday" says
+     something the numbers do not — so past a month it gets its date. */
+  const busiestDay = window.length > 31
+    ? dayLabel(busiest.date)
+    : new Date(busiest.date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long' });
 
   if (money) {
     const dates = window;
@@ -7937,10 +8031,12 @@ function mInsights() {
   const series = mRangeSeries(money);
   const byCategory = !!(series[0] && series[0].color);
   const max = Math.max.apply(null, series.map((w) => w.v).concat([1]));
-  /* Twelve is about where a phone's card gives out: below it the columns can
-     divide the width between them, above it they cannot without the day
-     letters colliding. */
-  const wide = series.length > 12;
+  /* Where a phone's card gives out. It is not a column count but a width: a
+     row of weekday initials packs tighter than a row of month names, so the
+     test asks how much room these particular labels need rather than assuming
+     they are all one letter. Past the card's ~300px the row scrolls. */
+  const labelled = series.some((w) => String(w.label).length > 2);
+  const wide = series.length * (labelled ? 34 : 24) > 300;
   const split = mWeekSplit(money);
   const splitMax = split.length ? split[0].raw : 1;
   const total = money
@@ -8894,7 +8990,8 @@ function searchBody() {
 // What the window is called, so the scope can be stated rather than implied.
 function searchRangeLabel() {
   if (mobileOn()) return String((mRangeDef(mRangeKey()) || [])[1] || 'this window').toLowerCase();
-  const named = { day: 'this day', week: 'this week', fortnight: 'this fortnight', month: 'this month' };
+  const named = { day: 'this day', week: 'this week', fortnight: 'this fortnight', month: 'this month',
+    quarter: 'these 3 months', half: 'these 6 months', year: 'this year' };
   return named[state.range] || 'this window';
 }
 
