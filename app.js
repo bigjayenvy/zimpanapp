@@ -7374,7 +7374,10 @@ function mSignin() {
       </span>
     </div>
     <div>
-      <div style="font-family:var(--font-heading);font-weight:700;font-size:38px;line-height:1.05;letter-spacing:-.01em;color:#16131f;">Where did<br>it all go?</div>
+      <!-- No manual line break: the old title was two short lines and could be
+           broken by hand, this one is not, and a <br> in the middle of it would
+           split differently on every handset width. -->
+      <div style="font-family:var(--font-heading);font-weight:700;font-size:34px;line-height:1.1;letter-spacing:-.01em;color:#16131f;">Your Tracking Center for Everything</div>
       <p style="margin:14px 0 0;font-size:15.5px;line-height:1.5;color:#575168;max-width:33ch;">Log your day in seconds and watch the pattern appear. Zimpan turns what you actually do with your time and money into something you can read — and act on.</p>
     </div>
     <ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;">${checks}</ul>
@@ -7383,6 +7386,17 @@ function mSignin() {
         style="width:100%;min-height:52px;font-size:16px;box-shadow:0 6px 18px rgba(79,70,229,.34);">Create an account</button>
       <button class="btn btn-secondary" data-act="m-signin"
         style="width:100%;min-height:52px;font-size:16px;">Continue with Google</button>
+      <!-- The way back in for someone who already has an account. It opens the
+           same panel the Google button does — that panel is where both the
+           Google button and the email form live — but it is the wording people
+           look for, and looking for it under a button that says "Google" is
+           how a returning user decides the app has forgotten them. -->
+      <div style="text-align:center;font-size:13.5px;color:#756f88;margin-top:2px;">
+        Already have an account?
+        <button data-act="m-signin"
+          style="border:0;background:transparent;padding:4px 2px;font:inherit;font-weight:600;color:#5f3ac9;
+                 text-decoration:underline;text-underline-offset:3px;cursor:pointer;min-height:32px;">Log in</button>
+      </div>
     </div>
     <div style="font-size:12.5px;color:#756f88;line-height:1.5;">Free forever · no ads · your data stays yours</div>
   </div>
