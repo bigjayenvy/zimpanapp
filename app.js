@@ -607,7 +607,7 @@ const state = {
   timerCategory: stored.timerCategory || (stored.categories[0] || {}).name || 'Chores',
   reportOpen: false,
   // Session only: a search is something you are doing, not a preference.
-  searchQuery: '',
+  searchQuery: '', searchAll: false,
   donateOpen: false,
   resyncArmed: false,
 
@@ -3569,7 +3569,20 @@ const DONATE_SEEN_KEY = 'zimpan.donate.v1';
 const DONATE_AFTER_MS = 5 * 60 * 1000;
 const DONATE_TICK_MS = 15 * 1000;
 
-let openMs = 0;
+/* Time the app has been open, kept on disk rather than in a variable. On a
+   phone this counter almost never reached five minutes: iOS discards and
+   reloads a backgrounded tab, and every reload put it back to zero — so the
+   nudge needed five unbroken minutes in one page session, which browsing an
+   app in short visits never gives you. */
+const DONATE_MS_KEY = 'zimpan.donate.ms.v1';
+const readOpenMs = () => {
+  try {
+    const held = JSON.parse(localStorage.getItem(DONATE_MS_KEY) || '{}');
+    // Only today's tally counts; yesterday's patience is not banked.
+    return held && held.d === iso(new Date()) ? Number(held.ms) || 0 : 0;
+  } catch (err) { return 0; }
+};
+let openMs = readOpenMs();
 
 const donateSeenOn = () => { try { return localStorage.getItem(DONATE_SEEN_KEY) || ''; } catch (err) { return ''; } };
 const markDonateSeen = () => { try { localStorage.setItem(DONATE_SEEN_KEY, iso(new Date())); } catch (err) { /* private mode */ } };
@@ -3581,6 +3594,9 @@ function tickDonate() {
   if (document.visibilityState !== 'visible') return;
 
   openMs += DONATE_TICK_MS;
+  try {
+    localStorage.setItem(DONATE_MS_KEY, JSON.stringify({ d: iso(new Date()), ms: openMs }));
+  } catch (err) { /* private mode — the tally is a nicety, not a requirement */ }
   if (openMs < DONATE_AFTER_MS) return;
   // Recomputed rather than read from todayIso, which was fixed at load and
   // would be yesterday for anyone who left the app open past midnight.
@@ -5609,7 +5625,7 @@ function render() {
   // data-app re-points the accent custom properties; see the theme block in index.html.
   root.innerHTML = `
 <div id="zimpan-progress" class="topbar" style="display:none"><i></i></div>
-<div data-app="${state.app}" style="min-height: 100vh; background: var(--color-bg); color: var(--color-text); font-family: var(--font-body); padding-bottom: 48px;">
+<div data-app="${state.app}" style="min-height: 100vh; background: var(--color-bg); color: var(--color-text); font-family: var(--font-body); padding-bottom: ${isPhone() ? 'calc(96px + env(safe-area-inset-bottom, 0px))' : '48px'};">
   ${header(v)}
   ${stickyBar(v)}
   ${syncErrorBanner()}
@@ -8479,15 +8495,38 @@ function searchSuggest(query) {
   return out;
 }
 
-// Title, category and note all count: a note is where the detail that makes an
-// entry findable usually ended up.
+/* Title, category and note all count: a note is where the detail that makes an
+   entry findable usually ended up.
+
+   Scoped to the window on screen. Searching from Yesterday and being shown the
+   same activity from four other days is not an answer to the question that was
+   asked — the window is part of the question. What falls outside is counted,
+   not hidden, and one tap widens to everything. */
 function searchMatches(query) {
   const q = String(query || '').trim().toLowerCase();
-  if (!q) return [];
-  return searchRows()
+  if (!q) return { rows: [], beyond: 0 };
+  const hits = searchRows()
     .filter((r) => `${r.title} ${r.cat} ${r.note}`.toLowerCase().indexOf(q) >= 0)
-    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (b.start || 0) - (a.start || 0)))
-    .slice(0, SEARCH_RESULTS);
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (b.start || 0) - (a.start || 0)));
+
+  if (state.searchAll) return { rows: hits.slice(0, SEARCH_RESULTS), beyond: 0 };
+  const win = searchWindow();
+  const inside = hits.filter((r) => r.date >= win.from && r.date <= win.to);
+  return { rows: inside.slice(0, SEARCH_RESULTS), beyond: hits.length - inside.length };
+}
+
+/* The window the search sits inside, whichever layout is asking. The two keep
+   their ranges in different places — the phone on its own Home range, the
+   desktop on `range` plus the day it is parked on — so this is the one spot
+   that has to know about both. Bounds rather than a list of dates: a year is a
+   comparison against two strings instead of 365. */
+function searchWindow() {
+  if (mobileOn()) {
+    const days = mRangeDates();
+    return { from: days[0], to: days[days.length - 1] };
+  }
+  const days = RANGE_DAYS[state.range] || 1;
+  return { from: windowStart(state.selectedDate, days), to: state.selectedDate };
 }
 
 /* The suggestions and the results, which are the only parts that change per
@@ -8515,20 +8554,42 @@ function searchBody() {
         </button>`).join('')}
     </div>` : '';
 
-  if (!hits.length) {
+  /* What falls outside the window is counted, never silently dropped: a search
+     that finds nothing here but four elsewhere has to say so, or it reads as
+     though the entry is gone. */
+  const widen = hits.beyond > 0 ? `
+    <button data-act="search-all"
+      style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;margin-top:12px;padding:12px 14px;border-radius:14px;cursor:pointer;text-align:left;background:#efedf6;border:1px solid rgba(120,86,245,.22);">
+      <span style="font-size:13.5px;font-weight:600;color:#16131f;">${hits.beyond} more outside ${esc(searchRangeLabel())}</span>
+      <span style="font-size:12.5px;font-weight:600;color:#7450e4;white-space:nowrap;">Search all →</span>
+    </button>` : '';
+
+  if (!hits.rows.length) {
     return `${chips}
     <div style="padding:22px 4px;text-align:center;color:#756f88;font-size:14px;line-height:1.5;">
-      Nothing logged matches “${esc(q.trim())}”.
-    </div>`;
+      Nothing ${state.searchAll ? 'you have logged' : 'in ' + esc(searchRangeLabel())} matches “${esc(q.trim())}”.
+    </div>
+    ${widen}`;
   }
 
   return `${chips}
-  <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;margin-bottom:9px;">
-    ${hits.length}${hits.length >= SEARCH_RESULTS ? '+' : ''} ${hits.length === 1 ? 'entry' : 'entries'}
+  <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:9px;">
+    <span style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;">
+      ${hits.rows.length}${hits.rows.length >= SEARCH_RESULTS ? '+' : ''} ${hits.rows.length === 1 ? 'entry' : 'entries'}
+    </span>
+    <span style="font-size:11.5px;font-weight:600;color:${state.searchAll ? '#7450e4' : '#756f88'};">${state.searchAll ? 'everything' : 'in ' + esc(searchRangeLabel())}</span>
   </div>
   <div style="display:flex;flex-direction:column;gap:9px;">
-    ${hits.map((r) => mEntryRow(r, { showDate: true, act: 'search-result', hint: q })).join('')}
-  </div>`;
+    ${hits.rows.map((r) => mEntryRow(r, { showDate: true, act: 'search-result', hint: q })).join('')}
+  </div>
+  ${widen}`;
+}
+
+// What the window is called, so the scope can be stated rather than implied.
+function searchRangeLabel() {
+  if (mobileOn()) return String((mRangeDef(mRangeKey()) || [])[1] || 'this window').toLowerCase();
+  const named = { day: 'this day', week: 'this week', fortnight: 'this fortnight', month: 'this month' };
+  return named[state.range] || 'this window';
 }
 
 /* The field, sitting directly above the entries it searches rather than in
@@ -8557,7 +8618,8 @@ function paintSearch() {
 }
 
 const SEARCH_ACTIONS = {
-  'search-clear': () => { state.searchQuery = ''; render(); },
+  'search-clear': () => { state.searchQuery = ''; state.searchAll = false; render(); },
+  'search-all': () => { state.searchAll = true; paintSearch(); },
   'search-suggest': (el) => {
     state.searchQuery = el.dataset.term || '';
     const field = root.querySelector('[data-k="search-q"]');
@@ -8666,6 +8728,8 @@ root.addEventListener('input', (ev) => {
   if (!el.dataset || el.dataset.k !== 'search-q') return;
   const was = !!String(state.searchQuery || '').trim();
   state.searchQuery = el.value;
+  // Widening belongs to one search; a new query starts inside the window again.
+  state.searchAll = false;
   const now = !!String(state.searchQuery || '').trim();
   /* The section changes shape the moment a query starts or ends — the heading
      renames and the day's own list steps aside — and neither of those lives

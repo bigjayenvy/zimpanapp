@@ -1617,7 +1617,17 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 
   @media (max-width: 620px) {
     .deck-backdrop { padding: 0; }
-    .deck-shell { height: 100vh; width: 100%; gap: 7px; padding: 10px 10px 12px; }
+    /* 100vh on a phone is the viewport as it would be with the browser chrome
+       hidden, which is taller than what you can actually see — so the top of
+       the deck sat under the address bar. dvh is the height that is really
+       there, and the safe-area inset keeps the dots clear of the notch. */
+    .deck-shell {
+      height: 100vh;
+      height: 100dvh;
+      width: 100%; gap: 7px;
+      padding: max(10px, env(safe-area-inset-top, 0px)) 10px
+               max(12px, env(safe-area-inset-bottom, 0px));
+    }
     /* Five windows do not fit a phone on one line, and a switch that breaks
        three-and-two reads as a mistake. It scrolls instead — the same treatment
        the landing nav and the sticky bar's controls already use. */
