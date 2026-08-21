@@ -681,6 +681,11 @@ const state = {
   deckRange: ['today', 'yesterday', 'week', 'fortnight', 'month'].concat(LONG_RANGES.map((r) => r[0]))
     .includes(stored.deckRange) ? stored.deckRange : 'week',
 
+  /* Which category the day's entries are narrowed to, or '' for all. Deliberately
+     not saved: a filter restored on load would read as missing entries, and the
+     control that explains it is halfway down the page. */
+  logFilter: '',
+
   /* The date whose step count is being edited, or nothing. */
   stepsOpen: null,
   stepsDraft: '',
@@ -2962,6 +2967,7 @@ function pickerField(kind, label, names, selected, newLabel) {
   return `
           <div class="field pick-field" data-pick-field="${esc(kind)}">
             <label>${esc(label)}</label>
+            <div class="pick-anchor">
             <button type="button" class="input pick-btn" data-act="pick-open" data-pick="${esc(kind)}"
               aria-haspopup="listbox" aria-expanded="${open}">
               <span class="pick-current">${esc(withIcon(selected))}</span>
@@ -2986,6 +2992,7 @@ function pickerField(kind, label, names, selected, newLabel) {
               ${pickCreateRow(kind, newLabel)}
             </div>
             <div class="pick-shade" data-backdrop="pick-close"></div>` : ''}
+            </div>
           </div>`;
 }
 
@@ -4870,9 +4877,14 @@ function dayNav(v, countLabel) {
 const ROWS_COLLAPSED = 5;
 
 function timeTableCard(v) {
-  const visible = state.drawers.activities || v.dayList.length <= ROWS_COLLAPSED
-    ? v.dayList
-    : v.dayList.slice(0, ROWS_COLLAPSED);
+  /* The filter narrows the list before the drawer counts it, so "3 more" means
+     three more of what you are actually looking at. */
+  const shown = state.logFilter
+    ? v.dayList.filter((e) => e.category === state.logFilter)
+    : v.dayList;
+  const visible = state.drawers.activities || shown.length <= ROWS_COLLAPSED
+    ? shown
+    : shown.slice(0, ROWS_COLLAPSED);
   /* A card per entry, gathered under the category it belongs to and laid out
      two columns wide at every width. Grouping rather than following the clock:
      the list flows down one column and up the next, so a tab that labelled a
@@ -4917,13 +4929,29 @@ function timeTableCard(v) {
                 ${g.rows.map(card).join('')}
               </div>`).join('');
 
+  /* The heading counts what is on screen. Reporting the day's whole total over
+     a filtered list would be the one number on the card that does not match
+     the rows under it. Summed the same way the day is — through resolveSpans —
+     so a filtered total and the day total are the same kind of figure. */
+  const count = state.logFilter
+    ? (() => {
+      const m = effective(resolveSpans(shown));
+      return `${dur(shown.reduce((a, e) => a + m(e), 0))} in ${state.logFilter} · `
+        + `${shown.length} of ${v.dayList.length} ${v.dayList.length === 1 ? 'entry' : 'entries'}`;
+    })()
+    : `${v.dayTotalLabel} logged across ${v.dayList.length} entries`;
+
+  const empty = state.logFilter
+    ? `Nothing in ${esc(state.logFilter)} on this day.`
+    : 'Nothing logged yet — start the timer, or add a row above.';
+
   return `
       <div class="blueprint card-w-head">
-        ${dayNav(v, `${esc(v.dayTotalLabel)} logged across ${v.dayList.length} entries`)}
+        ${dayNav(v, count)}
         <div class="card-body">
           <div class="entry-list">${rows}</div>
-          ${v.dayList.length > ROWS_COLLAPSED ? drawerToggle('activities', v.dayList.length - ROWS_COLLAPSED, 'entries') : ''}
-          ${v.dayList.length === 0 ? '<div style="padding: 22px 0 24px; text-align: center; font-size: 13px; color: var(--color-neutral-600);">Nothing logged yet — start the timer, or add a row above.</div>' : ''}
+          ${shown.length > ROWS_COLLAPSED ? drawerToggle('activities', shown.length - ROWS_COLLAPSED, 'entries') : ''}
+          ${shown.length === 0 ? `<div style="padding: 22px 0 24px; text-align: center; font-size: 13px; color: var(--color-neutral-600);">${empty}</div>` : ''}
         </div>
       </div>`;
 }
@@ -4955,7 +4983,7 @@ function timeDesktop(v) {
       <div data-sec="entry">${entryModeBar()}</div>
       <div data-sec="entrycard">${state.entryMode === 'manual' ? addEntryCard(v) : timerCard(v)}</div>
       <div data-sec="log">
-        <div style="max-width:640px;margin:0 0 14px;">${searchField()}</div>
+        <div style="max-width:640px;margin:0 0 14px;">${searchField({ tools: true, list: v.dayList })}</div>
         <div id="search-body">${String(state.searchQuery || '').trim() ? searchBody() : ''}</div>
         ${String(state.searchQuery || '').trim() ? '' : timeTableCard(v)}
       </div>
@@ -6315,8 +6343,8 @@ function clearFocus() { state.focus = null; state.focusOpen = false; }
 const ACTIONS = {
   // Categories and purposes are separate vocabularies, so a focus never carries
   // across the two trackers.
-  'app-time': () => { state.app = 'time'; clearFocus(); render(); },
-  'app-money': () => { state.app = 'money'; clearFocus(); render(); },
+  'app-time': () => { state.app = 'time'; state.logFilter = ''; clearFocus(); render(); },
+  'app-money': () => { state.app = 'money'; state.logFilter = ''; clearFocus(); render(); },
 
   'range-day': () => { state.range = 'day'; render(); },
   'range-week': () => { state.range = 'week'; render(); },
@@ -6332,6 +6360,11 @@ const ACTIONS = {
     el.textContent = open ? 'Show less' : (el.dataset.more || 'Show all');
     el.setAttribute('aria-expanded', String(open));
   },
+
+  /* The filter survives a change of day on purpose — comparing one category
+     across days is the reason to set it — but not a change of tracker, where
+     the control that explains it is not on screen. */
+  'go-today': () => { state.selectedDate = todayIso; render(); },
 
   'range-quarter': () => { state.range = 'quarter'; render(); },
   'range-half': () => { state.range = 'half'; render(); },
@@ -6724,6 +6757,7 @@ const ACTIONS = {
 
 const CHANGES = {
   'entry-activity': (el) => updateEntry(el.dataset.id, { activity: el.value }),
+  'log-filter': (el) => { state.logFilter = el.value || ''; render(); },
   'entry-category': (el) => updateEntry(el.dataset.id, { category: el.value }),
   'entry-from': (el) => updateEntry(el.dataset.id, { from: parseHm(el.value) }),
   'entry-to': (el) => updateEntry(el.dataset.id, { to: parseHm(el.value) }),
@@ -7904,6 +7938,7 @@ function mFlowCategory() {
   const label = money ? 'purpose' : 'category';
   return `
 <div class="pick-field m-pick" data-pick-field="m-cat" style="margin-bottom:22px;">
+  <div class="pick-anchor">
   <button type="button" class="pick-btn" data-act="m-pick-open"
     aria-haspopup="listbox" aria-expanded="${open}"
     style="width:100%;min-height:50px;padding:0 14px;border-radius:16px;background:#fff;
@@ -7943,6 +7978,7 @@ function mFlowCategory() {
       : `<button type="button" class="pick-new" data-act="m-pick-new">+ New ${esc(label)}</button>`}
   </div>
   <div class="pick-shade" data-backdrop="pick-close"></div>` : ''}
+  </div>
 </div>
 ${mLabel(s.cat ? `${s.cat} — usual ones` : 'Pick a category first')}
 <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
@@ -9201,17 +9237,45 @@ function searchRangeLabel() {
    the header. Unfocused until tapped: it is on screen at all times now, and a
    field that grabbed the caret on every render would put a keyboard over the
    list on the way past. */
-function searchField() {
+/* The categories worth offering: the ones actually in front of you. A list of
+   every category ever named would mostly be options that empty the table, and
+   an option that shows nothing is indistinguishable from a bug. The one
+   exception is the filter currently set — it stays on the list even after a
+   move to a day it does not appear on, or the control would disagree with what
+   it is doing. */
+function logFilterNames(list) {
+  const seen = [];
+  list.forEach((e) => { if (e.category && seen.indexOf(e.category) < 0) seen.push(e.category); });
+  if (state.logFilter && seen.indexOf(state.logFilter) < 0) seen.push(state.logFilter);
+  return seen.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+function searchField(o) {
   const q = state.searchQuery || '';
+  const tools = o && o.tools;
+  const onToday = state.selectedDate === todayIso;
+  const names = tools ? logFilterNames(o.list || []) : [];
   return `
-<div style="position:relative;margin-bottom:12px;">
-  <input class="input" type="text" data-k="search-q" value="${esc(q)}"
-    placeholder="Search everything you have logged" autocomplete="off"
-    style="width:100%;min-height:46px;padding:10px 42px 10px 30px;font-size:15px;
-           background:transparent;border:0;border-bottom:1px solid rgba(47,28,102,.18);border-radius:0;box-shadow:none;">
-  <span style="position:absolute;left:4px;top:50%;transform:translateY(-50%);color:#9995ab;pointer-events:none;">${nodeIcon('search', 17)}</span>
-  ${q ? `<button data-act="search-clear" aria-label="Clear search"
-    style="position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;cursor:pointer;font-size:16px;color:#756f88;width:34px;height:34px;border-radius:50%;">✕</button>` : ''}
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+  <div style="position:relative;flex:1 1 auto;min-width:0;">
+    <input class="input" type="text" data-k="search-q" value="${esc(q)}"
+      placeholder="Search everything you have logged" autocomplete="off"
+      style="width:100%;min-height:46px;padding:10px 42px 10px 30px;font-size:15px;
+             background:transparent;border:0;border-bottom:1px solid rgba(47,28,102,.18);border-radius:0;box-shadow:none;">
+    <span style="position:absolute;left:4px;top:50%;transform:translateY(-50%);color:#9995ab;pointer-events:none;">${nodeIcon('search', 17)}</span>
+    ${q ? `<button data-act="search-clear" aria-label="Clear search"
+      style="position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;cursor:pointer;font-size:16px;color:#756f88;width:34px;height:34px;border-radius:50%;">✕</button>` : ''}
+  </div>
+  ${tools ? `
+  <select class="input" data-change="log-filter" aria-label="Filter the day by category"
+    style="flex:0 0 auto;width:auto;max-width:210px;min-height:40px;padding:6px 10px;font-size:13.5px;
+           ${state.logFilter ? 'border-color:var(--color-accent);color:var(--color-accent-800);font-weight:600;' : ''}">
+    <option value=""${state.logFilter ? '' : ' selected'}>All categories</option>
+    ${names.map((n) => `<option value="${esc(n)}"${n === state.logFilter ? ' selected' : ''}>${esc(n)}</option>`).join('')}
+  </select>
+  <button class="btn btn-secondary" data-act="go-today" aria-disabled="${onToday}"
+    title="${onToday ? 'Already on today' : 'Jump back to today'}"
+    style="flex:none;min-height:40px;padding-inline:16px;font-size:13.5px;${onToday ? 'opacity:.45;' : ''}">Today</button>` : ''}
 </div>`;
 }
 

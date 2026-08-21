@@ -462,7 +462,14 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      same way it always did. The panel is absolute so opening it moves nothing;
      a panel that pushed the row apart would shift the button out from under
      the finger that just tapped it. */
-  .pick-field { flex: 2 1 185px; min-width: 165px; position: relative; }
+  .pick-field { flex: 2 1 185px; min-width: 165px; }
+  /* The panel hangs off the BUTTON, not off the field. `flex: 2 1 185px` reads
+     as a width in the money form, which is a flex row — but the timer card
+     lays its fields out in a column, where the same basis becomes a height and
+     leaves the field 185px tall around a 36px button. Anchored to the field,
+     `top: 100%` then measured from the bottom of 130px of empty space, and the
+     list opened a long way clear of the control that opened it. */
+  .pick-anchor { position: relative; display: block; }
   .pick-btn {
     display: flex; align-items: center; gap: 8px; text-align: left;
     cursor: pointer; background: var(--color-surface);
@@ -471,6 +478,9 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .pick-caret { flex: none; font-size: 10px; color: var(--color-neutral-600); }
   .pick-pop {
     position: absolute; z-index: 40; top: calc(100% + 5px); left: 0; right: 0;
+    /* min-width, because the anchor is the button and a narrow button would
+       otherwise give a narrow list. */
+    min-width: 100%;
     display: flex; flex-direction: column; gap: 6px;
     padding: 8px; border-radius: var(--radius-md);
     background: var(--color-surface);
