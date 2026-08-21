@@ -121,6 +121,16 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
       var(--color-accent-300) 0 6px, var(--color-accent-200) 6px 12px);
   }
 
+  /* The search field is a line, not a box — but .input's focus ring would draw
+     the box back the moment it was tapped, so the underline takes the focus
+     instead and grows into the accent. */
+  input[data-k="search-q"]:focus-visible {
+    border-color: transparent transparent var(--color-accent) transparent !important;
+    box-shadow: 0 1px 0 0 var(--color-accent) !important;
+    outline: none;
+  }
+  input[data-k="search-q"]:hover { border-bottom-color: var(--color-accent) !important; }
+
   /* The scrolling bar chart. No visible scrollbar — it would sit across the
      day letters — and momentum scrolling so the drag feels like the rest of
      the phone. The fade on the right edge is what says there is more. */
@@ -158,6 +168,9 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      hidden and stayed on screen. Anything that sets display on something
      hideable has to say what hidden means for it. */
   .m-pick .pick-opt[hidden] { display: none; }
+  /* Same reasoning as the option itself: a flex row needs telling what hidden
+     means for it, or the UA rule loses to the display declaration. */
+  .pick-row[hidden] { display: none; }
   .m-pick .pick-opt.is-on { background: var(--color-accent-100); }
   .m-pick .pick-list { gap: 2px; }
   .m-pick .pick-btn { box-shadow: var(--shadow-sm); }
@@ -482,6 +495,32 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   /* Catches the tap that means "not this one". Behind the panel, over the page. */
   .pick-shade { position: fixed; inset: 0; z-index: 30; }
+  /* The naming row, in the popover rather than somewhere else on the page. */
+  /* A row is the name plus its delete. The delete stays quiet until the row is
+     reached for — a column of red crosses beside a list you are only trying to
+     choose from reads as a warning rather than a list. */
+  .pick-row { flex: none; display: flex; align-items: stretch; gap: 2px; }
+  .pick-row .pick-opt { flex: 1; min-width: 0; }
+  .pick-del {
+    flex: none; width: 28px; border: 0; background: transparent; cursor: pointer;
+    border-radius: 7px; font-size: 12px; line-height: 1;
+    color: color-mix(in srgb, var(--color-text) 30%, transparent);
+    opacity: 0; transition: opacity .12s ease;
+  }
+  .pick-row:hover .pick-del, .pick-del:focus-visible { opacity: 1; }
+  .pick-del:hover { background: color-mix(in srgb, #8a2f4a 12%, transparent); color: #8a2f4a; }
+  /* Nothing hovers on a touch screen, so there it is simply always there. */
+  @media (hover: none) {
+    .pick-del { opacity: .55; width: 34px; }
+  }
+  /* And unconditionally in the phone app, which is only ever touched — some
+     Android browsers claim hover capability, and a delete that never appears
+     is a feature that does not exist. */
+  .m-pick .pick-del { opacity: .55; width: 34px; }
+
+  .pick-create { flex: none; display: flex; gap: 6px; padding-top: 6px; border-top: 1px solid var(--color-divider); }
+  .pick-create .input { flex: 1; min-width: 0; min-height: 34px; font-size: 13.5px; }
+  .pick-create .btn { flex: none; min-height: 34px; padding-inline: 14px; font-size: 13px; }
 
   @media (max-width: 720px) {
     .pick-list { max-height: 38vh; }

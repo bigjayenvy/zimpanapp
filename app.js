@@ -597,6 +597,10 @@ const state = {
      has been typed into it. Session state rather than persisted: an open
      dropdown is not something to restore. */
   pickOpen: null, pickQuery: '',
+  // Which picker has its naming row open, and what is being typed into it.
+  pickNew: null, pickNewName: '',
+  // {kind, name} while the delete confirmation is up.
+  pickDelete: null,
 
   /* Persisted, and that is the whole trick: a stopwatch needs a start time, not
      a running process. Phones freeze and reload background tabs freely, so
@@ -2854,6 +2858,55 @@ function options(names, selected, extra) {
    The filtering happens in the DOM rather than through state, because a render
    per keystroke would rebuild the field the caret is sitting in. `data-pick`
    names which picker a node belongs to so one handler serves both. */
+/* ── deleting a name ──
+   A category and everything logged under it. Deletes are tombstoned and
+   synced, so this reaches every device the account is signed into and there is
+   no undo — which is why it counts what it is about to destroy and says the
+   number out loud before doing it. */
+function pickDeleteDialog() {
+  const t = state.pickDelete;
+  if (!t) return '';
+  const money = t.kind === 'purpose';
+  const rows = (money ? state.money : state.entries).filter((r) => (money ? r.purpose : r.category) === t.name);
+  const noun = money ? 'purpose' : 'category';
+  return `
+  <div class="dialog-backdrop" data-backdrop="pick-del-cancel" style="z-index:70;">
+    <div class="dialog" style="max-width:400px;">
+      <div class="dialog-title">Delete “${esc(t.name)}”?</div>
+      <div class="dialog-body">
+        ${rows.length
+          ? `<strong>This also deletes ${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}</strong> logged under it.
+             They go from every device you are signed in on, and they cannot be brought back.`
+          : `Nothing is logged under this ${noun}, so only the ${noun} itself goes.`}
+      </div>
+      <div class="dialog-actions">
+        <button class="btn btn-secondary" data-act="pick-del-cancel">Cancel</button>
+        <button class="btn" data-act="pick-del-confirm"
+          style="background:#8a2f4a;color:#fff;border-color:#8a2f4a;">${rows.length ? `Delete ${noun} and ${rows.length}` : `Delete ${noun}`}</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* Naming a new one without leaving the list you were searching. It used to
+   close the popover and open a panel elsewhere on the page, which meant
+   discovering the name was missing and then losing your place looking for
+   somewhere to add it.
+
+   What was typed into the search seeds the field: someone who typed "Cyclin"
+   and found nothing has already said what they want to call it. */
+function pickCreateRow(kind, newLabel) {
+  if (state.pickNew !== kind) {
+    return `<button type="button" class="pick-new" data-act="pick-new" data-pick="${esc(kind)}">${esc(newLabel)}</button>`;
+  }
+  return `
+    <div class="pick-create">
+      <input class="input" data-k="pick-new-name" data-sync="pickNewName" value="${esc(state.pickNewName)}"
+        placeholder="Name it" autocomplete="off" data-enter="pick-create" data-pick="${esc(kind)}">
+      <button type="button" class="btn btn-primary" data-act="pick-create" data-pick="${esc(kind)}">Add</button>
+    </div>`;
+}
+
 function pickerField(kind, label, names, selected, newLabel) {
   const open = state.pickOpen === kind;
   return `
@@ -2871,12 +2924,16 @@ function pickerField(kind, label, names, selected, newLabel) {
                 aria-label="Search ${esc(label.toLowerCase())}">
               <div class="pick-list" data-pick-list>
                 ${names.map((n) => `
-                <button type="button" class="pick-opt${n === selected ? ' is-on' : ''}" role="option"
-                  aria-selected="${n === selected}" data-act="pick-choose" data-pick="${esc(kind)}"
-                  data-name="${esc(n)}" data-find="${esc(n.toLowerCase())}">${esc(withIcon(n))}</button>`).join('')}
+                <span class="pick-row">
+                  <button type="button" class="pick-opt${n === selected ? ' is-on' : ''}" role="option"
+                    aria-selected="${n === selected}" data-act="pick-choose" data-pick="${esc(kind)}"
+                    data-name="${esc(n)}" data-find="${esc(n.toLowerCase())}">${esc(withIcon(n))}</button>
+                  <button type="button" class="pick-del" data-act="pick-del" data-pick="${esc(kind)}"
+                    data-name="${esc(n)}" aria-label="Delete ${esc(n)}" title="Delete ${esc(n)}">✕</button>
+                </span>`).join('')}
                 <div class="pick-empty" hidden>Nothing matches that.</div>
               </div>
-              <button type="button" class="pick-new" data-act="pick-new" data-pick="${esc(kind)}">${esc(newLabel)}</button>
+              ${pickCreateRow(kind, newLabel)}
             </div>
             <div class="pick-shade" data-backdrop="pick-close"></div>` : ''}
           </div>`;
@@ -4658,13 +4715,10 @@ function timerCard(v) {
         <div style="display: flex; flex-direction: column; gap: 8px; min-width: 0;">
           <input class="input" data-k="timer-activity" data-sync="timerActivity" placeholder="What are you doing right now?" value="${esc(state.timerActivity)}"${state.formError.timer ? ' aria-invalid="true"' : ''}>
           ${fieldError('timer')}
-          <div style="display: flex; flex-wrap: wrap; gap: 6px;">
-            ${timerChips().map((c) => `<button data-act="pick-timer-cat" data-name="${esc(c.name)}" style="${chipStyle(state.timerCategory === c.name, c.color)}">${esc(catIcon(c.name))} ${esc(c.name)}</button>`).join('')}
-            <button class="chip-add" data-act="add-cat-jump">+ Add a Category</button>
-          </div>
-          ${state.categories.length > CHIPS_COLLAPSED
-            ? drawerToggle('categories', state.categories.length - CHIPS_COLLAPSED, 'categories')
-            : ''}
+          <!-- A list rather than a wall of chips. An account that has grown its
+               own categories ran to two dozen here, which pushed the start
+               button off the card and made the drawer below it necessary. -->
+          ${pickerField('timer-cat', 'Category', pickCategories().map((c) => c.name), state.timerCategory, '+ New category')}
         </div>
         <button class="timer-btn" data-act="toggle-timer" style="${timerBtnStyle(!!state.timerStart)}">${v.timerBtnLabel}</button>
       </div>`;
@@ -5613,6 +5667,13 @@ function render() {
       state.focusField = null;
       if (want) want.focus();
     }
+    /* The picker's query lives outside the template, so any render that is not
+       about the picker — a sync landing, a timer ticking — would put the full
+       list back under a search box still reading "chor". The full layout has
+       always done this; the phone returned before reaching it, so a background
+       sync could wipe what you were typing mid-search. */
+    const search = root.querySelector('[data-pick-search]');
+    if (search) { search.value = state.pickQuery; filterPicker(search); }
     // The tree was just replaced, so the scroll-driven button has to be told.
     mPaintTop();
     mPaintBars();
@@ -5638,6 +5699,7 @@ function render() {
   ${pillarSheet(v)}
   ${stepsSheet()}
   ${state.reportOpen ? reportSheet() : ''}
+  ${pickDeleteDialog()}
   ${notePromptDialog()}
   ${donateSheet()}
   ${aiConsentDialog()}
@@ -5815,6 +5877,14 @@ function addCategoryIfNeeded(name) {
   if (!name || state.categories.some((c) => c.name === name)) return;
   state.categories = state.categories.concat([touch('categories', {
     name, color: PALETTE[state.categories.length % PALETTE.length], position: state.categories.length
+  })]);
+}
+// The same for the money side, which had no equivalent because purposes could
+// only ever be named from their own panel.
+function addPurposeIfNeeded(name) {
+  if (!name || state.purposes.some((p) => p.name === name)) return;
+  state.purposes = state.purposes.concat([touch('purposes', {
+    name, color: MONEY_PALETTE[state.purposes.length % MONEY_PALETTE.length], position: state.purposes.length
   })]);
 }
 
@@ -6304,21 +6374,79 @@ const ACTIONS = {
     if (state.pickOpen) { state.focusField = 'pick-search'; pickJustOpened = true; }
     render();
   },
-  'pick-close': () => { state.pickOpen = null; state.pickQuery = ''; render(); },
+  'pick-close': () => {
+    state.pickOpen = null; state.pickQuery = '';
+    state.pickNew = null; state.pickNewName = '';
+    if (state.m) { state.m.pickNew = false; state.m.pickNewName = ''; }
+    render();
+  },
   'pick-choose': (el) => {
     const name = el.dataset.name;
     if (el.dataset.pick === 'purpose') state.mForm = Object.assign({}, state.mForm, { purpose: name });
+    else if (el.dataset.pick === 'timer-cat') { state.timerCategory = name; save(); }
     else state.form = Object.assign({}, state.form, { category: name });
     state.pickOpen = null; state.pickQuery = '';
     render();
   },
-  /* Hands off to the existing create-a-name panel rather than growing a second
-     one inside the popover — there is already a place that names things. */
+  /* Opens the naming row inside the popover, seeded with whatever was typed
+     into the search — someone who searched for a name that is not there has
+     already told us what it should be called. */
   'pick-new': (el) => {
-    if (el.dataset.pick === 'purpose') { state.newPurposeOpen = true; state.focusField = 'new-purpose'; }
-    else { state.newCatOpen = true; state.focusField = 'new-cat'; }
-    state.pickOpen = null; state.pickQuery = '';
+    state.pickNew = el.dataset.pick;
+    state.pickNewName = state.pickQuery.trim();
+    state.focusField = 'pick-new-name';
     render();
+  },
+  'pick-del': (el) => {
+    state.pickDelete = { kind: el.dataset.pick, name: el.dataset.name };
+    render();
+  },
+  'pick-del-cancel': () => { state.pickDelete = null; render(); },
+  'pick-del-confirm': () => {
+    const t = state.pickDelete;
+    if (!t) return;
+    const money = t.kind === 'purpose';
+    const kind = money ? 'money' : 'entries';
+    // Every row under it goes, each tombstoned so the deletion travels rather
+    // than the rows coming back on the next pull.
+    (money ? state.money : state.entries)
+      .filter((r) => (money ? r.purpose : r.category) === t.name)
+      .forEach((r) => bury(kind, r.id));
+    if (money) state.money = state.money.filter((r) => r.purpose !== t.name);
+    else state.entries = state.entries.filter((r) => r.category !== t.name);
+
+    const vocab = money ? 'purposes' : 'categories';
+    state[vocab] = state[vocab].filter((c) => c.name !== t.name);
+    bury(vocab, t.name);
+
+    // Anything still pointing at the name it just lost.
+    if (state.timerCategory === t.name) state.timerCategory = (state.categories[0] || {}).name || '';
+    if (state.form.category === t.name) state.form = Object.assign({}, state.form, { category: state.timerCategory });
+    if (state.mForm.purpose === t.name) state.mForm = Object.assign({}, state.mForm, { purpose: (state.purposes[0] || {}).name || '' });
+    if (state.m && state.m.cat === t.name) state.m.cat = null;
+
+    state.pickDelete = null;
+    state.pickOpen = null; state.pickQuery = '';
+    save(); queueSync(0); render();
+    flash(`Deleted · ${t.name}`);
+  },
+  'pick-create': (el) => {
+    const kind = el.dataset.pick || state.pickNew;
+    const name = String(state.pickNewName || '').trim().slice(0, 60);
+    if (!name) { state.pickNew = null; state.pickNewName = ''; render(); return; }
+    if (kind === 'purpose') {
+      addPurposeIfNeeded(name);
+      state.mForm = Object.assign({}, state.mForm, { purpose: name });
+    } else if (kind === 'timer-cat') {
+      addCategoryIfNeeded(name);
+      state.timerCategory = name;
+    } else {
+      addCategoryIfNeeded(name);
+      state.form = Object.assign({}, state.form, { category: name });
+    }
+    state.pickNew = null; state.pickNewName = '';
+    state.pickOpen = null; state.pickQuery = '';
+    save(); queueSync(0); render();
   }
 };
 
@@ -6740,6 +6868,7 @@ state.m = {
   range: 'today', reviewDay: '',
   insightTab: 'time', insightRange: 'week', accountOpen: false,
   stepsOpen: false, stepsDraft: '', weightOpen: false, weightDraft: '',
+  pickNew: false, pickNewName: '',
   donateOpen: false, donateAmt: 50, donateThanks: false
 };
 
@@ -7302,6 +7431,13 @@ function mCalendar() {
 </div>`;
 }
 
+/* The when-chips, shared by the kind step and money's amount step: a payment
+   is dated as often as it is counted, and having to walk back a step to say so
+   is what makes people give up and leave it on today. */
+const mDayChip = (day, label) => `
+  <button data-act="m-day" data-day="${esc(day)}" aria-pressed="${state.m.day === day}"
+    style="padding:9px 16px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;${mChip(state.m.day === day)}">${esc(label)}</button>`;
+
 function mFlowKind() {
   const s = state.m;
   const card = (kind, icon, title, sub, tileBg, tileFg) => {
@@ -7316,9 +7452,7 @@ function mFlowKind() {
       </span>
     </button>`;
   };
-  const chip = (day, label) => `
-    <button data-act="m-day" data-day="${day}" aria-pressed="${s.day === day}"
-      style="padding:9px 16px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;${mChip(s.day === day)}">${esc(label)}</button>`;
+  const chip = mDayChip;
   return `
 <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:24px;">
   ${card('time', '◷', 'Time', 'Something you did', '#f2eefe', '#5f3ac9')}
@@ -7371,14 +7505,26 @@ function mFlowCategory() {
       aria-label="Search ${esc(label)}" style="min-height:42px;font-size:15px;">
     <div class="pick-list" data-pick-list style="max-height:46vh;">
       ${rows.map((c) => `
-        <button type="button" class="pick-opt${c.name === s.cat ? ' is-on' : ''}" role="option"
-          aria-selected="${c.name === s.cat}" data-act="m-pick-choose"
-          data-name="${esc(c.name)}" data-find="${esc(c.name.toLowerCase())}">
-          <span style="width:9px;height:9px;flex:none;border-radius:50%;background:${esc(mColor(c.name, money))};"></span>
-          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;">${esc(c.name)}</span>
-        </button>`).join('')}
+        <span class="pick-row">
+          <button type="button" class="pick-opt${c.name === s.cat ? ' is-on' : ''}" role="option"
+            aria-selected="${c.name === s.cat}" data-act="m-pick-choose"
+            data-name="${esc(c.name)}" data-find="${esc(c.name.toLowerCase())}">
+            <span style="width:9px;height:9px;flex:none;border-radius:50%;background:${esc(mColor(c.name, money))};"></span>
+            <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;">${esc(c.name)}</span>
+          </button>
+          <button type="button" class="pick-del" data-act="pick-del" data-pick="${money ? 'purpose' : 'category'}"
+            data-name="${esc(c.name)}" aria-label="Delete ${esc(c.name)}">✕</button>
+        </span>`).join('')}
       <div class="pick-empty" hidden style="padding:12px 10px;font-size:14px;color:#756f88;">Nothing matches that.</div>
     </div>
+    ${state.m.pickNew
+      ? `<div class="pick-create">
+          <input class="input" data-k="m-pick-new" data-sync="m.pickNewName" value="${esc(state.m.pickNewName)}"
+            placeholder="Name it" autocomplete="off" data-enter="m-pick-create"
+            style="min-height:42px;font-size:15px;">
+          <button class="btn btn-primary" data-act="m-pick-create" style="min-height:42px;padding-inline:16px;font-size:14px;">Add</button>
+        </div>`
+      : `<button type="button" class="pick-new" data-act="m-pick-new">+ New ${esc(label)}</button>`}
   </div>
   <div class="pick-shade" data-backdrop="pick-close"></div>` : ''}
 </div>
@@ -7415,11 +7561,17 @@ function mFlowAmount() {
   <div style="font-family:var(--font-heading);font-weight:700;font-size:52px;line-height:1;letter-spacing:-.01em;color:${has ? (s.dir === 'in' ? '#1c8a63' : '#16131f') : '#c3bfd0'};">${esc(currency().symbol + (s.amount || '0'))}</div>
   <div style="font-size:12.5px;color:#756f88;margin-top:6px;">${s.dir === 'in' ? 'Coming in' : 'Going out'}</div>
 </div>
-<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:9px;">
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:18px;">
   ${keys.map((k) => `
     <button class="m-key" data-act="m-key" data-key="${k === '.' ? 'dot' : k === '⌫' ? 'del' : k}"
       style="min-height:56px;border-radius:16px;cursor:pointer;font-family:var(--font-heading);font-weight:700;font-size:22px;color:#16131f;background:#fff;border:${M_HAIR};box-shadow:${M_SHADOW_SM};">${esc(k)}</button>`).join('')}
-</div>`;
+</div>
+${mLabel('When')}
+<div style="display:flex;flex-wrap:wrap;gap:8px;">
+  ${mDayChip('today', 'Today')}${mDayChip('yesterday', 'Yesterday')}
+  ${mDayChip('earlier', s.day === 'earlier' ? dayLabel(mDraftIso()) : 'Pick a date')}
+</div>
+${s.day === 'earlier' ? mCalendar() : ''}`;
 }
 
 /* Time's step 3. The drag track is the centrepiece and everything else on the
@@ -7831,6 +7983,7 @@ function mobileApp() {
   ${s.accountOpen ? mAccountSheet() : ''}
   ${s.donateOpen ? mDonateSheet() : ''}
   ${state.reportOpen ? reportSheet() : ''}
+  ${pickDeleteDialog()}
 </div>`;
 }
 
@@ -8236,7 +8389,25 @@ const M_ACTIONS = {
   'm-pick-open': () => {
     state.pickOpen = state.pickOpen === 'm-cat' ? null : 'm-cat';
     state.pickQuery = '';
+    state.m.pickNew = false;
+    state.m.pickNewName = '';
     render();
+  },
+  'm-pick-new': () => {
+    state.focusField = 'm-pick-new';
+    mSet({ pickNew: true, pickNewName: state.pickQuery.trim() });
+  },
+  'm-pick-create': () => {
+    const name = String(state.m.pickNewName || '').trim().slice(0, 60);
+    if (!name) { mSet({ pickNew: false, pickNewName: '' }); return; }
+    if (mIsMoney()) addPurposeIfNeeded(name); else addCategoryIfNeeded(name);
+    Object.assign(state.m, {
+      cat: name, activity: null, activityText: '', typing: false,
+      pickNew: false, pickNewName: ''
+    });
+    state.pickOpen = null;
+    state.pickQuery = '';
+    save(); queueSync(0); render();
   },
   'm-pick-choose': (el) => {
     state.pickOpen = null;
@@ -8602,8 +8773,9 @@ function searchField() {
 <div style="position:relative;margin-bottom:12px;">
   <input class="input" type="text" data-k="search-q" value="${esc(q)}"
     placeholder="Search everything you have logged" autocomplete="off"
-    style="width:100%;min-height:46px;padding:10px 42px 10px 38px;font-size:15px;border-radius:14px;">
-  <span aria-hidden="true" style="position:absolute;left:13px;top:50%;transform:translateY(-50%);font-size:15px;color:#9995ab;pointer-events:none;">⌕</span>
+    style="width:100%;min-height:46px;padding:10px 42px 10px 30px;font-size:15px;
+           background:transparent;border:0;border-bottom:1px solid rgba(47,28,102,.18);border-radius:0;box-shadow:none;">
+  <span aria-hidden="true" style="position:absolute;left:4px;top:50%;transform:translateY(-50%);font-size:15px;color:#9995ab;pointer-events:none;">⌕</span>
   ${q ? `<button data-act="search-clear" aria-label="Clear search"
     style="position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;cursor:pointer;font-size:16px;color:#756f88;width:34px;height:34px;border-radius:50%;">✕</button>` : ''}
 </div>`;
@@ -8709,7 +8881,9 @@ function filterPicker(el) {
   let hits = 0;
   list.querySelectorAll('.pick-opt').forEach((opt) => {
     const match = !q || opt.dataset.find.includes(q);
-    opt.hidden = !match;
+    /* Hide the whole row, not just the name: the delete beside it belongs to
+       the option and would otherwise be left behind on its own. */
+    (opt.closest('.pick-row') || opt).hidden = !match;
     if (match) hits++;
   });
   const empty = list.querySelector('.pick-empty');
@@ -8787,13 +8961,19 @@ document.addEventListener('keydown', (ev) => {
       ev.preventDefault();
       // Dispatch the row's own action rather than the desktop's by name —
       // there are two pickers now, and they commit to different places.
-      const hit = el.parentElement.querySelector('.pick-opt:not([hidden])');
+      /* The filter hides the row now, not the option inside it, so asking for
+         a visible option would happily return the first one in a hidden row —
+         which is how Enter came to pick whatever sat at the top of the list
+         rather than what had been searched for. */
+      const hit = el.parentElement.querySelector('.pick-row:not([hidden]) .pick-opt')
+        || el.parentElement.querySelector('.pick-opt:not([hidden])');
       if (hit) { const pick = ACTIONS[hit.dataset.act]; if (pick) pick(hit); }
       return;
     }
     if (ev.key === 'Escape') { ev.preventDefault(); state.pickOpen = null; state.pickQuery = ''; render(); return; }
   }
   // Topmost first: the follow-up dialog sits above the report sheet.
+  if (ev.key === 'Escape' && state.pickDelete) { ACTIONS['pick-del-cancel'](); return; }
   if (ev.key === 'Escape' && String(state.searchQuery || '').trim()) { ACTIONS['search-clear'](); return; }
   if (ev.key === 'Escape' && state.notePrompt) { closeFollowUp(false); return; }
   if (ev.key === 'Escape' && state.donateOpen) { state.donateOpen = false; render(); return; }
