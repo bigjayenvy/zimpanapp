@@ -7436,6 +7436,11 @@ function mFlowWhen() {
   const durs = [15, 30, 45, 60, 90, 120, 180, 240, 360, 480];
   const left = Math.max(0, Math.min(100, (s.startMin / 1440) * 100));
   const width = Math.max(0, Math.min(100 - left, (s.durMin / 1440) * 100));
+  /* Lengths under an hour sit off the bottom of the duration rail, so the
+     handle parks at its left edge rather than escaping the track. The chips
+     below still say which of them is selected. */
+  const durLeft = Math.max(0, Math.min(100,
+    ((s.durMin - M_DUR_MIN) / (M_DUR_MAX - M_DUR_MIN)) * 100));
   const smallChip = (act, data, label, on) => `
     <button data-act="${act}" ${data} aria-pressed="${on}"
       style="min-height:40px;padding:0 4px;border-radius:12px;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;${mChip(on)}">${esc(label)}</button>`;
@@ -7452,7 +7457,7 @@ ${warning ? `
     <span id="m-range" style="font-family:var(--font-heading);font-weight:700;font-size:26px;color:#16131f;">${esc(mRange(s.startMin, s.durMin))}</span>
     <span id="m-durlabel" style="font-size:13px;color:#7450e4;font-weight:600;">${esc(mDur(s.durMin))}</span>
   </div>
-  <div class="m-track" data-m-track>
+  <div class="m-track" data-m-track="start">
     <div class="m-rail"></div>
     <div class="m-fill" style="left:${left}%;width:${width}%;"></div>
     <div class="m-handle" style="left:${left}%;"></div>
@@ -7484,6 +7489,22 @@ ${mLabel('For how long', `
     <button data-act="m-dur-step" data-d="5" aria-label="Five minutes longer"
       style="width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:17px;line-height:1;color:#5f3ac9;background:#fff;border:1px solid rgba(120,86,245,.4);">+</button>
   </span>`)}
+<div class="card" style="border-radius:20px;padding:14px 18px 16px;box-shadow:${M_SHADOW_SM};gap:0;margin-bottom:14px;">
+  <div class="m-track" data-m-track="dur" style="margin-top:4px;">
+    <div class="m-rail"></div>
+    <div class="m-fill" style="left:0;width:${durLeft}%;"></div>
+    <div class="m-handle" style="left:${durLeft}%;"></div>
+  </div>
+  <div style="position:relative;height:14px;margin-top:5px;font-size:10.5px;color:#9995ab;">
+    ${[60, 180, 360, 540, 720].map((v) => {
+      const at = ((v - M_DUR_MIN) / (M_DUR_MAX - M_DUR_MIN)) * 100;
+      // Placed at the value's true position rather than spread evenly: the
+      // marks have to line up with the rail they are labelling.
+      const shift = at === 0 ? '0' : at === 100 ? '-100%' : '-50%';
+      return `<span style="position:absolute;left:${at}%;transform:translateX(${shift});">${esc(mDur(v))}</span>`;
+    }).join('')}
+  </div>
+</div>
 <div style="display:flex;flex-wrap:wrap;gap:8px;">
   ${durs.map((m) => `
     <button data-act="m-dur" data-m="${m}" aria-pressed="${s.durMin === m}"
@@ -7981,18 +8002,36 @@ function mFinishSetup() {
 let mDrag = null;
 let mDragFrame = 0;
 
+/* How long a run is, dragged rather than picked off a list. One hour to
+   twelve: below an hour the chips are quicker than aiming at a rail, and
+   above twelve you are describing a day rather than a session. */
+const M_DUR_MIN = 60;
+const M_DUR_MAX = 720;
+
 function mDragTo(x) {
   if (!mDrag || !mDrag.width) return;
   const pct = Math.min(1, Math.max(0, (x - mDrag.left) / mDrag.width));
-  // 6am to midnight across the rail, at the resolution of a single minute.
-  const at = Math.round(pct * 1440);
-  const next = Math.max(0, Math.min(1439, at));
-  if (next === state.m.startMin) return;
-  state.m.startMin = next;
+
+  if (mDrag.kind === 'dur') {
+    /* Five-minute steps. A twelve-hour span across a phone's width is about
+       two minutes a pixel, and a length that twitches by single minutes under
+       the thumb reads as broken rather than precise — the stepper beside the
+       rail is what single minutes are for. */
+    const at = Math.round((M_DUR_MIN + pct * (M_DUR_MAX - M_DUR_MIN)) / 5) * 5;
+    const next = Math.max(M_DUR_MIN, Math.min(M_DUR_MAX, at));
+    if (next === state.m.durMin) return;
+    state.m.durMin = next;
+  } else {
+    // Midnight to midnight across the rail, at the resolution of a minute.
+    const next = Math.max(0, Math.min(1439, Math.round(pct * 1440)));
+    if (next === state.m.startMin) return;
+    state.m.startMin = next;
+  }
+
   /* Only the step's own body is redrawn. A full render would replace the shell
      and replay the step animation on every frame of the drag — and every
      control on this step is inside the body anyway, so the chips and the
-     minute readout still follow the handle. */
+     readouts still follow the handle. */
   const body = document.getElementById('m-step-body');
   if (body) body.innerHTML = mFlowWhen();
 }
@@ -8002,8 +8041,8 @@ function mDragWire() {
     const track = ev.target.closest('[data-m-track]');
     if (!track) return;
     const r = track.getBoundingClientRect();
-    mDrag = { left: r.left, width: r.width };
-    // Tapping the rail jumps the start time there and starts the drag from it.
+    mDrag = { left: r.left, width: r.width, kind: track.dataset.mTrack || 'start' };
+    // Tapping the rail jumps the value there and starts the drag from it.
     mDragTo(ev.clientX);
   });
   window.addEventListener('pointermove', (ev) => {
