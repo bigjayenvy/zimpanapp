@@ -5599,6 +5599,7 @@ function render() {
     }
     // The tree was just replaced, so the scroll-driven button has to be told.
     mPaintTop();
+    mPaintBars();
     return;
   }
 
@@ -7648,6 +7649,10 @@ function mInsights() {
   const series = mRangeSeries(money);
   const byCategory = !!(series[0] && series[0].color);
   const max = Math.max.apply(null, series.map((w) => w.v).concat([1]));
+  /* Twelve is about where a phone's card gives out: below it the columns can
+     divide the width between them, above it they cannot without the day
+     letters colliding. */
+  const wide = series.length > 12;
   const split = mWeekSplit(money);
   const splitMax = split.length ? split[0].raw : 1;
   const total = money
@@ -7676,13 +7681,19 @@ function mInsights() {
       <span style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;">${byCategory ? (money ? 'Spent by purpose' : 'Hours by category') : (money ? 'Spent per day' : 'Hours logged per day')}</span>
       <span style="font-family:var(--font-heading);font-weight:700;font-size:22px;color:#16131f;">${esc(total)}</span>
     </div>
-    <div style="display:flex;align-items:flex-end;gap:8px;height:118px;">
+    <!-- A week's worth of columns divides the card up happily; a month's does
+         not, and the day letters under them will not shrink past their own
+         width, so the row simply ran off the right of the screen. Past a dozen
+         columns they take a fixed width and the row scrolls inside the card
+         instead — the card stays put, and the page never scrolls sideways. -->
+    <div class="m-bars${wide ? ' is-wide' : ''}" style="display:flex;align-items:flex-end;gap:${wide ? 6 : 8}px;height:118px;${wide ? 'overflow-x:auto;overflow-y:hidden;' : ''}">
       ${series.map((w, i) => `
-        <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:7px;justify-content:flex-end;height:100%;">
+        <div style="${wide ? 'flex:0 0 22px;' : 'flex:1;'}display:flex;flex-direction:column;align-items:center;gap:7px;justify-content:flex-end;height:100%;">
           <div style="width:100%;border-radius:8px 8px 4px 4px;min-height:5px;height:${Math.round((w.v / max) * 100)}%;background:${w.color ? esc(w.color) : i === series.length - 1 ? 'linear-gradient(180deg,#8b5cf6,#4f46e5)' : '#e4dcfd'};"></div>
           <span style="font-size:10.5px;color:#9995ab;font-weight:500;">${esc(w.label)}</span>
         </div>`).join('')}
     </div>
+    ${wide ? `<div style="font-size:11px;color:#9995ab;margin-top:8px;">Scroll for the rest of the ${series.length} days.</div>` : ''}
   </div>
 
   ${split.length ? `
@@ -9140,6 +9151,20 @@ mDragWire();
 /* The back-to-top button appears past a screen and a half of scrolling. Bound
    once and driven straight off the scroll position: a render per scroll frame
    would be an absurd price for one button changing its mind. */
+/* A month of bars opens at the far end rather than the far past: the newest
+   day is the one being asked about, and it is the one the gradient marks. The
+   fade on the right edge is dropped once there is nothing left to scroll to. */
+function mPaintBars() {
+  const bars = document.querySelector('.m-bars.is-wide');
+  if (!bars) return;
+  bars.scrollLeft = bars.scrollWidth;
+  const atEnd = () => {
+    bars.classList.toggle('at-end', bars.scrollLeft + bars.clientWidth >= bars.scrollWidth - 2);
+  };
+  atEnd();
+  bars.addEventListener('scroll', atEnd, { passive: true });
+}
+
 function mPaintTop() {
   const el = document.getElementById('m-top');
   if (!el) return;
