@@ -7436,9 +7436,7 @@ function mFlowWhen() {
   const durs = [15, 30, 45, 60, 90, 120, 180, 240, 360, 480];
   const left = Math.max(0, Math.min(100, (s.startMin / 1440) * 100));
   const width = Math.max(0, Math.min(100 - left, (s.durMin / 1440) * 100));
-  /* Lengths under an hour sit off the bottom of the duration rail, so the
-     handle parks at its left edge rather than escaping the track. The chips
-     below still say which of them is selected. */
+  // Clamped defensively; every length the flow can hold now sits on the rail.
   const durLeft = Math.max(0, Math.min(100,
     ((s.durMin - M_DUR_MIN) / (M_DUR_MAX - M_DUR_MIN)) * 100));
   const smallChip = (act, data, label, on) => `
@@ -7483,10 +7481,10 @@ ${mLabel('Minutes', `
 </div>
 ${mLabel('For how long', `
   <span style="display:flex;align-items:center;gap:8px;">
-    <button data-act="m-dur-step" data-d="-5" aria-label="Five minutes shorter"
+    <button data-act="m-dur-step" data-d="-1" aria-label="A minute shorter"
       style="width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:17px;line-height:1;color:#5f3ac9;background:#fff;border:1px solid rgba(120,86,245,.4);">−</button>
     <span style="min-width:56px;text-align:center;font-family:var(--font-heading);font-weight:700;font-size:16px;color:#16131f;font-variant-numeric:tabular-nums;">${esc(mDur(s.durMin))}</span>
-    <button data-act="m-dur-step" data-d="5" aria-label="Five minutes longer"
+    <button data-act="m-dur-step" data-d="1" aria-label="A minute longer"
       style="width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:17px;line-height:1;color:#5f3ac9;background:#fff;border:1px solid rgba(120,86,245,.4);">+</button>
   </span>`)}
 <div class="card" style="border-radius:20px;padding:14px 18px 16px;box-shadow:${M_SHADOW_SM};gap:0;margin-bottom:14px;">
@@ -7496,7 +7494,7 @@ ${mLabel('For how long', `
     <div class="m-handle" style="left:${durLeft}%;"></div>
   </div>
   <div style="position:relative;height:14px;margin-top:5px;font-size:10.5px;color:#9995ab;">
-    ${[60, 180, 360, 540, 720].map((v) => {
+    ${[M_DUR_MIN, 180, 360, 540, 720].map((v) => {
       const at = ((v - M_DUR_MIN) / (M_DUR_MAX - M_DUR_MIN)) * 100;
       // Placed at the value's true position rather than spread evenly: the
       // marks have to line up with the rail they are labelling.
@@ -8002,10 +8000,11 @@ function mFinishSetup() {
 let mDrag = null;
 let mDragFrame = 0;
 
-/* How long a run is, dragged rather than picked off a list. One hour to
-   twelve: below an hour the chips are quicker than aiming at a rail, and
-   above twelve you are describing a day rather than a session. */
-const M_DUR_MIN = 60;
+/* How long a run is, dragged rather than picked off a list. A single minute
+   to twelve hours — the whole range a session can be, so nothing has to be
+   reached some other way. Past twelve hours you are describing a day rather
+   than a session, and the chips still hold the round numbers. */
+const M_DUR_MIN = 1;
 const M_DUR_MAX = 720;
 
 function mDragTo(x) {
@@ -8013,11 +8012,11 @@ function mDragTo(x) {
   const pct = Math.min(1, Math.max(0, (x - mDrag.left) / mDrag.width));
 
   if (mDrag.kind === 'dur') {
-    /* Five-minute steps. A twelve-hour span across a phone's width is about
-       two minutes a pixel, and a length that twitches by single minutes under
-       the thumb reads as broken rather than precise — the stepper beside the
-       rail is what single minutes are for. */
-    const at = Math.round((M_DUR_MIN + pct * (M_DUR_MAX - M_DUR_MIN)) / 5) * 5;
+    /* To the minute, like the start rail. Twelve hours across a phone's width
+       is a little over two minutes a pixel, so dragging alone cannot land on
+       every minute — the stepper beside the rail closes the gap, and the value
+       it lands on is exact either way. */
+    const at = Math.round(M_DUR_MIN + pct * (M_DUR_MAX - M_DUR_MIN));
     const next = Math.max(M_DUR_MIN, Math.min(M_DUR_MAX, at));
     if (next === state.m.durMin) return;
     state.m.durMin = next;
@@ -8271,7 +8270,7 @@ const M_ACTIONS = {
      night that ran 1am to 6:45am is 345 minutes, and no list of round numbers
      was ever going to hold it. */
   'm-dur-step': (el) => mSet({
-    durMin: Math.max(5, Math.min(1439, state.m.durMin + Number(el.dataset.d)))
+    durMin: Math.max(1, Math.min(1439, state.m.durMin + Number(el.dataset.d)))
   }),
   'm-now': () => {
     const n = new Date();
