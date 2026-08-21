@@ -7677,11 +7677,14 @@ function mBodyCard(day) {
    What changes is the shape: four dials in a row need about 110px each and a
    phone has 350, so they sit two by two.
 
-   Over a window longer than a day every figure is divided by the same span.
-   That leaves the balance between them — which is the whole reading — intact,
-   and the kicker says it is an average rather than a total, because a month's
-   intake on a dial scaled for one day would look like catastrophic overeating
-   every time. */
+   The figures are the window's own totals. An earlier version divided them by
+   the span, on the theory that a month's intake would swamp a dial scaled for
+   one day — but these dials are not scaled for a day. All four share one scale
+   taken from the largest of them, so they grow together and the balance
+   between them, which is the whole reading, is the same either way. Given
+   that, a total is what "this month" means, and the average was answering a
+   question nobody asked. The per-day figure is still worth having, so it goes
+   in the line underneath rather than on the dial. */
 const M_CAL_ARC = Math.PI * 38;
 
 /* Protein, carbs and fat in the order people say them, short enough to sit
@@ -7831,7 +7834,7 @@ function mCalSheet() {
   <p style="margin:0 0 12px;font-size:13px;line-height:1.5;color:#756f88;">
     ${items.length
       ? `${counted} ${counted === 1 ? 'entry' : 'entries'} came to about <strong style="color:#16131f;">${total.toLocaleString('en-US')} kcal</strong>${dates.length > 1
-        ? ` across ${dates.length} days — about <strong style="color:#16131f;">${Math.round(total / dates.length).toLocaleString('en-US')} a day</strong>, which is the figure on the dial.`
+        ? ` across ${dates.length} days — about ${Math.round(total / dates.length).toLocaleString('en-US')} a day.`
         : '.'}`
       : food
         ? 'No meals logged in the time tracker for this window. Calories are read from there alone — paying for a meal is not the same as eating it.'
@@ -7851,19 +7854,14 @@ function mCalCard(dates) {
   const burn = burnFor(rows, state.weightKg, days, dates);
   const food = foodReport(rows, mMoneyRows(dates), days);
 
-  const per = (n) => Math.round(n / days);
   /* The same source the kcal figure came from — a refined estimate replaces
-     the local one everywhere or nowhere — and divided by the same span, so the
-     grams under the dial belong to the number on it rather than to the window. */
-  const macros = (() => {
-    const src = food.ai || food.local;
-    if (!src) return null;
-    return { protein: per(src.protein), carbs: per(src.carbs), fat: per(src.fat) };
-  })();
-  const burned = per(burn.kcal);
-  const eaten = per(food.kcal);
-  const rested = per(burn.restKcal);
-  const kicker = days > 1 ? `Average day across ${days} days` : 'Daily calorie balance';
+     the local one everywhere or nowhere — and on the same footing, so the
+     grams and the calories above them cover the same span. */
+  const macros = food.ai || food.local || null;
+  const burned = Math.round(burn.kcal);
+  const eaten = Math.round(food.kcal);
+  const rested = Math.round(burn.restKcal);
+  const kicker = days > 1 ? `Total across ${days} days` : 'Daily calorie balance';
 
   const shell = (inner) => `
 <div style="margin-bottom:22px;">
@@ -7881,7 +7879,7 @@ function mCalCard(dates) {
   <div class="card" style="border-radius:16px;padding:16px;gap:0;box-shadow:${M_SHADOW_SM};">
     <div style="font-size:14px;line-height:1.5;color:#575168;">
       Nothing to weigh up yet. Your body spends roughly
-      <strong style="color:#16131f;">${rested.toLocaleString('en-US')} kcal a day</strong> at rest, but a balance
+      <strong style="color:#16131f;">${Math.round(rested / days).toLocaleString('en-US')} kcal a day</strong> at rest, but a balance
       needs something on the other side — log a meal or a workout${days === 1
         ? `, or <button data-act="m-steps-open" style="border:0;background:transparent;padding:0;font:inherit;color:#5f3ac9;font-weight:600;text-decoration:underline;cursor:pointer;">add your steps</button>` : ''}.
     </div>
@@ -7900,6 +7898,11 @@ function mCalCard(dates) {
   const stepLine = days === 1
     ? `${burn.steps ? `${burn.steps.toLocaleString('en-US')} steps counted. ` : ''}`
     : (burn.steps ? `${burn.steps.toLocaleString('en-US')} steps across the window. ` : '');
+  /* The average belongs somewhere — it is the figure that compares one window
+     to another — just not on a dial labelled with a span. */
+  const perDayLine = days > 1
+    ? `That is about ${Math.round(net / days).toLocaleString('en-US')} kcal a day ${deficit ? 'in deficit' : 'in surplus'}. `
+    : '';
 
   return shell(`
   <div style="display:flex;gap:10px;margin-bottom:10px;">
@@ -7911,7 +7914,7 @@ function mCalCard(dates) {
     ${mCalDial(net, deficit ? '#0e9f6e' : '#d92d20', 'scales', `Net ${deficit ? 'deficit' : 'surplus'}`, top)}
   </div>
   <p style="margin:10px 0 0;font-size:11.5px;line-height:1.5;color:#9995ab;">
-    ${esc(stepLine)}Rest is worked out from ${burn.assumedWeight
+    ${esc(perDayLine)}${esc(stepLine)}Rest is worked out from ${burn.assumedWeight
       ? `a default ${DEFAULT_WEIGHT_KG} kg — `
       : `your ${esc(String(state.weightKg))} kg — `}<button data-act="m-weight-open"
       style="border:0;background:transparent;padding:0;font:inherit;color:#5f3ac9;font-weight:600;text-decoration:underline;cursor:pointer;">${burn.assumedWeight ? 'add your weight' : 'edit it'}</button>.
