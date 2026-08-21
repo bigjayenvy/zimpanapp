@@ -676,7 +676,7 @@ const state = {
   account: stored.account || null,
 
   // Collapsed by default; whether you left one open is remembered.
-  drawers: Object.assign({ categories: false, activities: false, lookback: false, legend: false, leaderboard: false, today: false }, stored.drawers),
+  drawers: Object.assign({ categories: false, activities: false, lookback: false, legend: false, leaderboard: false, today: false, mEntries: false }, stored.drawers),
 
   /* ── session (per-load) ── */
   booted: false,
@@ -6191,7 +6191,10 @@ const ACTIONS = {
   'toggle-drawer': (el) => {
     const key = el.dataset.drawer;
     const opening = !state.drawers[key];
-    const accordion = opening && isPhone();
+    /* One at a time. Two or three drawers open at once turned the page into a
+       scroll with no landmarks — opening the next one now folds away the last,
+       so what you just asked for is what is in front of you. */
+    const accordion = opening;
 
     /* Pin the top of the card, not the button. A drawer's content renders above
        its own button, so holding the button still would scroll the page down
@@ -6684,6 +6687,31 @@ function mDayList(dates) {
   return time.concat(money);
 }
 
+/* A month of entries is hundreds of rows, and every one of them sits between
+   you and the donate card at the foot of the page. The most recent few days
+   are shown and the rest folds away — the count on the button says how much is
+   behind it, so nothing is hidden without saying so. */
+const M_DAYS_SHOWN = 4;
+
+function mEntryDrawer(groups) {
+  const open = !!state.drawers.mEntries;
+  const shown = open ? groups : groups.slice(0, M_DAYS_SHOWN);
+  const rest = groups.length - shown.length;
+  const day = (g) => `
+    <div style="margin-bottom:18px;">
+      <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;margin-bottom:8px;">${esc(mKicker(g.date))}</div>
+      <div style="display:flex;flex-direction:column;gap:9px;">${g.rows.map(mEntryRow).join('')}</div>
+    </div>`;
+  const buried = groups.slice(shown.length).reduce((a, g) => a + g.rows.length, 0);
+  return shown.map(day).join('') + (rest > 0 || open ? `
+    <button data-act="m-entries-more" aria-expanded="${open}"
+      style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:46px;border-radius:14px;cursor:pointer;
+             font-family:var(--font-body);font-size:13.5px;font-weight:600;color:#7450e4;background:#fff;border:1px solid rgba(120,86,245,.3);">
+      ${open ? 'Show fewer days' : `Show ${rest} more ${rest === 1 ? 'day' : 'days'} · ${buried} ${buried === 1 ? 'entry' : 'entries'}`}
+      <span aria-hidden="true">${open ? '▲' : '▼'}</span>
+    </button>` : '');
+}
+
 /* Over a window, the day is the outer sort and the clock the inner one:
    newest day first, because a month of entries is read from this end. */
 function mGroupedList(dates) {
@@ -6751,11 +6779,18 @@ const mGapTotal = (list) => list.reduce((a, g) => a + (g.b - g.a), 0);
 // would keep answering a question you had not asked.
 const mInsightKey = () => state.m.insightRange || 'week';
 const mInsightDates = () => mRangeDates(mInsightKey());
-// How the written line refers to its own window, mid-sentence.
+/* How the written line names its own window. Two forms, because the sentences
+   need different grammar: one follows "took 48% of …" and has to be a noun,
+   the other follows "of your spending …" and has to be a time. Using the noun
+   in both is what produced "of your spending your logged month". */
 const mInsightPhrase = () => ({
   today: 'today', yesterday: 'yesterday', week: 'your logged week',
   fortnight: 'your last two weeks', month: 'your logged month'
 }[mInsightKey()] || 'your logged week');
+const mInsightWhen = () => ({
+  today: 'today', yesterday: 'yesterday', week: 'this week',
+  fortnight: 'over the last two weeks', month: 'this month'
+}[mInsightKey()] || 'this week');
 
 /* The bars. Over several days that is one bar per day; over a single day a
    day-by-day chart would be one bar and six blanks, so it becomes one bar per
@@ -6811,7 +6846,7 @@ function mNotice(money) {
   const split = mWeekSplit(money);
   if (!split.length) {
     return money
-      ? `Nothing spent ${mInsightPhrase()} — or nothing logged, which Zimpan cannot tell apart yet.`
+      ? `Nothing spent ${mInsightWhen()} — or nothing logged, which Zimpan cannot tell apart yet.`
       : 'Not enough logged in this stretch to see a pattern yet. A few more days and there will be one.';
   }
   const total = split.reduce((a, r) => a + r.raw, 0);
@@ -6828,7 +6863,7 @@ function mNotice(money) {
     // Every purpose, not the handful the card had room for.
     const outCents = dates.reduce((a, d) => a + mSumCents(mMoneyRows([d]), 'out'), 0);
     const covered = outCents > 0 && inCents >= outCents;
-    return `${top.name} is ${share}% of your spending ${mInsightPhrase()}, and ${busiestDay} was the heaviest day of it. `
+    return `${top.name} is ${share}% of your spending ${mInsightWhen()}, and ${busiestDay} was the heaviest day of it. `
       + (covered
         ? `What came in more than covered what went out.`
         : `Nothing logged coming in to set against it.`);
@@ -7213,9 +7248,27 @@ function mBrandBar() {
 /* The five windows, as a row that scrolls rather than wraps: five chips do not
    fit across 393px at a tappable size, and a second line of them pushes the
    day's figures below the fold. */
+/* A bar's figure, short enough to sit over a 26px column. Hours lose their
+   minutes and money loses its currency: at this size the label is a sense of
+   scale, and the total above the chart is where the exact number lives. */
+function mBarValue(v, money) {
+  if (!v) return '';
+  if (money) return v >= 1000 ? Math.round(v / 1000) + 'k' : String(Math.round(v));
+  const h = v / 60;
+  return h >= 10 ? Math.round(h) + 'h' : (Math.round(h * 10) / 10) + 'h';
+}
+
+/* The row scrolls, and the clipped chip at its edge is the only thing that
+   says so — easy to miss, and the last two windows sit past it. */
+const mScrollHint = (text) => `
+  <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:#9995ab;font-weight:600;margin-bottom:6px;">
+    <span>${esc(text)}</span><span aria-hidden="true">›</span>
+  </div>`;
+
 function mRangeChips(act, on) {
   return `
-<div style="display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;margin-bottom:16px;padding-bottom:2px;">
+${mScrollHint('Scroll for more')}
+<div class="m-chiprow" style="display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;margin-bottom:16px;padding-bottom:2px;">
   ${DECK_RANGES.map(([key, label]) => `
     <button data-act="${esc(act || 'm-range')}" data-key="${key}" aria-pressed="${key === on}"
       style="flex:none;padding:9px 15px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;white-space:nowrap;min-height:40px;${mChip(key === on)}">${esc(label)}</button>`).join('')}
@@ -7302,11 +7355,7 @@ function mHome() {
 
   ${searching ? '' : list.length ? (single
     ? `<div style="display:flex;flex-direction:column;gap:9px;">${list.map(mEntryRow).join('')}</div>`
-    : mGroupedList(dates).map((g) => `
-      <div style="margin-bottom:18px;">
-        <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;margin-bottom:8px;">${esc(mKicker(g.date))}</div>
-        <div style="display:flex;flex-direction:column;gap:9px;">${g.rows.map(mEntryRow).join('')}</div>
-      </div>`).join(''))
+    : mEntryDrawer(mGroupedList(dates)))
     : `
   <div style="padding:30px 24px;border-radius:20px;background:#fff;border:1px dashed rgba(120,86,245,.35);text-align:center;">
     <div style="width:46px;height:46px;margin:0 auto;border-radius:14px;background:#f2eefe;display:grid;place-items:center;font-size:19px;color:#5f3ac9;">◷</div>
@@ -7854,14 +7903,18 @@ function mInsights() {
          width, so the row simply ran off the right of the screen. Past a dozen
          columns they take a fixed width and the row scrolls inside the card
          instead — the card stays put, and the page never scrolls sideways. -->
-    <div class="m-bars${wide ? ' is-wide' : ''}" style="display:flex;align-items:flex-end;gap:${wide ? 6 : 8}px;height:118px;${wide ? 'overflow-x:auto;overflow-y:hidden;' : ''}">
+    ${wide ? mScrollHint(`Scroll for all ${series.length}`) : ''}
+    <div class="m-bars${wide ? ' is-wide' : ''}" style="display:flex;align-items:flex-end;gap:${wide ? 6 : 8}px;height:132px;${wide ? 'overflow-x:auto;overflow-y:hidden;' : ''}">
       ${series.map((w, i) => `
-        <div style="${wide ? 'flex:0 0 22px;' : 'flex:1;'}display:flex;flex-direction:column;align-items:center;gap:7px;justify-content:flex-end;height:100%;">
+        <div style="${wide ? 'flex:0 0 26px;' : 'flex:1;'}display:flex;flex-direction:column;align-items:center;gap:5px;justify-content:flex-end;height:100%;">
+          <!-- The figure above its own bar. Heights say which is biggest; only
+               a number says by how much, and a chart nobody can read a value
+               off is decoration. -->
+          <span style="font-size:${wide ? 8.5 : 10}px;font-weight:600;color:${w.v > 0 ? '#575168' : '#c9c5d4'};white-space:nowrap;">${esc(mBarValue(w.v, money))}</span>
           <div style="width:100%;border-radius:8px 8px 4px 4px;min-height:5px;height:${Math.round((w.v / max) * 100)}%;background:${w.color ? esc(w.color) : i === series.length - 1 ? 'linear-gradient(180deg,#8b5cf6,#4f46e5)' : '#e4dcfd'};"></div>
           <span style="font-size:10.5px;color:#9995ab;font-weight:500;">${esc(w.label)}</span>
         </div>`).join('')}
     </div>
-    ${wide ? `<div style="font-size:11px;color:#9995ab;margin-top:8px;">Scroll for the rest of the ${series.length} days.</div>` : ''}
   </div>
 
   ${split.length ? `
@@ -7961,6 +8014,12 @@ function mAccountSheet() {
   <div style="font-family:var(--font-heading);font-weight:700;font-size:23px;color:#16131f;">${esc(state.displayName || 'Your account')}</div>
   ${email ? `<p style="margin:4px 0 18px;font-size:13.5px;color:#756f88;">${esc(email)}</p>` : '<div style="height:18px;"></div>'}
   <button class="btn btn-secondary" data-act="m-classic" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">Full view</button>
+  <!-- The phone app had no route to either of these at all, which is not a
+       thing to ship an app to strangers without. -->
+  <div style="display:flex;gap:16px;justify-content:center;margin:14px 0 10px;">
+    <button data-act="legal-privacy" style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;color:#756f88;padding:6px;">Privacy</button>
+    <button data-act="legal-terms" style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;color:#756f88;padding:6px;">Terms of Use</button>
+  </div>
   <button class="btn" data-act="m-sign-out"
     style="width:100%;min-height:48px;font-size:15px;color:#8a2f4a;background:#fff;border:1px solid rgba(138,47,74,.3);margin-bottom:8px;">Sign out</button>
   <button data-act="m-sheet-close"
@@ -8282,6 +8341,10 @@ const M_ACTIONS = {
 
   /* getting about */
   'm-scroll-top': () => window.scrollTo({ top: 0, behavior: 'smooth' }),
+  'm-entries-more': () => {
+    state.drawers.mEntries = !state.drawers.mEntries;
+    save(); render();
+  },
 
   /* Steps and weight. Both write through the same stamps the desktop uses, so
      a count entered on the phone merges with one entered on the laptop rather
