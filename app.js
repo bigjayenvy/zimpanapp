@@ -6707,7 +6707,7 @@ const mDefaultStart = () => {
 state.m = {
   screen: 'home', step: 1, setupStep: 1,
   // draft
-  kind: null, day: 'today', earlierIso: '', calMonth: '', skip: [],
+  kind: null, day: 'today', earlierIso: '', calMonth: '', skip: [], timed: false,
   cat: null, activity: null, typing: false, activityText: '',
   dir: 'out', amount: '', startMin: mDefaultStart(), durMin: 60,
   note: '', noteOpen: false,
@@ -7179,7 +7179,7 @@ function mHome() {
 const M_FLOW_COPY = {
   1: ['What are you logging?', 'Pick one — you can add the details next.'],
   2: { time: ['What were you doing?', 'Choose a category, then the activity.'], money: ['How much?', 'Tap the amount. No keyboard needed.'] },
-  3: { time: ['When was that?', 'Start time and how long it ran.'], money: ['What was it for?', 'Purpose keeps the weekly split honest.'] },
+  3: { time: ['When was that?', 'Drag either end of the bar to set when it started and ended.'], money: ['What was it for?', 'Purpose keeps the weekly split honest.'] },
   4: ['Look right?', 'Tap anything to change it.']
 };
 
@@ -7408,9 +7408,29 @@ function mFlowAmount() {
 /* Time's step 3. The drag track is the centrepiece and everything else on the
    screen is another way of saying the same two numbers — every control moves
    the handle, and the handle moves every control. */
+/* ── when it ran ──
+   One bar with two handles. This step used to carry five separate controls —
+   hour chips, a minute stepper, minute chips, length chips and a second rail —
+   which between them said the same two numbers five ways and filled the screen
+   doing it. A start and an end is all the information there is, so the bar
+   holds both and nothing else does.
+
+   A run past midnight puts the end handle to the left of the start, and the
+   fill breaks into two pieces across the ends of the bar — which is what
+   crossing midnight looks like on a day-long rail. */
+
+// The longest a single session is allowed to be, which is also what keeps
+// dragging an end past the other side from inventing a twenty-three hour entry.
+const M_SPAN_MAX = 720;
+
 function mFlowWhen() {
   const s = state.m;
-  const long = s.durMin > 240;
+  /* Only a measured length gets the "long stretch" warning. It exists for a
+     timer left running after the thing it was timing stopped, and its wording
+     says so — shown against a span someone has just dragged by hand it accuses
+     them of an accident they did not have, and every night's sleep would trip
+     it. */
+  const long = s.timed && s.durMin > 240;
   const crosses = s.startMin + s.durMin > 1440;
   /* The handoff copy promised a split across the two days; the app has always
      kept a run past midnight as one row dated the morning it ended, which is
@@ -7420,28 +7440,15 @@ function mFlowWhen() {
   const warning = long
     ? 'That is a long stretch. If the timer kept running after you stopped, trim it here.'
     : (crosses ? 'This crosses midnight — Zimpan will file it on the morning it ends.' : '');
-  const hour = Math.floor(s.startMin / 60);
-  const minute = s.startMin % 60;
-  /* Midnight to midnight. The rail used to start at 6am, which read as a
-     sensible waking-hours window until you tried to log something that began
-     at 1am — six hours of every day that no control could reach. The finer
-     drag resolution it bought was never worth a dead zone, and the minute
-     stepper below gives exact placement anyway. */
-  const hours = [];
-  for (let h = 0; h < 24; h++) hours.push(h);
-  const mins = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
-  /* Up to a full night. Stopping at three hours meant sleep — the longest
-     thing most people log, and the one they log every day — could not be
-     entered at all. */
-  const durs = [15, 30, 45, 60, 90, 120, 180, 240, 360, 480];
-  const left = Math.max(0, Math.min(100, (s.startMin / 1440) * 100));
-  const width = Math.max(0, Math.min(100 - left, (s.durMin / 1440) * 100));
-  // Clamped defensively; every length the flow can hold now sits on the rail.
-  const durLeft = Math.max(0, Math.min(100,
-    ((s.durMin - M_DUR_MIN) / (M_DUR_MAX - M_DUR_MIN)) * 100));
-  const smallChip = (act, data, label, on) => `
-    <button data-act="${act}" ${data} aria-pressed="${on}"
-      style="min-height:40px;padding:0 4px;border-radius:12px;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;${mChip(on)}">${esc(label)}</button>`;
+
+  const endMin = (s.startMin + s.durMin) % 1440;
+  const pct = (m) => (m / 1440) * 100;
+  const wraps = s.startMin + s.durMin > 1440;
+  // Two pieces when it wraps, one when it does not.
+  const fills = wraps
+    ? [[pct(s.startMin), 100 - pct(s.startMin)], [0, pct(endMin)]]
+    : [[pct(s.startMin), pct(endMin) - pct(s.startMin)]];
+
   return `
 ${warning ? `
 <div style="display:flex;gap:11px;align-items:flex-start;padding:13px 14px;border-radius:16px;background:#fdf3e6;border:1px solid rgba(224,145,58,.35);margin-bottom:14px;">
@@ -7450,63 +7457,25 @@ ${warning ? `
   <button data-act="m-halve"
     style="flex:none;min-height:34px;padding:0 13px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:12.5px;font-weight:600;color:#7a4a13;background:#fff;border:1px solid rgba(224,145,58,.5);">Halve it</button>
 </div>` : ''}
-<div class="card" style="border-radius:20px;padding:18px;box-shadow:${M_SHADOW_MD};gap:0;margin-bottom:18px;">
+<div class="card" style="border-radius:20px;padding:18px;box-shadow:${M_SHADOW_MD};gap:0;">
   <div style="display:flex;justify-content:space-between;align-items:baseline;">
     <span id="m-range" style="font-family:var(--font-heading);font-weight:700;font-size:26px;color:#16131f;">${esc(mRange(s.startMin, s.durMin))}</span>
     <span id="m-durlabel" style="font-size:13px;color:#7450e4;font-weight:600;">${esc(mDur(s.durMin))}</span>
   </div>
-  <div class="m-track" data-m-track="start">
-    <div class="m-rail"></div>
-    <div class="m-fill" style="left:${left}%;width:${width}%;"></div>
-    <div class="m-handle" style="left:${left}%;"></div>
+  <div class="m-track" data-m-track="range" style="height:44px;margin-top:14px;">
+    <div class="m-rail" style="top:17px;"></div>
+    ${fills.map(([l, w]) => `<div class="m-fill" style="top:17px;left:${l}%;width:${Math.max(0, w)}%;"></div>`).join('')}
+    <div class="m-handle" data-handle="start" style="top:8px;left:${pct(s.startMin)}%;"></div>
+    <div class="m-handle" data-handle="end" style="top:8px;left:${pct(endMin)}%;"></div>
   </div>
-  <div style="display:flex;justify-content:space-between;font-size:10.5px;color:#9995ab;margin-top:7px;">
+  <div style="display:flex;justify-content:space-between;font-size:10.5px;color:#9995ab;margin-top:2px;">
     <span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span>
   </div>
-</div>
-${mLabel('Started — hour', `<button data-act="m-now" style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:12.5px;font-weight:600;color:#7450e4;padding:0;">Use now</button>`)}
-<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:7px;margin-bottom:16px;">
-  ${hours.map((h) => smallChip('m-hour', `data-h="${h}"`, `${h % 12 === 0 ? 12 : h % 12}${h >= 12 ? 'p' : 'a'}`, hour === h)).join('')}
-</div>
-${mLabel('Minutes', `
-  <span style="display:flex;align-items:center;gap:8px;">
-    <button data-act="m-min-step" data-d="-1" aria-label="A minute earlier"
-      style="width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:17px;line-height:1;color:#5f3ac9;background:#fff;border:1px solid rgba(120,86,245,.4);">−</button>
-    <span id="m-minlabel" style="min-width:38px;text-align:center;font-family:var(--font-heading);font-weight:700;font-size:16px;color:#16131f;font-variant-numeric:tabular-nums;">:${pad(minute)}</span>
-    <button data-act="m-min-step" data-d="1" aria-label="A minute later"
-      style="width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:17px;line-height:1;color:#5f3ac9;background:#fff;border:1px solid rgba(120,86,245,.4);">+</button>
-  </span>`)}
-<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:7px;margin-bottom:16px;">
-  ${mins.map((m) => smallChip('m-min', `data-m="${m}"`, ':' + pad(m), minute === m)).join('')}
-</div>
-${mLabel('For how long', `
-  <span style="display:flex;align-items:center;gap:8px;">
-    <button data-act="m-dur-step" data-d="-1" aria-label="A minute shorter"
-      style="width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:17px;line-height:1;color:#5f3ac9;background:#fff;border:1px solid rgba(120,86,245,.4);">−</button>
-    <span style="min-width:56px;text-align:center;font-family:var(--font-heading);font-weight:700;font-size:16px;color:#16131f;font-variant-numeric:tabular-nums;">${esc(mDur(s.durMin))}</span>
-    <button data-act="m-dur-step" data-d="1" aria-label="A minute longer"
-      style="width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:17px;line-height:1;color:#5f3ac9;background:#fff;border:1px solid rgba(120,86,245,.4);">+</button>
-  </span>`)}
-<div class="card" style="border-radius:20px;padding:14px 18px 16px;box-shadow:${M_SHADOW_SM};gap:0;margin-bottom:14px;">
-  <div class="m-track" data-m-track="dur" style="margin-top:4px;">
-    <div class="m-rail"></div>
-    <div class="m-fill" style="left:0;width:${durLeft}%;"></div>
-    <div class="m-handle" style="left:${durLeft}%;"></div>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;">
+    <span style="font-size:12.5px;color:#756f88;">Drag either end.</span>
+    <button data-act="m-now"
+      style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:12.5px;font-weight:600;color:#7450e4;padding:0;">Start now</button>
   </div>
-  <div style="position:relative;height:14px;margin-top:5px;font-size:10.5px;color:#9995ab;">
-    ${[M_DUR_MIN, 180, 360, 540, 720].map((v) => {
-      const at = ((v - M_DUR_MIN) / (M_DUR_MAX - M_DUR_MIN)) * 100;
-      // Placed at the value's true position rather than spread evenly: the
-      // marks have to line up with the rail they are labelling.
-      const shift = at === 0 ? '0' : at === 100 ? '-100%' : '-50%';
-      return `<span style="position:absolute;left:${at}%;transform:translateX(${shift});">${esc(mDur(v))}</span>`;
-    }).join('')}
-  </div>
-</div>
-<div style="display:flex;flex-wrap:wrap;gap:8px;">
-  ${durs.map((m) => `
-    <button data-act="m-dur" data-m="${m}" aria-pressed="${s.durMin === m}"
-      style="padding:10px 16px;border-radius:14px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;${mChip(s.durMin === m)}">${esc(mDur(m))}</button>`).join('')}
 </div>`;
 }
 
@@ -7880,7 +7849,7 @@ const mDraftDayFromRange = () => (mRangeKey() === 'yesterday' ? 'yesterday' : 't
 
 function mResetDraft() {
   Object.assign(state.m, {
-    step: 1, kind: null, day: 'today', earlierIso: '', calMonth: '', skip: [],
+    step: 1, kind: null, day: 'today', earlierIso: '', calMonth: '', skip: [], timed: false,
     cat: null, activity: null, typing: false, activityText: '',
     dir: 'out', amount: '', startMin: mDefaultStart(), durMin: 60,
     note: '', noteOpen: false, editId: null, editKind: null
@@ -8000,31 +7969,30 @@ function mFinishSetup() {
 let mDrag = null;
 let mDragFrame = 0;
 
-/* How long a run is, dragged rather than picked off a list. A single minute
-   to twelve hours — the whole range a session can be, so nothing has to be
-   reached some other way. Past twelve hours you are describing a day rather
-   than a session, and the chips still hold the round numbers. */
-const M_DUR_MIN = 1;
-const M_DUR_MAX = 720;
-
 function mDragTo(x) {
   if (!mDrag || !mDrag.width) return;
   const pct = Math.min(1, Math.max(0, (x - mDrag.left) / mDrag.width));
 
-  if (mDrag.kind === 'dur') {
-    /* To the minute, like the start rail. Twelve hours across a phone's width
-       is a little over two minutes a pixel, so dragging alone cannot land on
-       every minute — the stepper beside the rail closes the gap, and the value
-       it lands on is exact either way. */
-    const at = Math.round(M_DUR_MIN + pct * (M_DUR_MAX - M_DUR_MIN));
-    const next = Math.max(M_DUR_MIN, Math.min(M_DUR_MAX, at));
-    if (next === state.m.durMin) return;
-    state.m.durMin = next;
+  // Midnight to midnight across the bar, at the resolution of a minute.
+  const at = Math.max(0, Math.min(1439, Math.round(pct * 1440)));
+  const s = state.m;
+  const endMin = (s.startMin + s.durMin) % 1440;
+
+  if (mDrag.handle === 'end') {
+    /* The span is measured forwards from the start and wraps past midnight, so
+       an end earlier on the bar than the start reads as the next morning
+       rather than as a negative length. Capped so dragging an end all the way
+       round cannot quietly invent a twenty-three hour entry. */
+    const span = ((at - s.startMin) + 1440) % 1440;
+    const next = Math.max(1, Math.min(M_SPAN_MAX, span));
+    if (next === s.durMin) return;
+    s.durMin = next;
   } else {
-    // Midnight to midnight across the rail, at the resolution of a minute.
-    const next = Math.max(0, Math.min(1439, Math.round(pct * 1440)));
-    if (next === state.m.startMin) return;
-    state.m.startMin = next;
+    if (at === s.startMin) return;
+    // Moving the start leaves the end where it was and the length absorbs it.
+    const span = ((endMin - at) + 1440) % 1440;
+    s.startMin = at;
+    s.durMin = Math.max(1, Math.min(M_SPAN_MAX, span));
   }
 
   /* Only the step's own body is redrawn. A full render would replace the shell
@@ -8040,8 +8008,18 @@ function mDragWire() {
     const track = ev.target.closest('[data-m-track]');
     if (!track) return;
     const r = track.getBoundingClientRect();
-    mDrag = { left: r.left, width: r.width, kind: track.dataset.mTrack || 'start' };
-    // Tapping the rail jumps the value there and starts the drag from it.
+    /* Which handle answers depends on where the press landed, decided once on
+       the way down and held for the whole gesture — recomputing it per frame
+       would hand the drag to the other handle the moment it was overtaken.
+       Distance is measured the short way round the clock, so a press just
+       after midnight reaches an end handle sitting at 11pm. */
+    const pct = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
+    const at = Math.round(pct * 1440);
+    const endMin = (state.m.startMin + state.m.durMin) % 1440;
+    const away = (a, b) => { const d = Math.abs(a - b); return Math.min(d, 1440 - d); };
+    const handle = away(at, state.m.startMin) <= away(at, endMin) ? 'start' : 'end';
+    mDrag = { left: r.left, width: r.width, kind: track.dataset.mTrack || 'start', handle };
+    // The press itself moves that handle, so a tap on the bar counts as a drag.
     mDragTo(ev.clientX);
   });
   window.addEventListener('pointermove', (ev) => {
@@ -8259,22 +8237,12 @@ const M_ACTIONS = {
     mSet({ amount: held === '0' ? k : held + k });
   },
 
-  'm-hour': (el) => mSet({ startMin: Number(el.dataset.h) * 60 + (state.m.startMin % 60) }),
-  'm-min': (el) => mSet({ startMin: Math.floor(state.m.startMin / 60) * 60 + Number(el.dataset.m) }),
-  'm-min-step': (el) => mSet({ startMin: Math.max(0, Math.min(1439, state.m.startMin + Number(el.dataset.d))) }),
   // Choosing how long something ran must not move when it started. It used to
   // pull the start back so the two fitted inside one day, which silently
   // rewrote 11pm into the afternoon the moment you asked for seven hours.
-  'm-dur': (el) => mSet({ durMin: Number(el.dataset.m) }),
-  /* The chips are the common lengths; this reaches the ones between them. A
-     night that ran 1am to 6:45am is 345 minutes, and no list of round numbers
-     was ever going to hold it. */
-  'm-dur-step': (el) => mSet({
-    durMin: Math.max(1, Math.min(1439, state.m.durMin + Number(el.dataset.d)))
-  }),
   'm-now': () => {
     const n = new Date();
-    mSet({ startMin: n.getHours() * 60 + n.getMinutes() });
+    mSet({ startMin: n.getHours() * 60 + n.getMinutes(), durMin: state.m.durMin });
   },
   // Half of it, landed on the nearest quarter hour — the shape of a trim
   // someone makes by eye when a timer ran on past the thing it was timing.
@@ -8301,7 +8269,7 @@ const M_ACTIONS = {
        steps are dropped: the only thing left is to say what it was, which is
        the whole point of timing first and naming after. */
     Object.assign(state.m, {
-      screen: 'flow', kind: 'time', step: 2, day: 'today', skip: [1, 3],
+      screen: 'flow', kind: 'time', step: 2, day: 'today', skip: [1, 3], timed: true,
       startMin: Math.max(0, Math.min(1439, started.getHours() * 60 + started.getMinutes())),
       durMin: mins
     });
