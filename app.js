@@ -6700,7 +6700,8 @@ function mNotice(money) {
 const mDefaultStart = () => {
   const n = new Date();
   const at = Math.floor((n.getHours() * 60 + n.getMinutes()) / 15) * 15;
-  return Math.max(360, Math.min(1439 - 60, at));
+  // No floor at 6am any more: opening the flow at 1am should offer 1am.
+  return Math.max(0, Math.min(1439, at));
 };
 
 state.m = {
@@ -7421,14 +7422,20 @@ function mFlowWhen() {
     : (crosses ? 'This crosses midnight — Zimpan will file it on the morning it ends.' : '');
   const hour = Math.floor(s.startMin / 60);
   const minute = s.startMin % 60;
-  const hours = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22];
+  /* Midnight to midnight. The rail used to start at 6am, which read as a
+     sensible waking-hours window until you tried to log something that began
+     at 1am — six hours of every day that no control could reach. The finer
+     drag resolution it bought was never worth a dead zone, and the minute
+     stepper below gives exact placement anyway. */
+  const hours = [];
+  for (let h = 0; h < 24; h++) hours.push(h);
   const mins = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
   /* Up to a full night. Stopping at three hours meant sleep — the longest
      thing most people log, and the one they log every day — could not be
      entered at all. */
   const durs = [15, 30, 45, 60, 90, 120, 180, 240, 360, 480];
-  const left = Math.max(0, Math.min(100, ((s.startMin - 360) / 1080) * 100));
-  const width = Math.max(0, Math.min(100 - left, (s.durMin / 1080) * 100));
+  const left = Math.max(0, Math.min(100, (s.startMin / 1440) * 100));
+  const width = Math.max(0, Math.min(100 - left, (s.durMin / 1440) * 100));
   const smallChip = (act, data, label, on) => `
     <button data-act="${act}" ${data} aria-pressed="${on}"
       style="min-height:40px;padding:0 4px;border-radius:12px;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;${mChip(on)}">${esc(label)}</button>`;
@@ -7451,7 +7458,7 @@ ${warning ? `
     <div class="m-handle" style="left:${left}%;"></div>
   </div>
   <div style="display:flex;justify-content:space-between;font-size:10.5px;color:#9995ab;margin-top:7px;">
-    <span>6a</span><span>12p</span><span>6p</span><span>12a</span>
+    <span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span>
   </div>
 </div>
 ${mLabel('Started — hour', `<button data-act="m-now" style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:12.5px;font-weight:600;color:#7450e4;padding:0;">Use now</button>`)}
@@ -7469,7 +7476,14 @@ ${mLabel('Minutes', `
 <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:7px;margin-bottom:16px;">
   ${mins.map((m) => smallChip('m-min', `data-m="${m}"`, ':' + pad(m), minute === m)).join('')}
 </div>
-${mLabel('For how long')}
+${mLabel('For how long', `
+  <span style="display:flex;align-items:center;gap:8px;">
+    <button data-act="m-dur-step" data-d="-5" aria-label="Five minutes shorter"
+      style="width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:17px;line-height:1;color:#5f3ac9;background:#fff;border:1px solid rgba(120,86,245,.4);">−</button>
+    <span style="min-width:56px;text-align:center;font-family:var(--font-heading);font-weight:700;font-size:16px;color:#16131f;font-variant-numeric:tabular-nums;">${esc(mDur(s.durMin))}</span>
+    <button data-act="m-dur-step" data-d="5" aria-label="Five minutes longer"
+      style="width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:17px;line-height:1;color:#5f3ac9;background:#fff;border:1px solid rgba(120,86,245,.4);">+</button>
+  </span>`)}
 <div style="display:flex;flex-wrap:wrap;gap:8px;">
   ${durs.map((m) => `
     <button data-act="m-dur" data-m="${m}" aria-pressed="${s.durMin === m}"
@@ -7971,7 +7985,7 @@ function mDragTo(x) {
   if (!mDrag || !mDrag.width) return;
   const pct = Math.min(1, Math.max(0, (x - mDrag.left) / mDrag.width));
   // 6am to midnight across the rail, at the resolution of a single minute.
-  const at = Math.round(360 + pct * 1080);
+  const at = Math.round(pct * 1440);
   const next = Math.max(0, Math.min(1439, at));
   if (next === state.m.startMin) return;
   state.m.startMin = next;
@@ -8214,6 +8228,12 @@ const M_ACTIONS = {
   // pull the start back so the two fitted inside one day, which silently
   // rewrote 11pm into the afternoon the moment you asked for seven hours.
   'm-dur': (el) => mSet({ durMin: Number(el.dataset.m) }),
+  /* The chips are the common lengths; this reaches the ones between them. A
+     night that ran 1am to 6:45am is 345 minutes, and no list of round numbers
+     was ever going to hold it. */
+  'm-dur-step': (el) => mSet({
+    durMin: Math.max(5, Math.min(1439, state.m.durMin + Number(el.dataset.d)))
+  }),
   'm-now': () => {
     const n = new Date();
     mSet({ startMin: n.getHours() * 60 + n.getMinutes() });
