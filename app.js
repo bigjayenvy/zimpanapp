@@ -3392,7 +3392,17 @@ const ICON_PATHS = {
   calendar: '<rect x="4" y="5.6" width="16" height="14" rx="2.6"/><path d="M4 10h16M8.6 3.6v3.4M15.4 3.6v3.4"/>'
     + '<circle cx="12" cy="14.6" r="1.4" fill="currentColor" stroke="none"/>',
   heart: '<path d="M12 19.6 5.4 13a4.3 4.3 0 0 1 6.6-5.4A4.3 4.3 0 0 1 18.6 13Z" stroke-linejoin="round"/>'
-    + '<circle cx="12" cy="7.6" r="1.4" fill="currentColor" stroke="none"/>'
+    + '<circle cx="12" cy="7.6" r="1.4" fill="currentColor" stroke="none"/>',
+  /* The four calorie readings. Same shapes the desktop's CAL_ICONS use, so a
+     flame means the same thing on both. */
+  flame: '<path d="M12 3.8c3.1 2.9 4.7 5.3 4.7 7.5a4.7 4.7 0 0 1-9.4 0c0-1 .4-2 1.2-2.9.3 1 .9 1.7 1.7 1.9.2-2.3.8-4.2 1.8-6.5Z" stroke-linejoin="round"/>',
+  plate: '<path d="M8 3.8v7.3M8 11.1v9.1M5.7 3.8v3.9a2.3 2.3 0 0 0 4.6 0V3.8"/>'
+    + '<path d="M16.7 3.8c-1.5 1.2-2 3-1.6 5.3.2 1.2.9 1.9 1.8 2v9.1"/>',
+  pulse: '<path d="M2.7 12h4.1l2.3-5.3 3.6 10.6 2.4-5.3h6.2"/>'
+    + '<circle cx="12" cy="17.3" r="1.3" fill="currentColor" stroke="none"/>',
+  scales: '<path d="M12 4.5v15.3M7.7 19.8h8.6M4.3 8.6h15.4"/>'
+    + '<path d="M4.3 8.6 2.2 13.3a2.3 2.3 0 0 0 4.2 0Z" stroke-linejoin="round"/>'
+    + '<path d="M19.7 8.6l-2.1 4.7a2.3 2.3 0 0 0 4.2 0Z" stroke-linejoin="round"/>'
 };
 
 const nodeIcon = (name, size, style) => `<svg viewBox="0 0 24 24" width="${size || 20}" height="${size || 20}"
@@ -7644,6 +7654,105 @@ function mBodyCard(day) {
 </div>`;
 }
 
+/* ── the calorie balance ──
+
+   The same four readings the desktop draws, from the same two functions, so a
+   day read on the phone and the same day read on the laptop cannot disagree.
+   What changes is the shape: four dials in a row need about 110px each and a
+   phone has 350, so they sit two by two.
+
+   Over a window longer than a day every figure is divided by the same span.
+   That leaves the balance between them — which is the whole reading — intact,
+   and the kicker says it is an average rather than a total, because a month's
+   intake on a dial scaled for one day would look like catastrophic overeating
+   every time. */
+const M_CAL_ARC = Math.PI * 38;
+
+function mCalDial(value, tone, glyph, cap, top) {
+  const dash = (Math.abs(value) / Math.max(top, 1)) * M_CAL_ARC;
+  return `
+  <div style="flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;
+              padding:12px 8px 11px;border-radius:16px;background:#fff;border:1px solid rgba(47,28,102,.09);">
+    <div style="position:relative;width:100%;max-width:104px;">
+      <svg viewBox="0 0 96 52" style="display:block;width:100%;height:auto;" aria-hidden="true">
+        <path d="M10 46 A 38 38 0 0 1 86 46" fill="none" stroke="#ece9f4" stroke-width="8" stroke-linecap="round"></path>
+        <path d="M10 46 A 38 38 0 0 1 86 46" fill="none" stroke="${tone}" stroke-width="8" stroke-linecap="round"
+          stroke-dasharray="${dash.toFixed(2)} ${M_CAL_ARC.toFixed(2)}"></path>
+      </svg>
+      <span style="position:absolute;left:50%;bottom:2px;transform:translateX(-50%);color:${tone};">${nodeIcon(glyph, 17)}</span>
+    </div>
+    <div style="font-family:var(--font-heading);font-weight:700;font-size:19px;line-height:1.1;color:#16131f;margin-top:6px;
+                font-variant-numeric:tabular-nums;">~${Math.abs(value).toLocaleString('en-US')}</div>
+    <div style="font-size:11.5px;color:#756f88;margin-top:3px;text-align:center;line-height:1.3;">${esc(cap)}</div>
+  </div>`;
+}
+
+function mCalCard(dates) {
+  const days = Math.max(1, dates.length);
+  const rows = mTimeRows(dates);
+  const burn = burnFor(rows, state.weightKg, days, dates);
+  const food = foodReport(rows, mMoneyRows(dates), days);
+
+  const per = (n) => Math.round(n / days);
+  const burned = per(burn.kcal);
+  const eaten = per(food.kcal);
+  const rested = per(burn.restKcal);
+  const kicker = days > 1 ? `Average day across ${days} days` : 'Daily calorie balance';
+
+  const shell = (inner) => `
+<div style="margin-bottom:22px;">
+  <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;margin-bottom:8px;">${esc(kicker)}</div>
+  ${inner}
+</div>`;
+
+  /* With nothing logged on either side there is no balance to draw, and
+     drawing one anyway would report a large deficit at breakfast time purely
+     because the day had not been logged yet. It says so rather than
+     disappearing: a card that silently comes and goes reads as a fault. The
+     resting figure is still worth showing — it is true whatever you log. */
+  if (!food.kcal && !burn.kcal) {
+    return shell(`
+  <div class="card" style="border-radius:16px;padding:16px;gap:0;box-shadow:${M_SHADOW_SM};">
+    <div style="font-size:14px;line-height:1.5;color:#575168;">
+      Nothing to weigh up yet. Your body spends roughly
+      <strong style="color:#16131f;">${rested.toLocaleString('en-US')} kcal a day</strong> at rest, but a balance
+      needs something on the other side — log a meal or a workout${days === 1
+        ? `, or <button data-act="m-steps-open" style="border:0;background:transparent;padding:0;font:inherit;color:#5f3ac9;font-weight:600;text-decoration:underline;cursor:pointer;">add your steps</button>` : ''}.
+    </div>
+  </div>`);
+  }
+
+  /* Everything out, less everything in. Positive is a deficit — more spent
+     than eaten — which is the direction people are usually looking for, so it
+     takes the green. */
+  const net = burned + rested - eaten;
+  const deficit = net >= 0;
+  // One scale across all four, so the dials are comparable to each other
+  // rather than each being full of itself.
+  const top = Math.max(eaten, burned, rested, Math.abs(net), 1);
+
+  const stepLine = days === 1
+    ? `${burn.steps ? `${burn.steps.toLocaleString('en-US')} steps counted. ` : ''}`
+    : (burn.steps ? `${burn.steps.toLocaleString('en-US')} steps across the window. ` : '');
+
+  return shell(`
+  <div style="display:flex;gap:10px;margin-bottom:10px;">
+    ${mCalDial(burned, '#0e9f6e', 'flame', 'Burned moving', top)}
+    ${mCalDial(eaten, '#e9a13b', 'plate', 'Eaten', top)}
+  </div>
+  <div style="display:flex;gap:10px;">
+    ${mCalDial(rested, '#5f3ac9', 'pulse', 'Burned at rest', top)}
+    ${mCalDial(net, deficit ? '#0e9f6e' : '#d92d20', 'scales', `Net ${deficit ? 'deficit' : 'surplus'}`, top)}
+  </div>
+  <p style="margin:10px 0 0;font-size:11.5px;line-height:1.5;color:#9995ab;">
+    ${esc(stepLine)}Rest is worked out from ${burn.assumedWeight
+      ? `a default ${DEFAULT_WEIGHT_KG} kg — `
+      : `your ${esc(String(state.weightKg))} kg — `}<button data-act="m-weight-open"
+      style="border:0;background:transparent;padding:0;font:inherit;color:#5f3ac9;font-weight:600;text-decoration:underline;cursor:pointer;">${burn.assumedWeight ? 'add your weight' : 'edit it'}</button>.
+    Every figure here is a rough estimate from what you logged, useful for a direction rather than to count on.
+  </p>`);
+}
+
 function mDonateCard() {
   return `
 <div class="card" style="border-radius:20px;padding:18px;border:1px solid rgba(120,86,245,.25);box-shadow:0 4px 14px rgba(47,28,102,.08);gap:0;margin-top:22px;">
@@ -7773,6 +7882,8 @@ function mHome() {
   </button>` : ''}
 
   ${single ? mBodyCard(day) : ''}
+
+  ${mCalCard(dates)}
 
   ${searchField()}
 
