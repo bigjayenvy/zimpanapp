@@ -3297,6 +3297,47 @@ const CHECK_ICON = icon('<circle cx="12" cy="12" r="9"/><path d="m8.4 12.4 2.5 2
 
 const LANDING_CHECKS = ['Financial Overview', 'Time & Project Tracking', 'Activity & Focus', 'Sleep & Well-being'];
 
+/* ─────────────────────────── icons ───────────────────────────
+
+   The app was using geometric characters for its own furniture — ◱ for Home,
+   ◲ for Insights, ◷ for time — which is the same square typed three ways and
+   reads as something nobody got round to drawing.
+
+   These are drawn instead, in one language: a trace, and a filled node where
+   the trace turns or ends. It is the shape the brand already uses for the way
+   one thing leads to another, and at 20px a node is still legible where a
+   detailed glyph is mud.
+
+   Stroke is currentColor, so an icon takes the colour of whatever it sits in
+   — a tab that goes violet when active needs no second copy.
+
+   Separate from icon() above only because these are used by the phone, which
+   is styled inline and has no class to hang a size on: nodeIcon takes the
+   size as an argument where icon() takes it from CSS. */
+const ICON_PATHS = {
+  home: '<path d="M3.7 11.5 12 4.6l8.3 6.9"/><path d="M6.4 10.4v9h11.2v-9"/>'
+    + '<circle cx="12" cy="4.6" r="1.7" fill="currentColor" stroke="none"/>',
+  insights: '<path d="M4.2 19.4h15.6"/><path d="M5.9 15.7 10 10.8l3.7 3.3 5.1-6.5"/>'
+    + '<circle cx="10" cy="10.8" r="1.5" fill="currentColor" stroke="none"/>'
+    + '<circle cx="13.7" cy="14.1" r="1.5" fill="currentColor" stroke="none"/>'
+    + '<circle cx="18.8" cy="7.6" r="1.6" fill="currentColor" stroke="none"/>',
+  clock: '<circle cx="12" cy="12" r="8.3"/><path d="M12 7.3V12l3.3 2.3"/>'
+    + '<circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
+  play: '<path d="M9.4 7.1 17 12l-7.6 4.9Z" stroke-linejoin="round"/>'
+    + '<circle cx="17" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
+  search: '<circle cx="10.6" cy="10.6" r="6.1"/><path d="M15.1 15.1 19.3 19.3"/>'
+    + '<circle cx="19.5" cy="19.5" r="1.4" fill="currentColor" stroke="none"/>',
+  up: '<path d="M12 19.3V6.7"/><path d="M6.6 12.1 12 6.5l5.4 5.6"/>'
+    + '<circle cx="12" cy="19.3" r="1.5" fill="currentColor" stroke="none"/>',
+  check: '<circle cx="12" cy="12" r="9.1"/><path d="M7.7 12.3 10.6 15.3 16.3 8.9"/>',
+  heart: '<path d="M12 19.6 5.4 13a4.3 4.3 0 0 1 6.6-5.4A4.3 4.3 0 0 1 18.6 13Z" stroke-linejoin="round"/>'
+    + '<circle cx="12" cy="7.6" r="1.4" fill="currentColor" stroke="none"/>'
+};
+
+const nodeIcon = (name, size, style) => `<svg viewBox="0 0 24 24" width="${size || 20}" height="${size || 20}"
+  fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"
+  style="display:block;flex:none;${style || ''}">${ICON_PATHS[name] || ''}</svg>`;
+
 /* Wording tightened where the original overstated the product: the insights
    are rule-based rather than AI, currency switching relabels rather than
    converting, and the timeline is a single row rather than a gantt chart. */
@@ -6926,24 +6967,54 @@ function mBoot() {
    credential differs — so both open the real auth panel and both land in
    setup once it closes. */
 function mSignin() {
+  /* The same artwork the desktop opens on, layered the same way: the banner
+     first, the two brand washes under it, the ground under those. If
+     ds/home-bg.jpg is missing the gradients are what show, so this never
+     falls to white — which is the whole reason the desktop stacks them.
+
+     A phone crops a landscape banner to its middle and loses the clear half
+     the headline was meant to sit on, so a scrim goes over the top, exactly
+     as the landing's own phone rules do. Fixed rather than on the panel: the
+     list makes this taller than one screen on a small handset, and `cover`
+     on a scrolling element would scale the artwork to the scroll height. */
+  const art = `
+  <div aria-hidden="true" style="position:fixed;inset:0;z-index:0;pointer-events:none;background:
+    linear-gradient(180deg,rgba(248,247,251,.74) 0%,rgba(248,247,251,.9) 52%,#f8f7fb 78%),
+    url('ds/home-bg.jpg') center right / cover no-repeat,
+    radial-gradient(1100px 620px at 88% -8%,rgba(74,36,88,.18),transparent 62%),
+    radial-gradient(760px 520px at 6% 4%,rgba(42,139,125,.12),transparent 60%),
+    #f8f7fb;"></div>`;
+
+  const checks = LANDING_CHECKS.map((t) => `
+    <li style="display:flex;align-items:center;gap:10px;font-size:14.5px;color:#3b3648;">
+      <span style="display:flex;flex:none;color:#5f3ac9;">${nodeIcon('check', 19)}</span>${esc(t)}
+    </li>`).join('');
+
   return `
-<div style="min-height:100vh;display:flex;flex-direction:column;justify-content:center;gap:26px;
-            padding:0 28px 34px;background:linear-gradient(180deg,#f8f7fb 0%,#efedf6 100%);">
-  <div style="display:flex;align-items:center;gap:13px;">
-    <span style="filter:drop-shadow(0 10px 24px rgba(79,70,229,.34));display:block;">${LOGO_BADGE(56)}</span>
-    <span style="font-family:var(--font-heading);font-weight:600;font-size:30px;letter-spacing:.02em;line-height:1;color:#16131f;">ZIMPAN<span style="color:#5f3ac9;">.</span></span>
+<div style="position:relative;min-height:100dvh;display:flex;flex-direction:column;justify-content:center;gap:24px;
+            padding:34px 28px calc(34px + env(safe-area-inset-bottom));">
+  ${art}
+  <div style="position:relative;z-index:1;display:flex;flex-direction:column;gap:24px;">
+    <div style="display:flex;align-items:center;gap:13px;">
+      <span style="filter:drop-shadow(0 10px 24px rgba(79,70,229,.34));display:block;">${LOGO_BADGE(56)}</span>
+      <span>
+        <span style="display:block;font-family:var(--font-heading);font-weight:600;font-size:30px;letter-spacing:.02em;line-height:1;color:#16131f;">ZIMPAN<span style="color:#5f3ac9;">.</span></span>
+        <span style="display:block;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#756f88;margin-top:5px;">Track What Matters</span>
+      </span>
+    </div>
+    <div>
+      <div style="font-family:var(--font-heading);font-weight:700;font-size:38px;line-height:1.05;letter-spacing:-.01em;color:#16131f;">Where did<br>it all go?</div>
+      <p style="margin:14px 0 0;font-size:15.5px;line-height:1.5;color:#575168;max-width:33ch;">Log your day in seconds and watch the pattern appear. Zimpan turns what you actually do with your time and money into something you can read — and act on.</p>
+    </div>
+    <ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;">${checks}</ul>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <button class="btn btn-primary" data-act="m-signup"
+        style="width:100%;min-height:52px;font-size:16px;box-shadow:0 6px 18px rgba(79,70,229,.34);">Create an account</button>
+      <button class="btn btn-secondary" data-act="m-signin"
+        style="width:100%;min-height:52px;font-size:16px;">Continue with Google</button>
+    </div>
+    <div style="font-size:12.5px;color:#756f88;line-height:1.5;">Free forever · no ads · your data stays yours</div>
   </div>
-  <div>
-    <div style="font-family:var(--font-heading);font-weight:700;font-size:38px;line-height:1.05;letter-spacing:-.01em;color:#16131f;">Where did<br>it all go?</div>
-    <p style="margin:14px 0 0;font-size:15.5px;line-height:1.5;color:#575168;max-width:31ch;">Log your time and money in a few taps. Zimpan finds the pattern for you.</p>
-  </div>
-  <div style="display:flex;flex-direction:column;gap:10px;margin-top:6px;">
-    <button class="btn btn-primary" data-act="m-signup"
-      style="width:100%;min-height:52px;font-size:16px;box-shadow:0 6px 18px rgba(79,70,229,.34);">Create an account</button>
-    <button class="btn btn-secondary" data-act="m-signin"
-      style="width:100%;min-height:52px;font-size:16px;">Continue with Google</button>
-  </div>
-  <div style="font-size:12.5px;color:#756f88;line-height:1.5;">Free forever · no ads · your data stays yours</div>
 </div>`;
 }
 
@@ -7098,7 +7169,7 @@ function mTimerCard() {
     return `
 <button class="m-timer-idle" data-act="m-timer-start"
   style="width:100%;display:flex;align-items:center;gap:14px;padding:18px;border-radius:20px;cursor:pointer;text-align:left;border:0;background:${M_GRAD};box-shadow:${M_LIFT};color:#fff;margin-bottom:14px;">
-  <span style="width:46px;height:46px;flex:none;border-radius:50%;background:rgba(255,255,255,.2);display:grid;place-items:center;font-size:17px;">▶</span>
+  <span style="width:46px;height:46px;flex:none;border-radius:50%;background:rgba(255,255,255,.2);display:grid;place-items:center;">${nodeIcon('play', 21)}</span>
   <span style="flex:1;">
     <span style="display:block;font-family:var(--font-heading);font-weight:700;font-size:21px;line-height:1.1;">Start timer</span>
     <span style="display:block;font-size:13px;opacity:.82;margin-top:3px;">Track it live, name it after</span>
@@ -7147,12 +7218,12 @@ function mEntryRow(e, opts) {
      The money glyph is the active currency, which is not always one character:
      "Dhs" and "HK$" have to sit in the same 26px tile as "$", so the type size
      follows the glyph rather than the tile growing to fit it. */
-  const glyph = money ? mGlyph() : '◷';
-  const glyphSize = !money ? 13 : glyph.length > 2 ? 8.5 : glyph.length > 1 ? 10 : 13;
+  const glyph = money ? mGlyph() : '';
+  const glyphSize = glyph.length > 2 ? 8.5 : glyph.length > 1 ? 10 : 13;
   const tile = `
   <span aria-hidden="true" style="width:26px;height:26px;flex:none;border-radius:9px;display:grid;place-items:center;
     background:${money ? '#eceefe' : '#f2eefe'};color:${money ? '#3f4bc4' : '#5f3ac9'};
-    font-size:${glyphSize}px;font-weight:700;line-height:1;">${esc(glyph)}</span>`;
+    font-size:${glyphSize}px;font-weight:700;line-height:1;">${money ? esc(glyph) : nodeIcon('clock', 15)}</span>`;
   return `
 <button class="card" data-act="${esc(o.act || 'm-open-entry')}" data-id="${esc(e.id)}" data-kind="${money ? 'money' : 'time'}"
   style="flex-direction:row;align-items:center;gap:10px;width:100%;padding:13px 14px;border-radius:16px;box-shadow:${M_SHADOW_SM};cursor:pointer;text-align:left;">
@@ -7322,11 +7393,11 @@ function mHome() {
   ${mRangeKey() === 'today' ? mTimerCard() : ''}
 
   <div style="display:flex;gap:10px;margin-bottom:22px;">
-    ${[['m-log-time', '#f2eefe', '#5f3ac9', '◷', 'Log time', '15px'],
-      ['m-log-money', '#eceefe', '#3f4bc4', mGlyph(), 'Log money', '13px']].map((q) => `
+    ${[['m-log-time', '#f2eefe', '#5f3ac9', nodeIcon('clock', 17), 'Log time', '15px'],
+      ['m-log-money', '#eceefe', '#3f4bc4', esc(mGlyph()), 'Log money', '13px']].map((q) => `
       <button class="card" data-act="${q[0]}"
         style="flex:1;flex-direction:column;gap:6px;align-items:flex-start;padding:14px;border-radius:16px;box-shadow:${M_SHADOW_SM};cursor:pointer;text-align:left;">
-        <span style="width:30px;height:30px;border-radius:10px;background:${q[1]};display:grid;place-items:center;font-size:${q[5]};font-weight:700;color:${q[2]};">${esc(q[3])}</span>
+        <span style="width:30px;height:30px;border-radius:10px;background:${q[1]};display:grid;place-items:center;font-size:${q[5]};font-weight:700;color:${q[2]};">${q[3]}</span>
         <span style="font-family:var(--font-heading);font-weight:700;font-size:15px;color:#16131f;">${esc(q[4])}</span>
       </button>`).join('')}
   </div>
@@ -7358,7 +7429,7 @@ function mHome() {
     : mEntryDrawer(mGroupedList(dates)))
     : `
   <div style="padding:30px 24px;border-radius:20px;background:#fff;border:1px dashed rgba(120,86,245,.35);text-align:center;">
-    <div style="width:46px;height:46px;margin:0 auto;border-radius:14px;background:#f2eefe;display:grid;place-items:center;font-size:19px;color:#5f3ac9;">◷</div>
+    <div style="width:46px;height:46px;margin:0 auto;border-radius:14px;background:#f2eefe;display:grid;place-items:center;color:#5f3ac9;">${nodeIcon('clock', 21)}</div>
     <div style="font-family:var(--font-heading);font-weight:700;font-size:19px;color:#16131f;margin-top:14px;">Nothing logged ${single ? 'yet' : 'in this stretch'}</div>
     <p style="margin:7px 0 0;font-size:14px;color:#756f88;line-height:1.45;">${single
       ? 'Start a timer for what you are doing now, or log something that already happened.'
@@ -7489,12 +7560,12 @@ const mDayChip = (day, label) => `
 
 function mFlowKind() {
   const s = state.m;
-  const card = (kind, icon, title, sub, tileBg, tileFg) => {
+  const card = (kind, mark, title, sub, tileBg, tileFg) => {
     const on = s.kind === kind;
     return `
     <button data-act="m-kind" data-kind="${kind}" aria-pressed="${on}"
       style="display:flex;align-items:center;gap:14px;width:100%;padding:16px;border-radius:18px;cursor:pointer;text-align:left;background:${on ? M_GRAD_FLAT : '#fff'};border:1.5px solid ${on ? 'transparent' : 'rgba(47,28,102,.1)'};box-shadow:${on ? '0 10px 26px rgba(79,70,229,.3)' : M_SHADOW_SM};">
-      <span style="width:44px;height:44px;flex:none;border-radius:14px;display:grid;place-items:center;font-size:19px;font-weight:700;background:${on ? 'rgba(255,255,255,.2)' : tileBg};color:${on ? '#fff' : tileFg};">${esc(icon)}</span>
+      <span style="width:44px;height:44px;flex:none;border-radius:14px;display:grid;place-items:center;font-size:19px;font-weight:700;background:${on ? 'rgba(255,255,255,.2)' : tileBg};color:${on ? '#fff' : tileFg};">${mark}</span>
       <span style="flex:1;">
         <span style="display:block;font-family:var(--font-heading);font-weight:700;font-size:17px;color:${on ? '#fff' : '#16131f'};">${esc(title)}</span>
         <span style="display:block;font-size:13px;margin-top:2px;color:${on ? 'rgba(255,255,255,.82)' : '#756f88'};">${esc(sub)}</span>
@@ -7504,8 +7575,8 @@ function mFlowKind() {
   const chip = mDayChip;
   return `
 <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:24px;">
-  ${card('time', '◷', 'Time', 'Something you did', '#f2eefe', '#5f3ac9')}
-  ${card('money', mGlyph(), 'Money', 'Something you spent or earned', '#eceefe', '#3f4bc4')}
+  ${card('time', nodeIcon('clock', 22), 'Time', 'Something you did', '#f2eefe', '#5f3ac9')}
+  ${card('money', esc(mGlyph()), 'Money', 'Something you spent or earned', '#eceefe', '#3f4bc4')}
 </div>
 ${mLabel('When')}
 <div style="display:flex;flex-wrap:wrap;gap:8px;">
@@ -7904,7 +7975,8 @@ function mInsights() {
          columns they take a fixed width and the row scrolls inside the card
          instead — the card stays put, and the page never scrolls sideways. -->
     ${wide ? mScrollHint(`Scroll for all ${series.length}`) : ''}
-    <div class="m-bars${wide ? ' is-wide' : ''}" style="display:flex;align-items:flex-end;gap:${wide ? 6 : 8}px;height:132px;${wide ? 'overflow-x:auto;overflow-y:hidden;' : ''}">
+    <div class="m-bars${wide ? ' is-wide' : ''}" data-bars="${esc(mInsightKey() + ':' + (money ? 'money' : 'time') + ':' + series.length)}"
+      style="display:flex;align-items:flex-end;gap:${wide ? 6 : 8}px;height:132px;${wide ? 'overflow-x:auto;overflow-y:hidden;' : ''}">
       ${series.map((w, i) => `
         <div style="${wide ? 'flex:0 0 26px;' : 'flex:1;'}display:flex;flex-direction:column;align-items:center;gap:5px;justify-content:flex-end;height:100%;">
           <!-- The figure above its own bar. Heights say which is biggest; only
@@ -7950,7 +8022,7 @@ function mTopButton() {
 <button id="m-top" data-act="m-scroll-top" aria-label="Back to top"
   style="display:none;position:fixed;right:18px;bottom:104px;z-index:12;width:44px;height:44px;border-radius:50%;
          border:1px solid rgba(120,86,245,.3);background:#fff;color:#5f3ac9;font-size:17px;line-height:1;
-         box-shadow:0 6px 18px rgba(47,28,102,.18);cursor:pointer;">↑</button>`;
+         box-shadow:0 6px 18px rgba(47,28,102,.18);cursor:pointer;display:none;place-items:center;">${nodeIcon('up', 19)}</button>`;
 }
 
 function mTabs() {
@@ -7958,14 +8030,14 @@ function mTabs() {
   const tab = (act, glyph, label, active) => `
     <button data-act="${act}"${active ? ' aria-current="page"' : ''}
       style="border:0;background:transparent;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;font-family:var(--font-body);font-size:11px;font-weight:600;min-width:60px;min-height:44px;color:${active ? '#7450e4' : '#9995ab'};">
-      <span style="font-size:19px;line-height:1;">${glyph}</span>${label}
+      <span style="line-height:1;">${glyph}</span>${label}
     </button>`;
   return `
 <div style="position:fixed;left:0;right:0;bottom:0;z-index:10;height:92px;display:flex;align-items:center;justify-content:space-around;padding:0 26px 22px;background:linear-gradient(180deg,rgba(248,247,251,0),rgba(248,247,251,.96) 42%);backdrop-filter:blur(8px);">
-  ${tab('m-go-home', '◱', 'Home', on === 'home')}
+  ${tab('m-go-home', nodeIcon('home', 21), 'Home', on === 'home')}
   <button data-act="m-flow-open" aria-label="Log something"
     style="width:58px;height:58px;flex:none;border:0;border-radius:50%;cursor:pointer;background:${M_GRAD_FLAT};box-shadow:0 10px 24px rgba(79,70,229,.4);color:#fff;font-size:26px;font-weight:300;line-height:1;margin-bottom:12px;">+</button>
-  ${tab('m-go-insights', '◲', 'Insights', on === 'insights')}
+  ${tab('m-go-insights', nodeIcon('insights', 21), 'Insights', on === 'insights')}
 </div>`;
 }
 
@@ -7983,7 +8055,7 @@ function mDonateSheet() {
   if (s.donateThanks) {
     return mSheet(`
   <div style="text-align:center;">
-    <div style="width:66px;height:66px;margin:0 auto;border-radius:50%;background:${M_GRAD_FLAT};display:grid;place-items:center;font-size:28px;color:#fff;box-shadow:0 12px 28px rgba(79,70,229,.34);">♥</div>
+    <div style="width:66px;height:66px;margin:0 auto;border-radius:50%;background:${M_GRAD_FLAT};display:grid;place-items:center;color:#fff;box-shadow:0 12px 28px rgba(79,70,229,.34);">${nodeIcon('heart', 28)}</div>
     <div style="font-family:var(--font-heading);font-weight:700;font-size:23px;color:#16131f;margin-top:18px;">Thank you</div>
     <p style="margin:8px auto 20px;font-size:14px;line-height:1.5;color:#575168;max-width:30ch;">You will get a receipt by email. Nothing about your app changes — that is the point.</p>
     <button class="btn btn-primary" data-act="m-donate-close" style="width:100%;min-height:50px;font-size:15.5px;">Back to Zimpan</button>
@@ -8838,7 +8910,7 @@ function searchField() {
     placeholder="Search everything you have logged" autocomplete="off"
     style="width:100%;min-height:46px;padding:10px 42px 10px 30px;font-size:15px;
            background:transparent;border:0;border-bottom:1px solid rgba(47,28,102,.18);border-radius:0;box-shadow:none;">
-  <span aria-hidden="true" style="position:absolute;left:4px;top:50%;transform:translateY(-50%);font-size:15px;color:#9995ab;pointer-events:none;">⌕</span>
+  <span style="position:absolute;left:4px;top:50%;transform:translateY(-50%);color:#9995ab;pointer-events:none;">${nodeIcon('search', 17)}</span>
   ${q ? `<button data-act="search-clear" aria-label="Clear search"
     style="position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;cursor:pointer;font-size:16px;color:#756f88;width:34px;height:34px;border-radius:50%;">✕</button>` : ''}
 </div>`;
@@ -9460,12 +9532,23 @@ mDragWire();
    would be an absurd price for one button changing its mind. */
 /* A month of bars opens at the far end rather than the far past: the newest
    day is the one being asked about, and it is the one the gradient marks. The
-   fade on the right edge is dropped once there is nothing left to scroll to. */
+   fade on the right edge is dropped once there is nothing left to scroll to.
+
+   Where it is scrolled to survives a render, which it has to: every render
+   replaces the row, and a sync landing while someone is looking at the middle
+   of the month would otherwise snap the chart back to today under their
+   thumb. Only a genuinely different row — another window, the other tracker —
+   starts at the end again, which is what the key is for. */
+let mBarsAt = { key: '', left: 0 };
+
 function mPaintBars() {
   const bars = document.querySelector('.m-bars.is-wide');
   if (!bars) return;
-  bars.scrollLeft = bars.scrollWidth;
+  const key = bars.dataset.bars || '';
+  bars.scrollLeft = key === mBarsAt.key ? mBarsAt.left : bars.scrollWidth;
+  mBarsAt = { key, left: bars.scrollLeft };
   const atEnd = () => {
+    mBarsAt = { key, left: bars.scrollLeft };
     bars.classList.toggle('at-end', bars.scrollLeft + bars.clientWidth >= bars.scrollWidth - 2);
   };
   atEnd();
@@ -9475,7 +9558,8 @@ function mPaintBars() {
 function mPaintTop() {
   const el = document.getElementById('m-top');
   if (!el) return;
-  el.style.display = window.scrollY > 600 ? 'block' : 'none';
+  // grid, not block: the arrow inside is an SVG that centres by place-items.
+  el.style.display = window.scrollY > 600 ? 'grid' : 'none';
 }
 window.addEventListener('scroll', mPaintTop, { passive: true });
 
