@@ -1677,7 +1677,11 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      scrolling past would be painted right through it. */
   .deck-ranges {
     flex: none; display: flex; gap: 4px; justify-content: safe center; flex-wrap: nowrap;
-    margin-right: 44px;
+    /* The close button sits 10px from the edge and is 34px across, so it ends
+       at 44px. 52px leaves the last pill a real gap rather than landing its
+       edge exactly on the button's — which is a touch target under another
+       touch target, whatever it looks like. */
+    margin-right: 52px;
     overflow-x: auto; scrollbar-width: none;
   }
   .deck-ranges::-webkit-scrollbar { display: none; }
@@ -1959,8 +1963,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
        as a collision. A margin moves the scroller's own edge clear of it, and
        the overflow is then clipped where the row ends. */
     .deck-ranges {
-      gap: 3px; margin-right: 40px; padding-right: 0; justify-content: flex-start;
-      overflow-x: auto; scrollbar-width: none;
+      gap: 3px; justify-content: flex-start;
     }
     .deck-ranges::-webkit-scrollbar { display: none; }
     .deck-range { font-size: 11.5px; padding: 5px 11px; }
