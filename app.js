@@ -151,15 +151,22 @@ const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ESCAPES
    to hit wins, which is why the specific ones sit above the generic ones. */
 
 const ICONS = [
-  [/workout|exercise|gym|treadmill|jog|running|sport|swim|bike|cycl|yoga|stretch|hike/, '🏃'],
+  // \bsport, not sport: "Transport" ends in one and is not exercise.
+  [/workout|exercise|gym|treadmill|jog|running|\bsport|swim|bike|cycl|yoga|stretch|hike/, '🏃'],
   [/potato|couch|netflix|binge|scroll|telly|\btv\b/, '🛋️'],
   [/family|kids|parent|lola|lolo|anak|reunion/, '👨‍👩‍👧'],
   [/focus|deep work|study|studying|homework|research|thesis/, '🎯'],
   [/chore|laundry|tidy|sweep|dishes|housework/, '🧹'],
-  [/grocer|palengke|supermarket|market/, '🛒'],
-  [/eat out|restaurant|dining|dinner|lunch|breakfast|merienda|food/, '🍽️'],
+  // \bmarket\b keeps "Marketing" out; "supermarket" is spelled out because
+  // the boundary would exclude it too.
+  [/grocer|palengke|supermarket|\bmarket\b/, '🛒'],
+  // Bare "Eat" is the commonest name anyone gives this category and it used
+  // to fall through to the fallback, because only "eat out" was listed.
+  [/\beat\b|eat out|restaurant|dining|dinner|lunch|breakfast|merienda|food|kain/, '🍽️'],
   [/petrol|fuel|gas station|diesel/, '⛽'],
-  [/commute|traffic|jeep|tricycle|train|\bbus\b|grab|fare/, '🚌'],
+  // "Transport" is the name most people give this and it matched nothing —
+  // it only ever reached the exercise rule by accident, through "sport".
+  [/commute|transport|traffic|jeep|tricycle|train|\bbus\b|grab|fare/, '🚌'],
   [/house improve|renovat|repair|paint|carpent|hardware/, '🔨'],
   [/birthday|anniversar|celebrat|fiesta/, '🎂'],
   [/gadget|phone|laptop|computer|tech/, '📱'],
@@ -167,23 +174,28 @@ const ICONS = [
   [/appliance|aircon|fridge|washing machine|rice cooker/, '🔌'],
   [/shopping|mall|clothes|shoes/, '🛍️'],
   [/project|freelance|client|side hustle|business/, '🛠️'],
-  [/movie|cinema|film|concert|show/, '🎬'],
+  // \bshow\b, or every Shower is a night at the cinema.
+  [/movie|cinema|film|concert|\bshow\b/, '🎬'],
   [/pray|worship|church|mass|bible|devotion|medit|reflect|journal|gratitude|quiet time|retreat/, '🙏'],
-  [/sleep|nap|rest|siesta|recover/, '😴'],
+  // \brest\b: "Interest" and "Forest" are not naps.
+  [/sleep|nap|\brest\b|siesta|recover/, '😴'],
   [/read|book|library/, '📚'],
   [/cook|baking|kitchen/, '🍳'],
   [/wash car|\bcar\b|drive|vehicle|motor/, '🚗'],
   [/email|inbox|admin|paperwork/, '✉️'],
-  [/meeting|standup|call|zoom|client sync/, '🗓️'],
-  [/code|coding|program|dev\b|build/, '💻'],
+  [/meeting|standup|call|zoom|\bsync\b|1:1|one on one/, '🗓️'],
+  // \bbuild\b, so a "Building" category is not filed as software.
+  [/code|coding|program|dev\b|\bbuild\b/, '💻'],
   [/school|class|tuition|college|university/, '🎓'],
   [/health|doctor|clinic|medicine|hospital|dentist/, '🏥'],
-  [/coffee|kape|cafe|tea/, '☕'],
+  // \btea\b, or "Team" and "Teaching" both come out as a hot drink.
+  [/coffee|kape|cafe|\btea\b/, '☕'],
   [/game|gaming|console|mobile legends/, '🎮'],
   [/travel|trip|flight|vacation|beach/, '✈️'],
   [/music|guitar|sing|band/, '🎵'],
   [/pet|\bdog\b|\bcat\b|aso|pusa/, '🐕'],
   [/friend|barkada|hangout|social/, '🧑‍🤝‍🧑'],
+  [/salary|sahod|payroll|paycheck|\bwage|income|bonus|commission|dividend|refund/, '💰'],
   [/save|savings|bank|invest|ipon/, '🏦'],
   [/gift|regalo|donation|tithe/, '🎁'],
   [/rent|mortgage|amortization/, '🏠'],
@@ -192,11 +204,16 @@ const ICONS = [
   [/clean|wash|linis/, '🧼']
 ];
 
+/* Keyed by name AND fallback. A name that matches no keyword is cached as
+   whatever the caller's fallback was, and the two callers have different ones
+   — so with the name alone as the key, whichever tracker asked first decided
+   for both: a "Salary" purpose came back as a stopwatch because the time side
+   had asked about a category of the same name a moment earlier. */
 const iconCache = {};
 function iconFor(name, fallback) {
-  const key = String(name || '');
+  const key = String(name || '') + '\u0000' + String(fallback || '');
   if (iconCache[key] != null) return iconCache[key];
-  const low = key.toLowerCase();
+  const low = String(name || '').toLowerCase();
   const hit = ICONS.find(([re]) => re.test(low));
   return (iconCache[key] = hit ? hit[1] : fallback);
 }
