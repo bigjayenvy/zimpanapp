@@ -2773,6 +2773,22 @@ function compute() {
 
     reportDays,
     reportEntryCount: reportSource.length,
+    /* The window's entries in clock order — the log itself rather than a
+       total of it. Only the raw-summary card reads this, and only on a single
+       day: over a fortnight it would be two hundred rows behind a button,
+       which is a list nobody opens rather than a summary anybody reads.
+
+       An entry that wrapped past midnight is dated the day it ended, so a
+       sleep from 11PM to 6AM carries from=1380 and sorted to the bottom — the
+       night that opened the day appearing after the evening walk that closed
+       it. Sorting it from the previous evening puts it where it belongs in
+       the telling: first. */
+    rangeRows: winDays === 1
+      ? rangeList.slice().sort((a, b) => {
+        const at = (e) => (wraps(e) ? e.from - 1440 : e.from);
+        return (at(a) - at(b)) || (a.to - b.to);
+      })
+      : [],
     /* The other end of the busiest day. Only meaningful once there are two days
        to compare, and drawn from days that carry something — a day with nothing
        logged is not a quiet day, it is a day the app cannot see. */
@@ -5067,7 +5083,44 @@ function moneyDesktop(v) {
    when it lands. `donut` and `chart` are the two drawn things a card can hold;
    no card holds both. */
 const card = (key, o) => Object.assign(
-  { key, kicker: '', big: '', title: '', lines: [], rows: [], note: '', chart: null, donut: null, summary: '', closing: null }, o);
+  { key, kicker: '', big: '', title: '', lines: [], rows: [], note: '', chart: null, donut: null,
+    summary: '', closing: null, raw: '', effects: null }, o);
+
+const DECK_RAW_SHOWN = 6;
+
+/* ── the raw summary ──
+   Every other card in the deck is an aggregate: a share, an average, a total.
+   An aggregate is an argument about the day. This is the day — what you were
+   doing, when, in the words you used at the time — and it goes first because
+   it is the thing the rest is derived from.
+
+   Six rows, then the remainder behind one button. The button toggles a class
+   rather than re-rendering: a render rebuilds the deck and would throw the
+   reader back to the first card, which is a steep price for a drawer. */
+function deckRaw(rows) {
+  if (!rows.length) return '';
+  const line = (e, extra) => {
+    const note = String(e.note || '').trim();
+    const said = [e.activity || 'Something', note].filter(Boolean).join(' — ');
+    const meta = [e.category, durShort(span(e))].filter(Boolean).join(' · ');
+    return `
+      <div class="deck-raw-row${extra ? ' is-extra' : ''}">
+        <span class="deck-raw-when">${esc(clock12(e.from))} <span>to</span> ${esc(clock12(e.to))}</span>
+        <span class="deck-raw-what">
+          <span class="deck-raw-said">${esc(said)}</span>
+          <span class="deck-raw-cat">${esc(meta)}</span>
+        </span>
+      </div>`;
+  };
+  const hidden = Math.max(0, rows.length - DECK_RAW_SHOWN);
+  const label = `Show all ${rows.length}`;
+  return `
+    <div class="deck-raw">
+      ${rows.map((e, i) => line(e, i >= DECK_RAW_SHOWN)).join('')}
+      ${hidden ? `<button class="deck-raw-more no-print" data-act="deck-raw-more"
+        data-more="${esc(label)}" aria-expanded="false">${esc(label)}</button>` : ''}
+    </div>`;
+}
 
 /* ── written summaries ──
 
@@ -5161,14 +5214,105 @@ function weekWeightLabel(netKcalPerDay) {
   return `~${size.toFixed(2)} kg ${kg >= 0 ? 'lost' : 'gained'}`;
 }
 
+/* ── what it may be doing to you ──
+
+   The closing card used to talk about the app: days logged, streak length,
+   which category won. All true, and all about the tracking rather than about
+   the person doing it — which is the wrong note to finish on when the reason
+   anyone logs a day is to find out what the days are doing to them.
+
+   So it names effects, in the four dimensions the app already reads for:
+   body, mind, emotions, spirit, plus sleep, which reaches all four. Every
+   line is hedged, and hedged honestly rather than decoratively — "tends to",
+   "is generally reckoned", "for most people" — because these are population
+   tendencies read off a handful of self-logged entries, not a finding about
+   this person. The disclaimer directly beneath says the same thing plainly,
+   and neither is decoration: this is the one card that could talk someone
+   into or out of seeing a doctor.
+
+   A dimension with nothing logged gets a line about the absence of evidence,
+   not a line about the absence of the thing. Zimpan cannot tell a week with
+   no exercise from a week where nobody wrote it down, and saying otherwise
+   would be the most damaging thing on the card. */
+const SLEEP_EFFECTS = [
+  [0, 360, 'Short nights',
+    'Under six hours a night is where most people lose the edges first — attention, appetite signals and patience usually go before anything actually feels wrong, which is what makes it easy to attribute to something else.'],
+  [360, 420, 'Just under',
+    'Six to seven hours tends to show up as a shorter fuse and a heavier afternoon rather than as feeling tired. The cost is real and rarely gets blamed on the sleep.'],
+  [420, 540, 'In the range',
+    'Seven to nine hours is where recovery, mood and memory consolidation are generally reckoned to sit. Holding it steadily is worth more than anything else on the cards behind this one.'],
+  [540, 9999, 'Long nights',
+    'Consistently over nine hours can be honest recovery from hard training or illness. If it is new and nothing explains it, it is the kind of change worth mentioning to a doctor rather than tracking alone.']
+];
+
+function sleepEffect(v) {
+  const s = v.rangeSleep;
+  if (!s || !s.nights) {
+    return { label: 'Sleep', value: 'not logged',
+      text: 'Nothing logged to read. Sleep is the one input that reaches your body, mood, focus and appetite at once, so it is the most useful thing on this list to start recording.' };
+  }
+  const band = SLEEP_EFFECTS.find(([lo, hi]) => s.avgMins >= lo && s.avgMins < hi) || SLEEP_EFFECTS[2];
+  let text = band[3];
+  if (s.nights > 1 && s.drift >= 120) {
+    text += ` Your bedtime also moved by ${durShort(s.drift)} across these nights; a body reads a moving bedtime as a moving night, and the first hour is usually the one that pays.`;
+  }
+  return { label: 'Sleep', value: `${durShort(s.avgMins)}${s.nights > 1 ? ' a night' : ''}`, text };
+}
+
+/* Keyed by dimension and by how well fed it is. `none` is deliberately about
+   the record rather than about the person. */
+const DIMENSION_EFFECTS = {
+  physical: {
+    none: 'Nothing logged that moves you. That may be a quiet stretch or it may be a gap in the record — Zimpan cannot tell those apart, and the difference matters more here than anywhere else on this card.',
+    thin: 'Little logged movement. Low movement is more often felt as flat energy than as inactivity; circulation, sleep quality and mood are usually where it shows before the body does.',
+    steady: 'A reasonable amount of movement logged. This is the input that tends to push on sleep, mood and energy together rather than one at a time.',
+    strong: 'A strong amount of movement. For most people this is the single cheapest lever on how the rest of the week feels — and the one whose absence is noticed last.'
+  },
+  mental: {
+    none: 'Nothing logged that asked much of your attention. Sustained focus behaves like a trained thing: it fades without use, and it comes back with it.',
+    thin: 'Not much logged that asked for concentration. Attention is trainable and it does drift when it is not used, so a thin stretch is worth noticing even when it is a welcome one.',
+    steady: 'A steady load of focused work. That is generally the range where attention holds without eating into the reserve sleep is meant to refill.',
+    strong: 'A heavy load of focused work. It pays in output and it draws on the same reserve as sleep and mood — long stretches without a real break tend to cost more than they look like they cost.'
+  },
+  emotional: {
+    none: 'No time logged with other people. Connection is among the more consistently supported predictors of how people feel over years rather than days — a thin stretch is nothing, a thin habit is worth catching early.',
+    thin: 'Little time logged with other people. It is rarely urgent and it compounds quietly, which is exactly why it loses to whatever is urgent.',
+    steady: 'A decent amount of time logged with other people. This is the part of a week that most reliably protects mood, and it seldom feels like maintenance while it is happening.',
+    strong: 'A lot of time logged with people. That is generally the most protective single thing in a week, and worth defending when a busier one arrives.'
+  },
+  spiritual: {
+    none: 'Nothing logged that was only for reflection. Even short deliberate quiet is associated with less rumination and a steadier read on what actually mattered in a day.',
+    thin: 'A little time given to reflection. Small and regular tends to do more here than long and occasional.',
+    steady: 'Regular time set aside for reflection. It tends to change how a stretch is remembered more than how it is spent.',
+    strong: 'A lot of room made for reflection. That usually shows up as perspective on the rest of this report rather than as anything on it.'
+  }
+};
+
+const EFFECT_LABEL = { physical: 'Body', mental: 'Mind', emotional: 'Emotions', spiritual: 'Spirit' };
+
+function deckEffects(v) {
+  const out = [sleepEffect(v)];
+  (v.rangeReadings || []).forEach((r) => {
+    const copy = DIMENSION_EFFECTS[r.key];
+    if (!copy) return;
+    out.push({
+      label: EFFECT_LABEL[r.key] || r.label,
+      value: r.total ? durShort(r.total) : 'not logged',
+      text: copy[r.status] || copy.none,
+      color: METER_COLOR[r.status]
+    });
+  });
+  return out;
+}
+
 function localClosing(v, days, lit) {
   const bits = [];
-  bits.push(lit === days
-    ? `You logged something on every one of these ${days} days. That is the hard part, and you did it.`
-    : `You logged something on ${lit} of ${days} days — every one of those is a day you chose to pay attention.`);
-  if (v.reportRows[0]) bits.push(`Most of it went to ${v.reportRows[0].name}, which is worth knowing whether or not it is where you meant it to go.`);
-  if (v.streak > 1) bits.push(`You are ${v.streak} days into a streak. Streaks are not the point, but they are good evidence that the habit is real.`);
-  bits.push('Nothing here is a verdict. It is a record of what you noticed, and noticing is the whole job — the next window is another chance to see something you would otherwise have missed.');
+  bits.push('None of this is a verdict, and none of it is about you specifically — it is what these patterns tend to do to people, set against what you happened to write down.');
+  if (lit < days) {
+    bits.push(`You logged on ${lit} of ${days} days, so read the gaps as gaps in the record rather than as empty days.`);
+  }
+  if (v.reportRows[0]) bits.push(`Most of the time went to ${v.reportRows[0].name}, which is worth knowing whether or not it is where you meant it to go.`);
+  bits.push('The useful question is not whether the numbers are good. It is whether the shape of this stretch is one you would choose again — and you can only ask that about a stretch you actually looked at.');
   return bits.join(' ');
 }
 
@@ -5180,6 +5324,15 @@ function timeCards(v) {
   const days = Math.max(1, v.rangeDayCount);
   const lit = v.reportDays.length;
   const quietest = v.quietestDay;
+
+  /* First card, before the totals that are derived from it — but only where
+     it can be read in one sitting. A week of entries is not a summary. */
+  if (days === 1 && v.rangeRows.length) out.push(card('raw', {
+    kicker: 'Raw summary',
+    title: 'How the day actually went',
+    raw: deckRaw(v.rangeRows),
+    note: `${v.rangeRows.length} ${v.rangeRows.length === 1 ? 'entry' : 'entries'}, in the order they happened.`
+  }));
 
   out.push(card('cover', {
     kicker: v.reportRange,
@@ -5292,6 +5445,12 @@ function timeCards(v) {
      number in it has already been shown on a card behind this one. */
   out.push(card('closing', {
     kicker: 'Before you go',
+    title: 'What a stretch like this tends to do',
+    /* Rendered from the readings every time, never from the AI cache. This is
+       the part of the report that makes claims about a body, and it should say
+       what the figures on the cards behind it actually support — not whatever
+       was written about a different window an hour ago. */
+    effects: deckEffects(v),
     summary: ai.closing || localClosing(v, days, lit),
     closing: true
   }));
@@ -5574,12 +5733,36 @@ function reportSheet() {
   const slide = (c, i) => `
         <section class="deck-slide" data-slide="${i}" data-key="${esc(c.key)}">
           <div class="deck-card"${c.accent ? ` style="--card-accent: ${esc(c.accent)};"` : ''}>
+            <!-- Above the card, not under it. A card that fills its own height
+                 pushed the hint off the bottom of a phone, so the one line
+                 telling you the deck goes sideways was the one line you never
+                 saw. The arrows carry the direction, not the words: "swipe
+                 left" beside a right-pointing arrow reads as a contradiction
+                 even though both describe the same gesture. -->
+            <div class="deck-hint no-print">
+              ${i > 0 ? '<span class="deck-hint-arrow">‹</span>' : ''}
+              <span>Swipe for more</span>
+              ${i < cards.length - 1 ? '<span class="deck-hint-arrow">›</span>' : ''}
+            </div>
             <div class="deck-body">
             ${c.kicker ? `<div class="deck-kicker">${esc(c.kicker)}</div>` : ''}
             ${c.big ? `<div class="deck-big">${esc(c.big)}</div>` : ''}
             ${c.title ? `<div class="deck-title">${esc(c.title)}</div>` : ''}
             ${c.lines.length ? `<div class="deck-lines">${c.lines.map((l) => `<p>${esc(l)}</p>`).join('')}</div>` : ''}
             ${c.donut ? c.donut.html : ''}
+            ${c.raw || ''}
+            ${c.effects ? `
+            <div class="deck-effects">
+              ${c.effects.map((e) => `
+                <div class="deck-effect">
+                  <div class="deck-effect-head">
+                    ${e.color ? `<span class="deck-dot" style="background: ${esc(e.color)};"></span>` : ''}
+                    <span class="deck-effect-label">${esc(e.label)}</span>
+                    <span class="deck-effect-value">${esc(e.value)}</span>
+                  </div>
+                  <p class="deck-effect-text">${esc(e.text)}</p>
+                </div>`).join('')}
+            </div>` : ''}
             ${c.chart ? `<div class="deck-chart">${c.chart.html}</div>` : ''}
             ${c.rows.length ? `
             <div class="deck-rows">
@@ -5595,15 +5778,6 @@ function reportSheet() {
             ${c.summary ? `<div class="deck-summary">${esc(c.summary)}</div>` : ''}
             ${c.summary ? deckWriting(v) : ''}
             ${c.closing ? deckClosing() : ''}
-            </div>
-            <!-- The arrows carry the direction, not the words: "swipe left"
-                 beside a right-pointing arrow reads as a contradiction even
-                 though both describe the same gesture. Shown only where there
-                 is something to reach. -->
-            <div class="deck-hint no-print">
-              ${i > 0 ? '<span class="deck-hint-arrow">‹</span>' : ''}
-              <span>Swipe for more</span>
-              ${i < cards.length - 1 ? '<span class="deck-hint-arrow">›</span>' : ''}
             </div>
             <div class="deck-mark">ZIMPAN<span>.</span> · ${esc(v.reportRange)}</div>
           </div>
@@ -6131,6 +6305,17 @@ const ACTIONS = {
   'range-week': () => { state.range = 'week'; render(); },
   'range-fortnight': () => { state.range = 'fortnight'; render(); },
   'range-month': () => { state.range = 'month'; render(); },
+  /* Toggles a class rather than re-rendering: a render rebuilds the deck and
+     would throw the reader back to the first card, which is a steep price for
+     a drawer. */
+  'deck-raw-more': (el) => {
+    const box = el.closest('.deck-raw');
+    if (!box) return;
+    const open = box.classList.toggle('is-open');
+    el.textContent = open ? 'Show less' : (el.dataset.more || 'Show all');
+    el.setAttribute('aria-expanded', String(open));
+  },
+
   'range-quarter': () => { state.range = 'quarter'; render(); },
   'range-half': () => { state.range = 'half'; render(); },
   'range-year': () => { state.range = 'year'; render(); },
