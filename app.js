@@ -7670,7 +7670,25 @@ function mBodyCard(day) {
    every time. */
 const M_CAL_ARC = Math.PI * 38;
 
-function mCalDial(value, tone, glyph, cap, top, kind) {
+/* Protein, carbs and fat in the order people say them, short enough to sit
+   under a half-width dial. Grams rather than percentages: a gram is a thing you
+   can picture and compare to a target, where "34% of energy from fat" is a
+   sentence you have to do arithmetic on before it means anything. */
+const M_MACRO_TONES = { protein: '#3f4bc4', carbs: '#e9a13b', fat: '#c0567a' };
+
+const mMacroLine = (n, size) => {
+  if (!n || (!n.protein && !n.carbs && !n.fat)) return '';
+  const part = (key, label, value) => `<span style="color:${M_MACRO_TONES[key]};font-weight:700;">${label}</span> ${value}g`;
+  return `
+  <span style="display:inline-flex;flex-wrap:wrap;justify-content:center;gap:2px 7px;font-size:${size || 10.5}px;color:#756f88;
+               font-variant-numeric:tabular-nums;line-height:1.4;">
+    ${part('protein', 'P', n.protein)}
+    ${part('carbs', 'C', n.carbs)}
+    ${part('fat', 'F', n.fat)}
+  </span>`;
+};
+
+function mCalDial(value, tone, glyph, cap, top, kind, extra) {
   const dash = (Math.abs(value) / Math.max(top, 1)) * M_CAL_ARC;
   /* Only two of the four have a list behind them. Rest is a formula and net is
      arithmetic on the other three — neither has items to show, and a tile that
@@ -7694,7 +7712,8 @@ function mCalDial(value, tone, glyph, cap, top, kind) {
     <div data-cal-val style="font-family:var(--font-heading);font-weight:700;font-size:19px;line-height:1.1;color:#16131f;margin-top:6px;
                 font-variant-numeric:tabular-nums;">~${Math.abs(value).toLocaleString('en-US')}</div>
     <div data-cal-cap style="font-size:11.5px;color:#756f88;margin-top:3px;text-align:center;line-height:1.3;">${esc(cap)}</div>
-    ${kind ? `<span style="display:inline-flex;align-items:center;gap:3px;margin-top:6px;font-size:11px;font-weight:600;color:${tone};">See items<span aria-hidden="true">›</span></span>` : ''}
+    ${extra ? `<div data-cal-macros style="margin-top:5px;">${extra}</div>` : ''}
+    ${kind ? `<span style="display:inline-flex;align-items:center;gap:3px;margin-top:auto;padding-top:6px;font-size:11px;font-weight:600;color:${tone};">See items<span aria-hidden="true">›</span></span>` : ''}
   </${tag}>`;
 }
 
@@ -7709,12 +7728,12 @@ function mCalItems(dates, kind) {
   const rows = mTimeRows(dates);
   if (kind === 'food') {
     return rows.filter(isEatenRow).map((e) => {
-      const kcal = nutritionFor([e]).kcal;
+      const n = nutritionFor([e]);
       return {
         name: e.activity || 'Meal',
         meta: e.note ? String(e.note).trim() : 'nothing written down',
         when: `${clock12(e.from)} · ${dayLabel(e.date)}`,
-        kcal, vague: !kcal
+        kcal: n.kcal, macros: n, vague: !n.kcal
       };
     }).sort((a, b) => b.kcal - a.kcal);
   }
@@ -7753,6 +7772,15 @@ function mCalSheet() {
   const tone = food ? '#e9a13b' : '#0e9f6e';
   const total = items.reduce((a, r) => a + r.kcal, 0);
   const counted = items.filter((r) => !r.vague).length;
+  /* Grams for the window, not per day — this panel lists the window's own
+     entries, and the sentence under it says which figure is which. */
+  const macroTotal = food && counted
+    ? items.reduce((a, r) => ({
+      protein: a.protein + ((r.macros && r.macros.protein) || 0),
+      carbs: a.carbs + ((r.macros && r.macros.carbs) || 0),
+      fat: a.fat + ((r.macros && r.macros.fat) || 0)
+    }), { protein: 0, carbs: 0, fat: 0 })
+    : null;
 
   const row = (r) => `
     <div style="display:flex;align-items:baseline;gap:10px;padding:11px 0;border-top:1px solid rgba(47,28,102,.08);">
@@ -7760,6 +7788,7 @@ function mCalSheet() {
         <span style="display:block;font-weight:600;font-size:14.5px;color:#16131f;">${esc(r.name)}</span>
         <span style="display:block;font-size:12px;color:#756f88;margin-top:2px;line-height:1.4;">${esc(r.meta)}</span>
         ${r.when ? `<span style="display:block;font-size:11.5px;color:#9995ab;margin-top:2px;">${esc(r.when)}</span>` : ''}
+        ${r.macros && !r.vague ? `<span style="display:block;margin-top:4px;">${mMacroLine(r.macros, 11)}</span>` : ''}
       </span>
       <span style="flex:none;font-family:var(--font-heading);font-weight:700;font-size:15px;font-variant-numeric:tabular-nums;
                    color:${r.vague ? '#9995ab' : tone};">${r.vague ? 'not read' : `~${r.kcal.toLocaleString('en-US')}`}</span>
@@ -7775,6 +7804,16 @@ function mCalSheet() {
     <button data-act="m-sheet-close" aria-label="Close"
       style="flex:none;border:0;background:transparent;cursor:pointer;font-size:19px;color:#575168;min-width:40px;min-height:40px;">✕</button>
   </div>
+  ${macroTotal ? `
+  <div style="display:flex;gap:8px;margin:2px 0 14px;">
+    ${[['protein', 'Protein', macroTotal.protein], ['carbs', 'Carbs', macroTotal.carbs], ['fat', 'Fat', macroTotal.fat]].map(([key, label, g]) => `
+      <div data-macro="${key}" style="flex:1 1 0;min-width:0;text-align:center;padding:10px 6px;border-radius:14px;
+                  background:${M_MACRO_TONES[key]}14;">
+        <div style="font-family:var(--font-heading);font-weight:700;font-size:19px;line-height:1.1;color:${M_MACRO_TONES[key]};
+                    font-variant-numeric:tabular-nums;">${g.toLocaleString('en-US')}<span style="font-size:12px;">g</span></div>
+        <div style="font-size:11px;color:#756f88;margin-top:3px;">${label}</div>
+      </div>`).join('')}
+  </div>` : ''}
   <p style="margin:0 0 12px;font-size:13px;line-height:1.5;color:#756f88;">
     ${items.length
       ? `${counted} ${counted === 1 ? 'entry' : 'entries'} came to about <strong style="color:#16131f;">${total.toLocaleString('en-US')} kcal</strong>${dates.length > 1
@@ -7787,7 +7826,7 @@ function mCalSheet() {
   <div style="max-height:52vh;overflow-y:auto;">${items.map(row).join('')}</div>
   <p style="margin:14px 0 0;font-size:11.5px;line-height:1.5;color:#9995ab;">
     ${food
-      ? 'Read from what you wrote in each entry. An entry with nothing written down cannot be priced, which is what “not read” means.'
+      ? 'Calories and grams are read from what you wrote in each entry, against a table of typical servings. An entry with nothing written down cannot be priced, which is what “not read” means.'
       : 'Priced from the activity and how long it ran, against your weight. Overlapping entries are counted once.'}
   </p>`, '22px 20px 30px');
 }
@@ -7799,6 +7838,14 @@ function mCalCard(dates) {
   const food = foodReport(rows, mMoneyRows(dates), days);
 
   const per = (n) => Math.round(n / days);
+  /* The same source the kcal figure came from — a refined estimate replaces
+     the local one everywhere or nowhere — and divided by the same span, so the
+     grams under the dial belong to the number on it rather than to the window. */
+  const macros = (() => {
+    const src = food.ai || food.local;
+    if (!src) return null;
+    return { protein: per(src.protein), carbs: per(src.carbs), fat: per(src.fat) };
+  })();
   const burned = per(burn.kcal);
   const eaten = per(food.kcal);
   const rested = per(burn.restKcal);
@@ -7843,7 +7890,7 @@ function mCalCard(dates) {
   return shell(`
   <div style="display:flex;gap:10px;margin-bottom:10px;">
     ${mCalDial(burned, '#0e9f6e', 'flame', 'Burned moving', top, 'burn')}
-    ${mCalDial(eaten, '#e9a13b', 'plate', 'Eaten', top, 'food')}
+    ${mCalDial(eaten, '#e9a13b', 'plate', 'Eaten', top, 'food', mMacroLine(macros, 10.5))}
   </div>
   <div style="display:flex;gap:10px;">
     ${mCalDial(rested, '#5f3ac9', 'pulse', 'Burned at rest', top)}
