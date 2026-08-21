@@ -7314,7 +7314,9 @@ state.m = {
   insightTab: 'time', insightRange: 'week', accountOpen: false,
   stepsOpen: false, stepsDraft: '', weightOpen: false, weightDraft: '',
   pickNew: false, pickNewName: '',
-  donateOpen: false, donateAmt: 50, donateThanks: false
+  donateOpen: false, donateAmt: 50, donateThanks: false,
+  /* Which calorie dial has its breakdown open: 'burn', 'food', or nothing. */
+  calOpen: null
 };
 
 /* Which screen the phone opens on. Signed out is the sign-in screen; signed in
@@ -7668,11 +7670,19 @@ function mBodyCard(day) {
    every time. */
 const M_CAL_ARC = Math.PI * 38;
 
-function mCalDial(value, tone, glyph, cap, top) {
+function mCalDial(value, tone, glyph, cap, top, kind) {
   const dash = (Math.abs(value) / Math.max(top, 1)) * M_CAL_ARC;
+  /* Only two of the four have a list behind them. Rest is a formula and net is
+     arithmetic on the other three — neither has items to show, and a tile that
+     opened an empty panel would be worse than one that does not open. So the
+     two that do are buttons and say so, rather than all four looking alike and
+     half of them doing nothing. */
+  const tag = kind ? 'button' : 'div';
   return `
-  <div style="flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;
-              padding:12px 8px 11px;border-radius:16px;background:#fff;border:1px solid rgba(47,28,102,.09);">
+  <${tag}${kind ? ` data-act="m-cal-open" data-kind="${esc(kind)}" aria-haspopup="dialog"` : ''}
+    style="flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;text-align:center;
+           padding:12px 8px 11px;border-radius:16px;background:#fff;border:1px solid rgba(47,28,102,.09);
+           ${kind ? 'cursor:pointer;font-family:var(--font-body);' : ''}">
     <div style="position:relative;width:100%;max-width:104px;">
       <svg viewBox="0 0 96 52" style="display:block;width:100%;height:auto;" aria-hidden="true">
         <path d="M10 46 A 38 38 0 0 1 86 46" fill="none" stroke="#ece9f4" stroke-width="8" stroke-linecap="round"></path>
@@ -7681,10 +7691,105 @@ function mCalDial(value, tone, glyph, cap, top) {
       </svg>
       <span style="position:absolute;left:50%;bottom:2px;transform:translateX(-50%);color:${tone};">${nodeIcon(glyph, 17)}</span>
     </div>
-    <div style="font-family:var(--font-heading);font-weight:700;font-size:19px;line-height:1.1;color:#16131f;margin-top:6px;
+    <div data-cal-val style="font-family:var(--font-heading);font-weight:700;font-size:19px;line-height:1.1;color:#16131f;margin-top:6px;
                 font-variant-numeric:tabular-nums;">~${Math.abs(value).toLocaleString('en-US')}</div>
-    <div style="font-size:11.5px;color:#756f88;margin-top:3px;text-align:center;line-height:1.3;">${esc(cap)}</div>
-  </div>`;
+    <div data-cal-cap style="font-size:11.5px;color:#756f88;margin-top:3px;text-align:center;line-height:1.3;">${esc(cap)}</div>
+    ${kind ? `<span style="display:inline-flex;align-items:center;gap:3px;margin-top:6px;font-size:11px;font-weight:600;color:${tone};">See items<span aria-hidden="true">›</span></span>` : ''}
+  </${tag}>`;
+}
+
+/* What actually fed a dial. Built the same way burnFor and foodReport build
+   their totals — resolved minutes for the burn, nutritionFor per row for the
+   food — so the list is the working, not a second opinion.
+
+   Entries too vague to price are listed rather than dropped. A meal that reads
+   as nothing is exactly the thing someone opening this panel is looking for:
+   the answer to "why is my Eaten so low" is usually sitting in it. */
+function mCalItems(dates, kind) {
+  const rows = mTimeRows(dates);
+  if (kind === 'food') {
+    return rows.filter(isEatenRow).map((e) => {
+      const kcal = nutritionFor([e]).kcal;
+      return {
+        name: e.activity || 'Meal',
+        meta: e.note ? String(e.note).trim() : 'nothing written down',
+        when: `${clock12(e.from)} · ${dayLabel(e.date)}`,
+        kcal, vague: !kcal
+      };
+    }).sort((a, b) => b.kcal - a.kcal);
+  }
+
+  const kg = Number(state.weightKg) || DEFAULT_WEIGHT_KG;
+  const effMins = effective(resolveSpans(rows));
+  const out = [];
+  rows.forEach((e) => {
+    const hit = METS.find((m) => m.re.test(`${e.activity || ''} ${e.category || ''} ${e.note || ''}`.toLowerCase()));
+    if (!hit) return;
+    const mins = effMins(e);
+    if (!mins) return;
+    out.push({
+      name: e.activity || 'Activity',
+      meta: `${e.category || 'Uncategorised'} · ${mDur(mins)}`,
+      when: `${clock12(e.from)} · ${dayLabel(e.date)}`,
+      kcal: Math.round(hit.met * kg * (mins / 60))
+    });
+  });
+  /* Steps ride with the workout figure rather than beside it, so they belong
+     in this list — they are usually the largest line in it. */
+  const steps = stepsIn(dates);
+  const fromSteps = stepsKcal(steps, state.weightKg);
+  if (fromSteps) {
+    out.push({ name: 'Steps', meta: `${steps.toLocaleString('en-US')} counted, priced as walking`, when: '', kcal: fromSteps });
+  }
+  return out.sort((a, b) => b.kcal - a.kcal);
+}
+
+function mCalSheet() {
+  const kind = state.m.calOpen;
+  if (kind !== 'burn' && kind !== 'food') return '';
+  const dates = mRangeDates();
+  const items = mCalItems(dates, kind);
+  const food = kind === 'food';
+  const tone = food ? '#e9a13b' : '#0e9f6e';
+  const total = items.reduce((a, r) => a + r.kcal, 0);
+  const counted = items.filter((r) => !r.vague).length;
+
+  const row = (r) => `
+    <div style="display:flex;align-items:baseline;gap:10px;padding:11px 0;border-top:1px solid rgba(47,28,102,.08);">
+      <span style="flex:1;min-width:0;">
+        <span style="display:block;font-weight:600;font-size:14.5px;color:#16131f;">${esc(r.name)}</span>
+        <span style="display:block;font-size:12px;color:#756f88;margin-top:2px;line-height:1.4;">${esc(r.meta)}</span>
+        ${r.when ? `<span style="display:block;font-size:11.5px;color:#9995ab;margin-top:2px;">${esc(r.when)}</span>` : ''}
+      </span>
+      <span style="flex:none;font-family:var(--font-heading);font-weight:700;font-size:15px;font-variant-numeric:tabular-nums;
+                   color:${r.vague ? '#9995ab' : tone};">${r.vague ? 'not read' : `~${r.kcal.toLocaleString('en-US')}`}</span>
+    </div>`;
+
+  return mSheet(`
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;">
+    <span style="display:flex;align-items:center;gap:9px;">
+      <span style="width:34px;height:34px;flex:none;border-radius:11px;display:grid;place-items:center;
+                   background:${food ? '#fdf1de' : '#e3f5ed'};color:${tone};">${nodeIcon(food ? 'plate' : 'flame', 18)}</span>
+      <span style="font-family:var(--font-heading);font-weight:700;font-size:20px;color:#16131f;">${food ? 'What you ate' : 'What burned it'}</span>
+    </span>
+    <button data-act="m-sheet-close" aria-label="Close"
+      style="flex:none;border:0;background:transparent;cursor:pointer;font-size:19px;color:#575168;min-width:40px;min-height:40px;">✕</button>
+  </div>
+  <p style="margin:0 0 12px;font-size:13px;line-height:1.5;color:#756f88;">
+    ${items.length
+      ? `${counted} ${counted === 1 ? 'entry' : 'entries'} came to about <strong style="color:#16131f;">${total.toLocaleString('en-US')} kcal</strong>${dates.length > 1
+        ? ` across ${dates.length} days — about <strong style="color:#16131f;">${Math.round(total / dates.length).toLocaleString('en-US')} a day</strong>, which is the figure on the dial.`
+        : '.'}`
+      : food
+        ? 'No meals logged in the time tracker for this window. Calories are read from there alone — paying for a meal is not the same as eating it.'
+        : 'Nothing logged here reads as movement, and no steps were counted.'}
+  </p>
+  <div style="max-height:52vh;overflow-y:auto;">${items.map(row).join('')}</div>
+  <p style="margin:14px 0 0;font-size:11.5px;line-height:1.5;color:#9995ab;">
+    ${food
+      ? 'Read from what you wrote in each entry. An entry with nothing written down cannot be priced, which is what “not read” means.'
+      : 'Priced from the activity and how long it ran, against your weight. Overlapping entries are counted once.'}
+  </p>`, '22px 20px 30px');
 }
 
 function mCalCard(dates) {
@@ -7737,8 +7842,8 @@ function mCalCard(dates) {
 
   return shell(`
   <div style="display:flex;gap:10px;margin-bottom:10px;">
-    ${mCalDial(burned, '#0e9f6e', 'flame', 'Burned moving', top)}
-    ${mCalDial(eaten, '#e9a13b', 'plate', 'Eaten', top)}
+    ${mCalDial(burned, '#0e9f6e', 'flame', 'Burned moving', top, 'burn')}
+    ${mCalDial(eaten, '#e9a13b', 'plate', 'Eaten', top, 'food')}
   </div>
   <div style="display:flex;gap:10px;">
     ${mCalDial(rested, '#5f3ac9', 'pulse', 'Burned at rest', top)}
@@ -7799,8 +7904,11 @@ function mBarValue(v, money) {
 
 /* The row scrolls, and the clipped chip at its edge is the only thing that
    says so — easy to miss, and the last two windows sit past it. */
+/* Right-aligned, because that is the edge it is pointing at. On the left it
+   sat as far as it could get from the content that runs off the screen, and
+   read as a caption for the row rather than as an instruction about it. */
 const mScrollHint = (text) => `
-  <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:#9995ab;font-weight:600;margin-bottom:6px;">
+  <div style="display:flex;align-items:center;justify-content:flex-end;gap:5px;font-size:11px;color:#9995ab;font-weight:600;margin-bottom:6px;">
     <span>${esc(text)}</span><span aria-hidden="true">›</span>
   </div>`;
 
@@ -8587,6 +8695,7 @@ function mobileApp() {
   ${tabbed ? mTabs() + mTopButton() : ''}
   ${s.accountOpen ? mAccountSheet() : ''}
   ${s.donateOpen ? mDonateSheet() : ''}
+  ${mCalSheet()}
   ${state.reportOpen ? reportSheet() : ''}
   ${pickDeleteDialog()}
 </div>`;
@@ -8942,7 +9051,8 @@ const M_ACTIONS = {
   'm-insight-tab': (el) => mSet({ insightTab: el.dataset.tab }),
   'm-open-entry': (el) => mSet({ screen: 'detail', selected: el.dataset.id, selectedKind: el.dataset.kind }),
   'm-account-open': () => mSet({ accountOpen: true }),
-  'm-sheet-close': () => mSet({ accountOpen: false, donateOpen: false, donateThanks: false }),
+  'm-cal-open': (el) => mSet({ calOpen: el.dataset.kind }),
+  'm-sheet-close': () => mSet({ accountOpen: false, donateOpen: false, donateThanks: false, calOpen: null }),
   'm-classic': () => { state.mClassic = true; state.m.accountOpen = false; save(); render(); },
   'm-mobile': () => { state.mClassic = false; save(); render(); },
   // The next account to sign in gets its own answer about setup.
