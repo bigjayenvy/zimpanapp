@@ -3387,6 +3387,10 @@ const ICON_PATHS = {
   up: '<path d="M12 19.3V6.7"/><path d="M6.6 12.1 12 6.5l5.4 5.6"/>'
     + '<circle cx="12" cy="19.3" r="1.5" fill="currentColor" stroke="none"/>',
   check: '<circle cx="12" cy="12" r="9.1"/><path d="M7.7 12.3 10.6 15.3 16.3 8.9"/>',
+  pencil: '<path d="M4.6 19.4h3.1l9-9a2.2 2.2 0 0 0-3.1-3.1l-9 9Z" stroke-linejoin="round"/><path d="M13.2 8.2 15.8 10.8"/>',
+  funnel: '<path d="M4.4 5.4h15.2l-5.9 6.9v5.6l-3.4 1.9v-7.5Z" stroke-linejoin="round"/>',
+  calendar: '<rect x="4" y="5.6" width="16" height="14" rx="2.6"/><path d="M4 10h16M8.6 3.6v3.4M15.4 3.6v3.4"/>'
+    + '<circle cx="12" cy="14.6" r="1.4" fill="currentColor" stroke="none"/>',
   heart: '<path d="M12 19.6 5.4 13a4.3 4.3 0 0 1 6.6-5.4A4.3 4.3 0 0 1 18.6 13Z" stroke-linejoin="round"/>'
     + '<circle cx="12" cy="7.6" r="1.4" fill="currentColor" stroke="none"/>'
 };
@@ -4808,22 +4812,40 @@ function entryModeBar() {
       </div>`;
 }
 
+/* ── the timer ──
+
+   One geometry in two skins. A running timer wears the brand gradient and
+   announces itself; an idle one is an ordinary card. Same grid either way, so
+   starting and stopping changes the card's colour rather than its shape — a
+   layout that reflowed under the cursor at the moment of pressing Start would
+   be the worst possible time for it.
+
+   The gradient is the time-to-money sweep the app already owns rather than a
+   new one invented for this card. */
 function timerCard(v) {
+  const on = !!state.timerStart;
   return `
-      <div class="blueprint timer-card" style="padding: 20px 22px;">        <div>
-          <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 4px;">Real Time Tracking</div>
-          <div data-clock style="font-family: var(--font-heading); font-size: 46px; line-height: 1; font-variant-numeric: tabular-nums;">${v.clock}</div>
-          ${v.timerSince ? `<div style="font-size: 11px; color: ${v.timerStale ? 'var(--color-text)' : 'var(--color-neutral-600)'}; margin-top: 5px;">${esc(v.timerSince)}${v.timerStale ? ' · still running — did you forget to stop it?' : ''}</div>` : ''}
+      <div class="timer-card${on ? ' is-live' : ''}">
+        <div class="timer-read">
+          <div class="timer-kicker">
+            ${on ? '<span class="timer-live-dot" aria-hidden="true"></span>' : ''}
+            ${on ? 'Tracking now' : 'Real time tracking'}
+          </div>
+          <div data-clock class="timer-clock">${v.clock}</div>
+          ${v.timerSince ? `<div class="timer-since${v.timerStale ? ' is-stale' : ''}">${esc(v.timerSince)}${v.timerStale ? ' · still running — did you forget to stop it?' : ''}</div>` : ''}
         </div>
-        <div style="display: flex; flex-direction: column; gap: 8px; min-width: 0;">
-          <input class="input" data-k="timer-activity" data-sync="timerActivity" placeholder="What are you doing right now?" value="${esc(state.timerActivity)}"${state.formError.timer ? ' aria-invalid="true"' : ''}>
+        <div class="timer-fields">
+          <div class="timer-name">
+            <input data-k="timer-activity" data-sync="timerActivity" placeholder="What are you doing right now?" value="${esc(state.timerActivity)}"${state.formError.timer ? ' aria-invalid="true"' : ''}>
+            <span class="timer-pencil" aria-hidden="true">${nodeIcon('pencil', 16)}</span>
+          </div>
           ${fieldError('timer')}
           <!-- A list rather than a wall of chips. An account that has grown its
                own categories ran to two dozen here, which pushed the start
                button off the card and made the drawer below it necessary. -->
           ${pickerField('timer-cat', 'Category', pickCategories().map((c) => c.name), state.timerCategory, '+ New category')}
         </div>
-        <button class="timer-btn" data-act="toggle-timer" style="${timerBtnStyle(!!state.timerStart)}">${v.timerBtnLabel}</button>
+        <button class="timer-btn" data-act="toggle-timer">${on ? 'Stop &amp; save' : 'Start'}</button>
       </div>`;
 }
 
@@ -4983,7 +5005,7 @@ function timeDesktop(v) {
       <div data-sec="entry">${entryModeBar()}</div>
       <div data-sec="entrycard">${state.entryMode === 'manual' ? addEntryCard(v) : timerCard(v)}</div>
       <div data-sec="log">
-        <div style="max-width:640px;margin:0 0 14px;">${searchField({ tools: true, list: v.dayList })}</div>
+        <div style="margin:0 0 14px;">${searchField({ tools: true, list: v.dayList })}</div>
         <div id="search-body">${String(state.searchQuery || '').trim() ? searchBody() : ''}</div>
         ${String(state.searchQuery || '').trim() ? '' : timeTableCard(v)}
       </div>
@@ -5146,24 +5168,28 @@ function deckRaw(rows) {
   if (!rows.length) return '';
   const line = (e, extra) => {
     const note = String(e.note || '').trim();
-    const said = [e.activity || 'Something', note].filter(Boolean).join(' — ');
-    const meta = [e.category, durShort(span(e))].filter(Boolean).join(' · ');
+    const tint = colorOf(e.category);
     return `
-      <div class="deck-raw-row${extra ? ' is-extra' : ''}">
-        <span class="deck-raw-when">${esc(clock12(e.from))} <span>to</span> ${esc(clock12(e.to))}</span>
-        <span class="deck-raw-what">
-          <span class="deck-raw-said">${esc(said)}</span>
-          <span class="deck-raw-cat">${esc(meta)}</span>
-        </span>
-      </div>`;
+      <li class="deck-raw-row${extra ? ' is-extra' : ''}" style="--row-tint: ${esc(tint)};">
+        <span class="deck-raw-node" aria-hidden="true"></span>
+        <div class="deck-raw-body">
+          <div class="deck-raw-top">
+            <span class="deck-raw-when">${esc(clock12(e.from))}<span class="deck-raw-arrow" aria-hidden="true">→</span>${esc(clock12(e.to))}</span>
+            <span class="deck-raw-dur">${esc(durShort(span(e)))}</span>
+          </div>
+          <div class="deck-raw-said">${esc(e.activity || 'Something')}</div>
+          ${note ? `<div class="deck-raw-note">${esc(note)}</div>` : ''}
+          ${e.category ? `<span class="deck-raw-cat">${catIcon(e.category)} ${esc(e.category)}</span>` : ''}
+        </div>
+      </li>`;
   };
   const hidden = Math.max(0, rows.length - DECK_RAW_SHOWN);
   const label = `Show all ${rows.length}`;
   return `
     <div class="deck-raw">
-      ${rows.map((e, i) => line(e, i >= DECK_RAW_SHOWN)).join('')}
+      <ol class="deck-raw-list">${rows.map((e, i) => line(e, i >= DECK_RAW_SHOWN)).join('')}</ol>
       ${hidden ? `<button class="deck-raw-more no-print" data-act="deck-raw-more"
-        data-more="${esc(label)}" aria-expanded="false">${esc(label)}</button>` : ''}
+        data-more="${esc(label)}" aria-expanded="false"><span class="deck-raw-label">${esc(label)}</span><span aria-hidden="true">▾</span></button>` : ''}
     </div>`;
 }
 
@@ -6357,7 +6383,10 @@ const ACTIONS = {
     const box = el.closest('.deck-raw');
     if (!box) return;
     const open = box.classList.toggle('is-open');
-    el.textContent = open ? 'Show less' : (el.dataset.more || 'Show all');
+    // Only the label, not the button — writing textContent on the button would
+    // take the caret with it, and the caret is what says which way this goes.
+    const label = el.querySelector('.deck-raw-label') || el;
+    label.textContent = open ? 'Show less' : (el.dataset.more || 'Show all');
     el.setAttribute('aria-expanded', String(open));
   },
 
@@ -9252,30 +9281,56 @@ function logFilterNames(list) {
 
 function searchField(o) {
   const q = state.searchQuery || '';
-  const tools = o && o.tools;
+  /* Two shapes for one field. The phone's is a rule under a line of type —
+     asked for, and right there: a bordered box stacked above a list of
+     bordered boxes is one border too many on a 393px screen. The desktop's
+     is a pill in a row with the two controls that narrow the same list, and a
+     bare underline beside two bordered pills would read as the odd one out. */
+  if (!(o && o.tools)) {
+    return `
+<div style="position:relative;margin-bottom:12px;">
+  <input class="input" type="text" data-k="search-q" value="${esc(q)}"
+    placeholder="Search everything you have logged" autocomplete="off"
+    style="width:100%;min-height:46px;padding:10px 42px 10px 30px;font-size:15px;
+           background:transparent;border:0;border-bottom:1px solid rgba(47,28,102,.18);border-radius:0;box-shadow:none;">
+  <span style="position:absolute;left:4px;top:50%;transform:translateY(-50%);color:#9995ab;pointer-events:none;">${nodeIcon('search', 17)}</span>
+  ${q ? `<button data-act="search-clear" aria-label="Clear search"
+    style="position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;cursor:pointer;font-size:16px;color:#756f88;width:34px;height:34px;border-radius:50%;">✕</button>` : ''}
+</div>`;
+  }
+
   const onToday = state.selectedDate === todayIso;
-  const names = tools ? logFilterNames(o.list || []) : [];
+  const names = logFilterNames(o.list || []);
+  /* The date control says which day you are on rather than saying "Today"
+     while you are three days back — and tapping it is what brings you home.
+     A button that named the destination instead of the state would leave the
+     line with nothing on it that answers "where am I". */
+  const dateLabel = onToday ? 'Today'
+    : state.selectedDate === mShiftIso(todayIso, -1) ? 'Yesterday'
+    : dayLabel(state.selectedDate);
   return `
-<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
-  <div style="position:relative;flex:1 1 auto;min-width:0;">
-    <input class="input" type="text" data-k="search-q" value="${esc(q)}"
-      placeholder="Search everything you have logged" autocomplete="off"
-      style="width:100%;min-height:46px;padding:10px 42px 10px 30px;font-size:15px;
-             background:transparent;border:0;border-bottom:1px solid rgba(47,28,102,.18);border-radius:0;box-shadow:none;">
-    <span style="position:absolute;left:4px;top:50%;transform:translateY(-50%);color:#9995ab;pointer-events:none;">${nodeIcon('search', 17)}</span>
-    ${q ? `<button data-act="search-clear" aria-label="Clear search"
-      style="position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;cursor:pointer;font-size:16px;color:#756f88;width:34px;height:34px;border-radius:50%;">✕</button>` : ''}
+<div class="log-tools">
+  <div class="log-search${q ? ' has-q' : ''}">
+    <span class="log-search-icon" aria-hidden="true">${nodeIcon('search', 17)}</span>
+    <input type="text" data-k="search-q" value="${esc(q)}"
+      placeholder="Search everything you have logged…" autocomplete="off">
+    ${q ? `<button class="log-search-clear" data-act="search-clear" aria-label="Clear search">✕</button>` : ''}
   </div>
-  ${tools ? `
-  <select class="input" data-change="log-filter" aria-label="Filter the day by category"
-    style="flex:0 0 auto;width:auto;max-width:210px;min-height:40px;padding:6px 10px;font-size:13.5px;
-           ${state.logFilter ? 'border-color:var(--color-accent);color:var(--color-accent-800);font-weight:600;' : ''}">
-    <option value=""${state.logFilter ? '' : ' selected'}>All categories</option>
-    ${names.map((n) => `<option value="${esc(n)}"${n === state.logFilter ? ' selected' : ''}>${esc(n)}</option>`).join('')}
-  </select>
-  <button class="btn btn-secondary" data-act="go-today" aria-disabled="${onToday}"
-    title="${onToday ? 'Already on today' : 'Jump back to today'}"
-    style="flex:none;min-height:40px;padding-inline:16px;font-size:13.5px;${onToday ? 'opacity:.45;' : ''}">Today</button>` : ''}
+  <div class="log-pill${state.logFilter ? ' is-on' : ''}">
+    <span aria-hidden="true">${nodeIcon('funnel', 15)}</span>
+    <span class="log-pill-leg">Category:</span>
+    <select data-change="log-filter" aria-label="Filter the day by category">
+      <option value=""${state.logFilter ? '' : ' selected'}>All</option>
+      ${names.map((n) => `<option value="${esc(n)}"${n === state.logFilter ? ' selected' : ''}>${esc(n)}</option>`).join('')}
+    </select>
+    <span class="log-pill-caret" aria-hidden="true">▾</span>
+  </div>
+  <button class="log-pill log-pill-btn" data-act="go-today" aria-disabled="${onToday}"
+    title="${onToday ? 'Already on today' : 'Back to today'}">
+    <span aria-hidden="true">${nodeIcon('calendar', 15)}</span>
+    <span class="log-pill-leg">Date:</span>
+    <span class="log-pill-val">${esc(dateLabel)}</span>
+  </button>
 </div>`;
 }
 
