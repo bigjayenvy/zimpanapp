@@ -5996,6 +5996,7 @@ function render() {
     // The tree was just replaced, so the scroll-driven button has to be told.
     mPaintTop();
     mPaintBars();
+    paintDeck();
     return;
   }
 
@@ -6053,6 +6054,7 @@ function render() {
   const search = root.querySelector('[data-pick-search]');
   if (search) { search.value = state.pickQuery; filterPicker(search); }
   if (pickJustOpened) { pickJustOpened = false; showPicker(); }
+  paintDeck();
 }
 
 /* A panel that opens below the fold is a list you cannot see. Only the amount
@@ -9891,6 +9893,27 @@ function deckGo(i) {
   const slides = track.querySelectorAll('.deck-slide');
   const n = Math.max(0, Math.min(slides.length - 1, i));
   track.scrollTo({ left: slides[n].offsetLeft, behavior: 'smooth' });
+}
+
+/* Which card you are on has to survive a render, and renders arrive unbidden:
+   the written summaries are fetched after the deck is already open, and the
+   one that lands is what threw a reader on card five back to card one.
+
+   `deckIndex` was already being kept — it just never made it back into the
+   DOM, because every render builds a fresh track scrolled to its start.
+   Instant rather than smooth: this is putting the deck back where it was, not
+   moving it, and an animation would draw the eye to a journey that did not
+   happen. Clamped, because a window with fewer cards may no longer have the
+   one that was being read; open-report and deck-range both zero the index
+   themselves, so a deliberate change still starts at the beginning. */
+function paintDeck() {
+  const track = root.querySelector('[data-deck-track]');
+  if (!track) return;
+  const slides = track.querySelectorAll('.deck-slide');
+  if (!slides.length) return;
+  deckIndex = Math.max(0, Math.min(slides.length - 1, deckIndex));
+  if (deckIndex) track.scrollLeft = slides[deckIndex].offsetLeft;
+  root.querySelectorAll('.deck-bar').forEach((b, i) => b.classList.toggle('is-on', i === deckIndex));
 }
 
 /* Bound once, filtered to the deck: the track only exists while the report is
