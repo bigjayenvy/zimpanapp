@@ -6393,7 +6393,7 @@ function deductCopy() {
   const window = mobileOn() ? mRangeHeading().toLowerCase() : (compute().rangeLabel || 'this window');
   if (!state.deductAsk || !state.deductAsk.done) {
     return {
-      title: 'Take it off what came in?',
+      title: 'Deduct this amount from Money In?',
       body: `${spend} is logged. Counting it against your money in keeps a running balance; leaving it aside still logs the spend, it just does not come off — which is what you want for something reimbursed, or money that came from savings.`
     };
   }
