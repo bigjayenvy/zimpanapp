@@ -2782,16 +2782,16 @@ function compute() {
     moneyOutCount: mRangeList.filter((e) => e.out > 0).length,
     moneyNet: signed(inSum - outSum),
     netColor: inSum - outSum < 0 ? 'var(--color-text)' : 'var(--color-accent-700)',
-    /* The net is every figure in the log. When some spending is held out of
-       the running balance the two stop agreeing, and the note is where that is
-       said — a second stat repeating the same number when nothing is held
-       aside would be noise. */
+    /* The stat above is this window's net. The balance under it is the whole
+       account, which is a different figure whenever the window is not the
+       whole log — so it is named rather than left to be inferred. */
     netNote: (() => {
-      const b = moneyBalance(mRangeList);
+      const b = moneyBalance(s.money);
       const base = inSum - outSum < 0 ? 'Spending outran what came in.' : 'You kept some of it. Good.';
-      return b.asideCents
-        ? `${base} ${amount(b.asideCents / 100)} held aside, so the balance is ${amount(Math.abs(b.leftCents) / 100)}${b.leftCents < 0 ? ' over' : ' left'}.`
-        : base;
+      if (!b.inCents && !b.countedCents) return base;
+      const left = `${amount(Math.abs(b.leftCents) / 100)}${b.leftCents < 0 ? ' over' : ' left'}`;
+      const aside = b.asideCents ? ` ${amount(b.asideCents / 100)} is held aside from it.` : '';
+      return `${base} Across everything logged, ${left}.${aside}`;
     })(),
 
     moneyInsight: isMoney ? financialInsights(mRangeList, mPrevList, winDays) : null,
@@ -6381,16 +6381,13 @@ function deductRow() {
   return ask ? state.money.find((r) => r.id === ask.id) || null : null;
 }
 
-/* The window the balance is read over is the one on screen, so the figure
-   answers the question the page is already asking. */
 function deductStatus() {
-  return moneyStatus(mobileOn() ? mMoneyRows(mRangeDates()) : withinRange(state.money));
+  return moneyStatus(moneyAll());
 }
 
 function deductCopy() {
   const row = deductRow();
   const spend = row ? amount(Number(row.out) || 0) : '';
-  const window = mobileOn() ? mRangeHeading().toLowerCase() : (compute().rangeLabel || 'this window');
   if (!state.deductAsk || !state.deductAsk.done) {
     return {
       title: 'Deduct this amount from Money In?',
@@ -6401,7 +6398,8 @@ function deductCopy() {
   return {
     title: st.tone === 'over' ? 'You are past what came in' : st.tone === 'none' ? 'Nothing in to take it from' : 'Where that leaves you',
     body: `${st.line}`,
-    window, tone: st.tone
+    // Named so the figure cannot be mistaken for the window on screen behind it.
+    window: 'everything you have logged', tone: st.tone
   };
 }
 
@@ -7062,6 +7060,11 @@ const mSumCents = (rows, key) => rows.reduce((a, r) => a + mCents(r[key]), 0);
    Read by both layouts, which is why it lives in one place: what came in, how
    much of the spending counts against it, and what is left.
 
+   Every row ever logged, not the window on screen. This is an account, not a
+   report: money in one week is still there the next, and spending is a
+   withdrawal against the whole of it. Scoped to a window the figure would
+   reset every Monday and read as money appearing out of nowhere.
+
    A spend marked off-budget is still logged and still in every other total.
    It is held out of this one only, because "have I spent more than came in"
    is a different question from "what did I spend" — a reimbursed expense or
@@ -7070,6 +7073,10 @@ const mSumCents = (rows, key) => rows.reduce((a, r) => a + mCents(r[key]), 0);
    Summed in minor units and divided once at the end: these are the figures
    someone checks against a bank app, and cents that drift are worse than no
    figure at all. */
+// Everything live. Deleted rows are removed from state on delete, so there is
+// nothing here to filter — the tombstone lives elsewhere.
+const moneyAll = () => state.money;
+
 function moneyBalance(rows) {
   const inCents = mSumCents(rows, 'in');
   const outCents = mSumCents(rows, 'out');
@@ -7095,20 +7102,20 @@ function moneyStatus(rows) {
     return Object.assign(b, {
       tone: 'none',
       short: `nothing in to take it from`,
-      line: `Nothing logged coming in over this stretch, so ${f(b.countedCents)} out has nothing to come out of.${aside}`
+      line: `Nothing logged coming in yet, so ${f(b.countedCents)} out has nothing to come from.${aside}`
     });
   }
   if (b.leftCents >= 0) {
     return Object.assign(b, {
       tone: 'left',
       short: `${f(b.leftCents)} left of ${f(b.inCents)} in`,
-      line: `${f(b.leftCents)} left of ${f(b.inCents)} in — ${f(b.countedCents)} taken off so far.${aside}`
+      line: `${f(b.leftCents)} left — ${f(b.inCents)} in, ${f(b.countedCents)} out.${aside}`
     });
   }
   return Object.assign(b, {
     tone: 'over',
     short: `${f(b.leftCents)} past what came in`,
-    line: `${f(b.leftCents)} more out than came in — ${f(b.countedCents)} against ${f(b.inCents)}.${aside}`
+    line: `${f(b.leftCents)} past what came in — ${f(b.countedCents)} out against ${f(b.inCents)} in.${aside}`
   });
 }
 const mMoney = (n) => amount(n);
@@ -8265,14 +8272,19 @@ function mHome() {
       <span>${single ? `${esc(mDur(Math.max(0, capacity - logged)))} unlogged` : `${esc(mDur(logged))} across ${dates.length} days`}</span>
       <span>${list.length} ${list.length === 1 ? 'entry' : 'entries'}</span>
     </div>
-    <!-- The running balance, shown only once there is one to show. With
+    <!-- The account balance, shown only once there is one to show. With
          nothing logged coming in it would be a line saying the spending has
-         nothing to come off, on every empty day, forever. -->
+         nothing to come off, on every empty day, forever.
+
+         Labelled, because everything above it on this card is the window on
+         screen and this is not — an unlabelled figure here would read as
+         today's. -->
     ${(() => {
-      const st = moneyStatus(mMoneyRows(dates));
+      const st = moneyStatus(moneyAll());
       if (!st.inCents && !st.asideCents) return '';
-      return `<div style="margin-top:8px;padding-top:9px;border-top:1px solid rgba(255,255,255,.22);font-size:12px;opacity:.92;">
-        ${esc(st.short)}${st.asideCents ? ` · ${esc(amount(st.asideCents / 100))} aside` : ''}
+      return `<div style="display:flex;gap:8px;margin-top:8px;padding-top:9px;border-top:1px solid rgba(255,255,255,.22);font-size:12px;opacity:.92;">
+        <span style="flex:none;letter-spacing:.08em;text-transform:uppercase;font-size:10.5px;opacity:.8;padding-top:1px;">Balance</span>
+        <span>${esc(st.short)}${st.asideCents ? ` · ${esc(amount(st.asideCents / 100))} aside` : ''}</span>
       </div>`;
     })()}
   </div>
