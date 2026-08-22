@@ -409,6 +409,7 @@ function save() {
       tracks: state.tracks, tracksUpdatedAt: state.tracksUpdatedAt,
       timerUpdatedAt: state.timerUpdatedAt,
       setupDone: state.setupDone, mClassic: state.mClassic,
+      deductAlways: state.deductAlways,
       entryMode: state.entryMode,
       tombstones: state.tombstones, dirty: state.dirty,
       lastSyncAt: state.lastSyncAt, account: state.account,
@@ -685,6 +686,17 @@ const state = {
      not saved: a filter restored on load would read as missing entries, and the
      control that explains it is halfway down the page. */
   logFilter: '',
+
+  /* The spend whose "take it off?" question is on screen: {id, done}. `done`
+     flips once answered, and the panel becomes the answer rather than closing
+     — the point of asking was to say where the balance stands. */
+  deductAsk: null,
+  /* Whether to stop asking: true always deducts, false never does, null asks.
+     Kept on the device rather than synced, like the other view preferences —
+     it decides what a form does here, not what any figure means. */
+  deductAlways: stored.deductAlways === true || stored.deductAlways === false ? stored.deductAlways : null,
+  // Whether "do this every time" is ticked while the question is open.
+  deductRemember: false,
 
   /* The date whose step count is being edited, or nothing. */
   stepsOpen: null,
@@ -2770,7 +2782,17 @@ function compute() {
     moneyOutCount: mRangeList.filter((e) => e.out > 0).length,
     moneyNet: signed(inSum - outSum),
     netColor: inSum - outSum < 0 ? 'var(--color-text)' : 'var(--color-accent-700)',
-    netNote: inSum - outSum < 0 ? 'Spending outran what came in.' : 'You kept some of it. Good.',
+    /* The net is every figure in the log. When some spending is held out of
+       the running balance the two stop agreeing, and the note is where that is
+       said — a second stat repeating the same number when nothing is held
+       aside would be noise. */
+    netNote: (() => {
+      const b = moneyBalance(mRangeList);
+      const base = inSum - outSum < 0 ? 'Spending outran what came in.' : 'You kept some of it. Good.';
+      return b.asideCents
+        ? `${base} ${amount(b.asideCents / 100)} held aside, so the balance is ${amount(Math.abs(b.leftCents) / 100)}${b.leftCents < 0 ? ' over' : ' left'}.`
+        : base;
+    })(),
 
     moneyInsight: isMoney ? financialInsights(mRangeList, mPrevList, winDays) : null,
     // The block is built for a fortnight; anything else gets a one-tap way there.
@@ -3716,6 +3738,37 @@ function notePromptDialog() {
           <button class="btn btn-ghost" data-act="note-skip">Skip</button>
           <button class="btn btn-primary" data-act="note-save">Save note</button>
         </div>
+      </div>
+    </div>`;
+}
+
+/* The desktop's rendering of the balance question. The phone has its own,
+   below — one state, one set of words, two shapes, the way the donate ask and
+   the account panel already work. */
+function deductDialog() {
+  if (!state.deductAsk) return '';
+  const c = deductCopy();
+  const done = state.deductAsk.done;
+  const tone = c.tone === 'over' ? 'var(--zg-alert)' : 'var(--color-accent-700)';
+  return `
+    <div style="position:fixed;inset:0;background:color-mix(in srgb, var(--color-neutral-900) 55%, transparent);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50;">
+      <div class="blueprint" style="width:460px;max-width:100%;padding:26px 26px 24px;background:var(--color-bg);">
+        <h4 style="margin:0 0 8px;${done ? `color:${tone};` : ''}">${esc(c.title)}</h4>
+        <p style="margin:0 0 16px;font-size:13.5px;line-height:1.6;color:var(--color-neutral-800);">${esc(c.body)}</p>
+        ${done
+          ? `<div style="display:flex;align-items:center;gap:10px;">
+              <span style="font-size:11.5px;color:var(--color-neutral-600);margin-right:auto;">Across ${esc(c.window)}. Change it on any entry later.</span>
+              <button class="btn btn-primary" data-act="deduct-close">Done</button>
+            </div>`
+          : `<label style="display:flex;align-items:center;gap:9px;font-size:13px;color:var(--color-neutral-800);margin-bottom:16px;cursor:pointer;">
+              <input type="checkbox" data-act="deduct-remember"${state.deductRemember ? ' checked' : ''}
+                style="width:17px;height:17px;accent-color:var(--color-accent);cursor:pointer;">
+              Do this every time — stop asking
+            </label>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+              <button class="btn btn-primary" data-act="deduct-yes">Yes, take it off</button>
+              <button class="btn btn-secondary" data-act="deduct-no">No, keep it aside</button>
+            </div>`}
       </div>
     </div>`;
 }
@@ -6021,6 +6074,7 @@ function render() {
   ${state.reportOpen ? reportSheet() : ''}
   ${pickDeleteDialog()}
   ${notePromptDialog()}
+  ${deductDialog()}
   ${donateSheet()}
   ${aiConsentDialog()}
   ${legalSheet()}
@@ -6312,8 +6366,76 @@ function addMoney() {
   state.selectedDate = state.mForm.date;
   state.mForm = Object.assign({}, state.mForm, { activity: '', in: '', out: '' });
   askFollowUp('money', row);
+  // The note prompt has the floor if it wants it; the balance question waits
+  // rather than stacking a second panel over the first.
+  const asked = !state.notePrompt && askDeduct(row);
   save(); queueSync(0); render();
-  if (!state.notePrompt) flash(`Added · ${row.activity}`);
+  if (!state.notePrompt && !asked) flash(`Added · ${row.activity}`);
+}
+
+/* What the panel says, in both layouts. The question first, then the answer —
+   the panel does not close on being answered, because the answer is the part
+   worth reading. */
+function deductRow() {
+  const ask = state.deductAsk;
+  return ask ? state.money.find((r) => r.id === ask.id) || null : null;
+}
+
+/* The window the balance is read over is the one on screen, so the figure
+   answers the question the page is already asking. */
+function deductStatus() {
+  return moneyStatus(mobileOn() ? mMoneyRows(mRangeDates()) : withinRange(state.money));
+}
+
+function deductCopy() {
+  const row = deductRow();
+  const spend = row ? amount(Number(row.out) || 0) : '';
+  const window = mobileOn() ? mRangeHeading().toLowerCase() : (compute().rangeLabel || 'this window');
+  if (!state.deductAsk || !state.deductAsk.done) {
+    return {
+      title: 'Take it off what came in?',
+      body: `${spend} is logged. Counting it against your money in keeps a running balance; leaving it aside still logs the spend, it just does not come off — which is what you want for something reimbursed, or money that came from savings.`
+    };
+  }
+  const st = deductStatus();
+  return {
+    title: st.tone === 'over' ? 'You are past what came in' : st.tone === 'none' ? 'Nothing in to take it from' : 'Where that leaves you',
+    body: `${st.line}`,
+    window, tone: st.tone
+  };
+}
+
+/* Raised after a spend is saved. Nothing is asked for money coming in — there
+   is nothing to take it off — and nothing is asked once the answer is standing,
+   which is the whole point of the checkbox.
+
+   A "no" is written onto the row rather than remembered separately: it is a
+   fact about that spend, it has to survive a reload and reach the other device,
+   and a preference that lived apart from the rows would quietly change old
+   figures every time it was toggled. */
+function askDeduct(row) {
+  if (!row || mCents(row.out) <= 0) return false;
+  if (state.deductAlways === false) markOffBudget(row.id, true);
+  if (state.deductAlways !== null) return false;
+  state.deductRemember = false;
+  state.deductAsk = { id: row.id, done: false };
+  return true;
+}
+
+function deductAnswer(take) {
+  const ask = state.deductAsk;
+  if (!ask) return;
+  markOffBudget(ask.id, !take);
+  if (state.deductRemember) state.deductAlways = take;
+  state.deductAsk = { id: ask.id, done: true };
+  state.deductRemember = false;
+  save(); queueSync(0); render();
+}
+
+function markOffBudget(id, off) {
+  state.money = state.money.map((r) => (r.id === id
+    ? touch('money', Object.assign({}, r, { offBudget: off ? true : undefined }))
+    : r));
 }
 
 /* Opens the follow-up dialog when a just-added row looks like a workout or a
@@ -6341,15 +6463,33 @@ function closeFollowUp(saveIt) {
   if (saveIt) {
     // Saving means the question is welcome; it keeps being asked next time.
     if (text) {
-      if (p.kind === 'entries') updateEntry(p.id, { note: text.slice(0, 500) });
-      else updateMoney(p.id, { note: text.slice(0, 500) });
+      if (p.kind === 'entries') {
+        updateEntry(p.id, { note: text.slice(0, 500) });
+      } else {
+        /* Raised before the write, because updateMoney renders — asking after
+           it would set the state and then nobody would draw it.
+
+           Without this a spend that happened to trigger a note prompt — a
+           taxi, a lunch, which is a great many of them — would never be asked
+           about at all and would quietly take the default. */
+        askDeductAfterNote(p);
+        updateMoney(p.id, { note: text.slice(0, 500) });
+      }
       return; // updateEntry/updateMoney already save, sync and re-render
     }
   } else if (p.key) {
     // Skipped or dismissed: stop asking this particular question this session.
     state.noteSkipped[p.key] = true;
   }
+  askDeductAfterNote(p);
   render();
+}
+
+/* The note prompt goes first when a spend triggers both — two panels at once is
+   one too many — and this is the queue behind it. */
+function askDeductAfterNote(p) {
+  if (!p || p.kind !== 'money' || !p.key) return;
+  askDeduct(state.money.find((r) => r.id === p.id));
 }
 
 /* The 📝 on every row opens the same dialog by hand, so notes stay reachable
@@ -6419,6 +6559,14 @@ const ACTIONS = {
 
   'add-entry': addEntry,
   'add-money': addMoney,
+
+  /* Both answers write the same two things — the row's own flag and, if the
+     box is ticked, the standing preference — so the only difference between
+     them is which way round. */
+  'deduct-remember': () => { state.deductRemember = !state.deductRemember; render(); },
+  'deduct-yes': () => deductAnswer(true),
+  'deduct-no': () => deductAnswer(false),
+  'deduct-close': () => { state.deductAsk = null; state.deductRemember = false; render(); },
 
   // Relabels every amount on the next render; the stored numbers are untouched.
   'set-currency': (el) => {
@@ -6909,6 +7057,60 @@ const mRange = (start, dur) => `${mClock(start)} – ${mClock(start + dur)}`;
    of floats drifts; adding a column of integers cannot. */
 const mCents = (n) => Math.round((Number(n) || 0) * 100);
 const mSumCents = (rows, key) => rows.reduce((a, r) => a + mCents(r[key]), 0);
+
+/* ── the running balance ──
+   Read by both layouts, which is why it lives in one place: what came in, how
+   much of the spending counts against it, and what is left.
+
+   A spend marked off-budget is still logged and still in every other total.
+   It is held out of this one only, because "have I spent more than came in"
+   is a different question from "what did I spend" — a reimbursed expense or
+   money drawn from savings answers the second and not the first.
+
+   Summed in minor units and divided once at the end: these are the figures
+   someone checks against a bank app, and cents that drift are worse than no
+   figure at all. */
+function moneyBalance(rows) {
+  const inCents = mSumCents(rows, 'in');
+  const outCents = mSumCents(rows, 'out');
+  const asideCents = rows.reduce((a, r) => a + (r.offBudget ? mCents(r.out) : 0), 0);
+  const countedCents = outCents - asideCents;
+  return {
+    inCents, outCents, asideCents, countedCents,
+    leftCents: inCents - countedCents,
+    asideCount: rows.filter((r) => r.offBudget && mCents(r.out) > 0).length
+  };
+}
+
+/* The sentence that goes with it. One writer for both layouts — the formatter
+   is passed in rather than the wording duplicated, so the phone and the laptop
+   cannot end up saying different things about the same numbers. */
+function moneyStatus(rows) {
+  const b = moneyBalance(rows);
+  const f = (cents) => amount(Math.abs(cents) / 100);
+  const aside = b.asideCents
+    ? ` ${f(b.asideCents)} is held aside across ${b.asideCount} ${b.asideCount === 1 ? 'entry' : 'entries'}.`
+    : '';
+  if (!b.inCents) {
+    return Object.assign(b, {
+      tone: 'none',
+      short: `nothing in to take it from`,
+      line: `Nothing logged coming in over this stretch, so ${f(b.countedCents)} out has nothing to come out of.${aside}`
+    });
+  }
+  if (b.leftCents >= 0) {
+    return Object.assign(b, {
+      tone: 'left',
+      short: `${f(b.leftCents)} left of ${f(b.inCents)} in`,
+      line: `${f(b.leftCents)} left of ${f(b.inCents)} in — ${f(b.countedCents)} taken off so far.${aside}`
+    });
+  }
+  return Object.assign(b, {
+    tone: 'over',
+    short: `${f(b.leftCents)} past what came in`,
+    line: `${f(b.leftCents)} more out than came in — ${f(b.countedCents)} against ${f(b.inCents)}.${aside}`
+  });
+}
 const mMoney = (n) => amount(n);
 // The bare glyph for the tiles, without the dirham's trailing space.
 const mGlyph = () => currency().symbol.trim();
@@ -7782,6 +7984,39 @@ function mCalItems(dates, kind) {
   return out.sort((a, b) => b.kcal - a.kcal);
 }
 
+/* The phone's rendering of the same question. A sheet rather than a dialog,
+   which is what every other panel on this layout is, and no backdrop dismissal
+   while the question is unanswered — tapping past it would leave the spend in
+   a state nobody chose. */
+function mDeductSheet() {
+  if (!state.deductAsk) return '';
+  const c = deductCopy();
+  const done = state.deductAsk.done;
+  const tone = c.tone === 'over' ? '#d92d20' : c.tone === 'none' ? '#756f88' : '#0e9f6e';
+  return mSheet(`
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+    <span style="width:34px;height:34px;flex:none;border-radius:11px;display:grid;place-items:center;
+                 background:${done ? `${tone}1f` : '#eceefe'};color:${done ? tone : '#3f4bc4'};">${nodeIcon(done ? 'scales' : 'funnel', 18)}</span>
+    <span style="font-family:var(--font-heading);font-weight:700;font-size:20px;line-height:1.2;color:#16131f;">${esc(c.title)}</span>
+  </div>
+  <p style="margin:0 0 ${done ? 18 : 16}px;font-size:14px;line-height:1.55;color:#575168;">${esc(c.body)}</p>
+  ${done
+    ? `<p style="margin:0 0 16px;font-size:11.5px;color:#9995ab;">Across ${esc(c.window)}. You can change it on the entry later.</p>
+       <button class="btn btn-primary" data-act="deduct-close" style="width:100%;min-height:50px;font-size:15.5px;">Done</button>`
+    : `<button data-act="deduct-remember" aria-pressed="${state.deductRemember}"
+        style="display:flex;align-items:center;gap:10px;width:100%;padding:12px 0;margin-bottom:14px;border:0;background:transparent;
+               cursor:pointer;font-family:var(--font-body);font-size:14px;color:#3b3648;text-align:left;">
+        <span style="width:22px;height:22px;flex:none;border-radius:7px;display:grid;place-items:center;
+                     border:1.5px solid ${state.deductRemember ? '#5f3ac9' : 'rgba(47,28,102,.25)'};
+                     background:${state.deductRemember ? '#5f3ac9' : 'transparent'};color:#fff;">${state.deductRemember ? nodeIcon('check', 14) : ''}</span>
+        Do this every time — stop asking
+      </button>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <button class="btn btn-primary" data-act="deduct-yes" style="width:100%;min-height:50px;font-size:15.5px;">Yes, take it off</button>
+        <button class="btn btn-secondary" data-act="deduct-no" style="width:100%;min-height:50px;font-size:15.5px;">No, keep it aside</button>
+      </div>`}`, '24px 20px 30px');
+}
+
 function mCalSheet() {
   const kind = state.m.calOpen;
   if (kind !== 'burn' && kind !== 'food') return '';
@@ -8030,6 +8265,16 @@ function mHome() {
       <span>${single ? `${esc(mDur(Math.max(0, capacity - logged)))} unlogged` : `${esc(mDur(logged))} across ${dates.length} days`}</span>
       <span>${list.length} ${list.length === 1 ? 'entry' : 'entries'}</span>
     </div>
+    <!-- The running balance, shown only once there is one to show. With
+         nothing logged coming in it would be a line saying the spending has
+         nothing to come off, on every empty day, forever. -->
+    ${(() => {
+      const st = moneyStatus(mMoneyRows(dates));
+      if (!st.inCents && !st.asideCents) return '';
+      return `<div style="margin-top:8px;padding-top:9px;border-top:1px solid rgba(255,255,255,.22);font-size:12px;opacity:.92;">
+        ${esc(st.short)}${st.asideCents ? ` · ${esc(amount(st.asideCents / 100))} aside` : ''}
+      </div>`;
+    })()}
   </div>
 
   ${mRangeKey() === 'today' ? mTimerCard() : ''}
@@ -8762,6 +9007,7 @@ function mobileApp() {
   ${s.accountOpen ? mAccountSheet() : ''}
   ${s.donateOpen ? mDonateSheet() : ''}
   ${mCalSheet()}
+  ${mDeductSheet()}
   ${state.reportOpen ? reportSheet() : ''}
   ${pickDeleteDialog()}
 </div>`;
@@ -8837,7 +9083,10 @@ function mCommit() {
     if (s.editId) {
       state.money = state.money.map((r) => (r.id === s.editId ? touch('money', Object.assign({}, r, patch)) : r));
     } else {
-      state.money = state.money.concat([touch('money', Object.assign({ id: 'mn' + Date.now() }, patch))]);
+      const row = touch('money', Object.assign({ id: 'mn' + Date.now() }, patch));
+      state.money = state.money.concat([row]);
+      // Editing an existing spend does not re-ask: it was answered once already.
+      askDeduct(row);
     }
   } else {
     const from = s.startMin;
@@ -9118,7 +9367,12 @@ const M_ACTIONS = {
   'm-open-entry': (el) => mSet({ screen: 'detail', selected: el.dataset.id, selectedKind: el.dataset.kind }),
   'm-account-open': () => mSet({ accountOpen: true }),
   'm-cal-open': (el) => mSet({ calOpen: el.dataset.kind }),
-  'm-sheet-close': () => mSet({ accountOpen: false, donateOpen: false, donateThanks: false, calOpen: null }),
+  'm-sheet-close': () => {
+    // An unanswered balance question is not dismissed by tapping past it —
+    // that would leave the spend in a state nobody chose.
+    if (state.deductAsk && state.deductAsk.done) state.deductAsk = null;
+    mSet({ accountOpen: false, donateOpen: false, donateThanks: false, calOpen: null });
+  },
   'm-classic': () => { state.mClassic = true; state.m.accountOpen = false; save(); render(); },
   'm-mobile': () => { state.mClassic = false; save(); render(); },
   // The next account to sign in gets its own answer about setup.

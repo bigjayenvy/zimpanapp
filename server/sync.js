@@ -67,7 +67,7 @@ export async function changesSince(userId, since) {
   const [entries, money, categories, purposes, user] = await Promise.all([
     query(`SELECT id, date, activity, category, from_min, to_min, note, updated_at, deleted
              FROM entries WHERE user_id = ? AND updated_at > ?`, [userId, since]),
-    query(`SELECT id, date, activity, purpose, amount_in, amount_out, note, updated_at, deleted
+    query(`SELECT id, date, activity, purpose, amount_in, amount_out, off_budget, note, updated_at, deleted
              FROM money_entries WHERE user_id = ? AND updated_at > ?`, [userId, since]),
     query(`SELECT name, color, position, updated_at, deleted
              FROM categories WHERE user_id = ? AND updated_at > ?`, [userId, since]),
@@ -91,7 +91,11 @@ export async function changesSince(userId, since) {
     })),
     money: money.map((r) => ({
       id: r.id, date: r.date, activity: r.activity, purpose: r.purpose,
-      in: Number(r.amount_in), out: Number(r.amount_out), note: r.note || '',
+      in: Number(r.amount_in), out: Number(r.amount_out),
+      /* Sent only when true. An absent field means "counts", which is what
+         every row written before this column existed meant. */
+      offBudget: r.off_budget ? true : undefined,
+      note: r.note || '',
       updatedAt: Number(r.updated_at), deleted: !!r.deleted
     })),
     categories: named(categories),
@@ -141,10 +145,10 @@ const UPSERT_ENTRY = `
     updated_at = GREATEST(updated_at, VALUES(updated_at))`;
 
 const UPSERT_MONEY = `
-  INSERT INTO money_entries (user_id, id, date, activity, purpose, amount_in, amount_out, note, updated_at, deleted)
-  VALUES (?,?,?,?,?,?,?,?,?,?)
+  INSERT INTO money_entries (user_id, id, date, activity, purpose, amount_in, amount_out, off_budget, note, updated_at, deleted)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?)
   ON DUPLICATE KEY UPDATE
-    ${['date', 'activity', 'purpose', 'amount_in', 'amount_out', 'note', 'deleted'].map(guard).join(',\n    ')},
+    ${['date', 'activity', 'purpose', 'amount_in', 'amount_out', 'off_budget', 'note', 'deleted'].map(guard).join(',\n    ')},
     updated_at = GREATEST(updated_at, VALUES(updated_at))`;
 
 const upsertNamed = (table) => `
@@ -179,11 +183,12 @@ export async function applyChanges(userId, changes) {
     const at = `money[${i}]`;
     const id = str(e.id, `${at}.id`, 64);
     const when = stamp(e.updatedAt, `${at}.updatedAt`);
-    if (e.deleted) return [userId, id, '1970-01-01', '', '', 0, 0, null, when, 1];
+    if (e.deleted) return [userId, id, '1970-01-01', '', '', 0, 0, 0, null, when, 1];
     return [userId, id, isoDate(e.date, `${at}.date`),
       str(e.activity, `${at}.activity`, 200, { allowEmpty: true }),
       str(e.purpose, `${at}.purpose`, 60),
       cash(e.in ?? 0, `${at}.in`, 1e12), cash(e.out ?? 0, `${at}.out`, 1e12),
+      e.offBudget ? 1 : 0,
       str(e.note ?? '', `${at}.note`, 500, { allowEmpty: true }),
       when, 0];
   });

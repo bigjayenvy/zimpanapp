@@ -144,6 +144,11 @@ CREATE TABLE IF NOT EXISTS money_entries (
   -- app offers has a two-place minor unit.
   amount_in  DECIMAL(15,2) NOT NULL DEFAULT 0,
   amount_out DECIMAL(15,2) NOT NULL DEFAULT 0,
+  -- Whether this spend is held outside the running balance. The default is 0
+  -- because most spending does come out of what came in; the flag records the
+  -- exception — a reimbursable expense, money drawn from savings — so a row
+  -- written before this column existed keeps counting, which is what it did.
+  off_budget TINYINT(1)   NOT NULL DEFAULT 0,
   note       VARCHAR(500) NULL,
   updated_at BIGINT       NOT NULL,
   deleted    TINYINT(1)   NOT NULL DEFAULT 0,

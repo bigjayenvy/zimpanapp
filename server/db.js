@@ -195,6 +195,13 @@ async function alterExisting() {
     }
   }
 
+  const [budget] = await pool.query(
+    'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+    [CONFIG.database, 'money_entries', 'off_budget']);
+  if (!budget.length) {
+    await pool.query('ALTER TABLE money_entries ADD COLUMN off_budget TINYINT(1) NOT NULL DEFAULT 0 AFTER amount_out');
+  }
+
   for (const table of ['entries', 'money_entries']) {
     const [c] = await pool.query(
       'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',
