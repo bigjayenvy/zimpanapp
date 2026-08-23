@@ -1013,12 +1013,16 @@ function queueSync(delay) {
    used without a request, which is what keeps this affordable — a repeated
    breakfast costs nothing after the first time. */
 async function refineFood(scope) {
-  const v = compute();
-  const food = scope === 'today' ? v.todayFood : v.pastFood;
+  /* The phone reads its own window rather than the desktop's today/past, so
+     it asks for its own report rather than picking one out of compute(). The
+     cache is keyed on the meal text either way, so a breakfast refined on the
+     laptop is already refined here and costs nothing. */
+  const food = scope === 'm' ? mFood() : (scope === 'today' ? compute().todayFood : compute().pastFood);
   if (!food || !food.detail) return;
   // Same gate the button is drawn behind, in case a click outlives the render
   // that should have removed it.
-  if (scope === 'past' && !v.pastSingleDate) return;
+  if (scope === 'past' && !compute().pastSingleDate) return;
+  if (scope === 'm' && mRangeDates().length !== 1) return;
 
   if (state.aiCache[food.key]) { render(); return; }
 
@@ -8031,17 +8035,40 @@ function mCalSheet() {
   const items = mCalItems(dates, kind);
   const food = kind === 'food';
   const tone = food ? '#e9a13b' : '#0e9f6e';
-  const total = items.reduce((a, r) => a + r.kcal, 0);
+  const localTotal = items.reduce((a, r) => a + r.kcal, 0);
   const counted = items.filter((r) => !r.vague).length;
-  /* Grams for the window, not per day — this panel lists the window's own
-     entries, and the sentence under it says which figure is which. */
+  /* Grams for the window. When an AI estimate exists it replaces the local
+     reading here exactly as it does on the dial — the two showing different
+     totals for the same meals is not a second opinion, it is a question the
+     reader cannot answer. The local figure stays, named, underneath. */
+  const report = food ? mFood() : null;
+  const ai = report && report.ai;
+  const total = ai ? ai.kcal : localTotal;
   const macroTotal = food && counted
-    ? items.reduce((a, r) => ({
-      protein: a.protein + ((r.macros && r.macros.protein) || 0),
-      carbs: a.carbs + ((r.macros && r.macros.carbs) || 0),
-      fat: a.fat + ((r.macros && r.macros.fat) || 0)
-    }), { protein: 0, carbs: 0, fat: 0 })
+    ? (ai
+      ? { protein: ai.protein, carbs: ai.carbs, fat: ai.fat }
+      : items.reduce((a, r) => ({
+        protein: a.protein + ((r.macros && r.macros.protein) || 0),
+        carbs: a.carbs + ((r.macros && r.macros.carbs) || 0),
+        fat: a.fat + ((r.macros && r.macros.fat) || 0)
+      }), { protein: 0, carbs: 0, fat: 0 }))
     : null;
+
+  /* Offered on a single day only, which is the same rule the desktop follows:
+     across a week the text handed over is every meal of every day run
+     together, a worse question than the local reading already answers and a
+     much more expensive one. */
+  const canRefine = food && state.aiEstimates && report && report.detail && dates.length === 1;
+  const busy = state.aiBusy === 'm';
+  const refine = !canRefine ? '' : `
+  <div style="margin:14px 0 0;display:flex;flex-direction:column;gap:8px;">
+    <button class="btn btn-secondary" data-act="refine-food" data-scope="m"${busy ? ' disabled' : ''}
+      style="width:100%;min-height:46px;font-size:14.5px;display:inline-flex;align-items:center;justify-content:center;gap:9px;">
+      ${busy ? '<span class="spinner"></span> Checking…' : (ai ? 'Check again' : 'Refine with AI')}
+    </button>
+    ${ai ? `<span style="font-size:11.5px;color:#9995ab;text-align:center;">Local reading was ${localTotal.toLocaleString('en-US')} kcal.</span>` : ''}
+    ${state.aiError && !busy ? `<span style="font-size:11.5px;color:#8a2f4a;text-align:center;">${esc(state.aiError)}</span>` : ''}
+  </div>`;
 
   const row = (r) => `
     <div style="display:flex;align-items:baseline;gap:10px;padding:11px 0;border-top:1px solid rgba(47,28,102,.08);">
@@ -8079,17 +8106,29 @@ function mCalSheet() {
     ${items.length
       ? `${counted} ${counted === 1 ? 'entry' : 'entries'} came to about <strong style="color:#16131f;">${total.toLocaleString('en-US')} kcal</strong>${dates.length > 1
         ? ` across ${dates.length} days — about ${Math.round(total / dates.length).toLocaleString('en-US')} a day.`
-        : '.'}`
+        : '.'}${ai ? ' Estimated by AI from what you wrote.' : ''}`
       : food
         ? 'No meals logged in the time tracker for this window. Calories are read from there alone — paying for a meal is not the same as eating it.'
         : 'Nothing logged here reads as movement, and no steps were counted.'}
   </p>
+  ${ai && ai.items && ai.items.length ? `
+  <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
+    ${ai.items.map((i) => `<span style="padding:4px 10px;border-radius:999px;background:#fdf1de;color:#8a5a10;font-size:11.5px;font-weight:600;">${esc(i.name)} ~${i.kcal}</span>`).join('')}
+  </div>` : ''}
   <div style="max-height:52vh;overflow-y:auto;">${items.map(row).join('')}</div>
+  ${refine}
   <p style="margin:14px 0 0;font-size:11.5px;line-height:1.5;color:#9995ab;">
     ${food
-      ? 'Calories and grams are read from what you wrote in each entry, against a table of typical servings. An entry with nothing written down cannot be priced, which is what “not read” means.'
+      ? `Calories and grams are read from what you wrote in each entry, against a table of typical servings. An entry with nothing written down cannot be priced, which is what “not read” means.${ai ? ' The totals above came from the AI estimate; the figures on each meal are the local reading.' : ''}`
       : 'Priced from the activity and how long it ran, against your weight. Overlapping entries are counted once.'}
   </p>`, '22px 20px 30px');
+}
+
+/* The food reading for the window on screen. Same function the desktop calls,
+   handed the phone's dates. */
+function mFood() {
+  const dates = mRangeDates();
+  return foodReport(mTimeRows(dates), mMoneyRows(dates), dates.length);
 }
 
 function mCalCard(dates) {
@@ -9020,6 +9059,10 @@ function mobileApp() {
   ${s.donateOpen ? mDonateSheet() : ''}
   ${mCalSheet()}
   ${mDeductSheet()}
+  <!-- The consent sheet is the desktop's, unchanged. Nothing is sent without
+       it, so it has to reach every layout that can ask — and it is already
+       responsive, so there is nothing to rebuild. -->
+  ${aiConsentDialog()}
   ${state.reportOpen ? reportSheet() : ''}
   ${pickDeleteDialog()}
 </div>`;
