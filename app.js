@@ -8111,11 +8111,14 @@ function mCalSheet() {
         ? 'No meals logged in the time tracker for this window. Calories are read from there alone — paying for a meal is not the same as eating it.'
         : 'Nothing logged here reads as movement, and no steps were counted.'}
   </p>
+  <div>${items.map(row).join('')}</div>
   ${ai && ai.items && ai.items.length ? `
-  <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
-    ${ai.items.map((i) => `<span style="padding:4px 10px;border-radius:999px;background:#fdf1de;color:#8a5a10;font-size:11.5px;font-weight:600;">${esc(i.name)} ~${i.kcal}</span>`).join('')}
+  <div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(47,28,102,.08);">
+    <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#9995ab;margin-bottom:7px;">What it read</div>
+    <div style="display:flex;flex-wrap:wrap;gap:5px;">
+      ${ai.items.map((i) => `<span style="padding:3px 8px;border-radius:8px;background:#fdf1de;color:#8a5a10;font-size:11px;font-weight:600;">${esc(i.name)} ~${i.kcal}</span>`).join('')}
+    </div>
   </div>` : ''}
-  <div style="max-height:52vh;overflow-y:auto;">${items.map(row).join('')}</div>
   ${refine}
   <p style="margin:14px 0 0;font-size:11.5px;line-height:1.5;color:#9995ab;">
     ${food
@@ -8985,9 +8988,18 @@ function mTabs() {
 </div>`;
 }
 
+/* The panel is capped and scrolls inside itself. Without the cap a sheet
+   taller than the screen overflowed the top of a flex-end column — off the
+   viewport, with nothing able to scroll back to it, so the title and the
+   figures under it simply could not be reached. The food sheet with a long AI
+   breakdown was the one that grew past the screen and found it.
+
+   overscroll-behavior keeps a flick at the end of the list from carrying on
+   into the page behind the sheet. */
 const mSheet = (inner, pad) => `
 <div data-backdrop="m-sheet-close" style="position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(36,31,48,.5);">
-  <div style="background:#fff;border-radius:28px 28px 0 0;padding:${pad};box-shadow:0 -18px 44px rgba(47,28,102,.24);animation:zStep .26s ease both;">${inner}</div>
+  <div style="background:#fff;border-radius:28px 28px 0 0;padding:${pad};box-shadow:0 -18px 44px rgba(47,28,102,.24);animation:zStep .26s ease both;
+              max-height:calc(100dvh - 18px);overflow-y:auto;overscroll-behavior:contain;">${inner}</div>
 </div>`;
 
 /* ── 7. donate ──
