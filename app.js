@@ -517,6 +517,11 @@ const DECK_USED_KEY = 'zimpan.deck.used.v1';
 // Past half a day the world has moved on even if the log has not.
 const DECK_STALE_MS = 12 * 60 * 60 * 1000;
 const DECK_CACHE_MAX = 12;
+/* The food estimate cache had no ceiling and lives in the same localStorage as
+   the log, so a year of distinct meals could quietly grow to crowd out the
+   entries. Two hundred is plenty — a repeated meal keys the same, so this only
+   counts genuinely different ones. */
+const AI_CACHE_MAX = 200;
 
 const readJson = (key, fallback) => {
   try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch (err) { return fallback; }
@@ -720,7 +725,8 @@ const state = {
     sleep: !!(stored.dirty && stored.dirty.sleep),
     name: !!(stored.dirty && stored.dirty.name),
     tracks: !!(stored.dirty && stored.dirty.tracks),
-    timer: !!(stored.dirty && stored.dirty.timer)
+    timer: !!(stored.dirty && stored.dirty.timer),
+    ai: !!(stored.dirty && stored.dirty.ai)
   }),
   lastSyncAt: Number(stored.lastSyncAt) || 0,
   account: stored.account || null,
@@ -828,8 +834,18 @@ function collectChanges() {
   if (state.dirty.tracks) out.tracks = { value: state.tracks, updatedAt: state.tracksUpdatedAt };
   /* A stopped timer is as much news as a started one, so this pushes whatever
      the field currently says rather than only a live start time. */
+  /* The whole map, merged server-side by the stamp on each entry — the same
+     shape as steps, and for the same reason: a device only knows the meals it
+     refined, and sending its map whole is what lets another device's estimates
+     survive rather than being overwritten by this one's. */
+  if (state.dirty.ai) out.aiCache = state.aiCache;
   if (state.dirty.timer) {
-    out.timer = { start: state.timerStart, category: state.timerCategory, updatedAt: state.timerUpdatedAt };
+    out.timer = {
+      start: state.timerStart, category: state.timerCategory,
+      // What the timer is called travels with it, or a timer started on one
+      // device shows up on another as a running clock with no name on it.
+      activity: state.timerActivity, updatedAt: state.timerUpdatedAt
+    };
   }
   /* Sent whole rather than as a diff. The map is one small object, the server
      stores it verbatim, and sending all of it is what lets a device that has
@@ -900,6 +916,9 @@ function mergeChanges(changes) {
   if (changes.timer && changes.timer.updatedAt > state.timerUpdatedAt) {
     state.timerStart = changes.timer.start == null ? null : Number(changes.timer.start);
     if (changes.timer.category) state.timerCategory = changes.timer.category;
+    // Applied even when empty: a device that stopped the timer clears the name,
+    // and that clearing is as much a fact as the name was.
+    if (changes.timer.activity != null) state.timerActivity = changes.timer.activity;
     state.timerUpdatedAt = changes.timer.updatedAt;
     state.dirty.timer = false;
   }
@@ -907,6 +926,21 @@ function mergeChanges(changes) {
   /* Merged a day at a time on its own stamp rather than the whole map at once:
      a phone that recorded Monday and a laptop that recorded Tuesday should end
      up holding both, which taking the newer map wholesale would not do. */
+  if (changes.aiCache && typeof changes.aiCache === 'object') {
+    let gained = false;
+    Object.keys(changes.aiCache).forEach((key) => {
+      const incoming = changes.aiCache[key];
+      if (!incoming || typeof incoming !== 'object') return;
+      const mine = state.aiCache[key];
+      // Newer stamp wins; a key we have never seen is always news.
+      if (!mine || (Number(incoming.at) || 0) > (Number(mine.at) || 0)) {
+        state.aiCache[key] = incoming;
+        gained = true;
+      }
+    });
+    if (gained) { capAiCache(); writeJson(AI_CACHE_KEY, state.aiCache); }
+  }
+
   if (changes.steps && typeof changes.steps === 'object') {
     let gained = false;
     Object.keys(changes.steps).forEach((d) => {
@@ -943,6 +977,13 @@ function clearPushed(sent) {
   if (sent.name && state.nameUpdatedAt === sent.name.updatedAt) state.dirty.name = false;
   if (sent.tracks && state.tracksUpdatedAt === sent.tracks.updatedAt) state.dirty.tracks = false;
   if (sent.timer && state.timerUpdatedAt === sent.timer.updatedAt) state.dirty.timer = false;
+  /* Cleared unless a meal was refined while the push was in flight. A key the
+     server did not carry back is one it now holds anyway — the map went up
+     whole — so a stale entry cannot get stranded in the outbox. */
+  if (sent.aiCache && !Object.keys(state.aiCache).some((k) => !sent.aiCache[k]
+      || (Number(state.aiCache[k].at) || 0) > (Number(sent.aiCache[k].at) || 0))) {
+    state.dirty.ai = false;
+  }
   /* Cleared only when nothing was written while the request was in flight —
      the same rule the rows above follow, applied to the whole map at once. */
   if (sent.steps && !Object.keys(sent.steps).some((d) => (Number(state.stepsAt[d]) || 0) > (Number(sent.steps[d].t) || 0))) {
@@ -1031,8 +1072,16 @@ async function refineFood(scope) {
   render();
   try {
     const res = await API.estimate(food.detail);
-    state.aiCache[food.key] = res.estimate;
+    /* Stamped and queued so the answer reaches the other devices: the cache is
+       keyed on the meal text, so once it has synced a meal refined on the
+       laptop really is already refined on the phone — which is what the comment
+       at the top of this function has always claimed and, until it synced, was
+       not true. */
+    state.aiCache[food.key] = Object.assign({}, res.estimate, { at: Date.now() });
+    capAiCache();
+    state.dirty.ai = true;
     writeJson(AI_CACHE_KEY, state.aiCache);
+    queueSync(0);
     flash(`Estimated · ${res.estimate.kcal.toLocaleString('en-US')} kcal`);
   } catch (err) {
     // Shown next to the button rather than as a toast: it belongs to that
@@ -1131,6 +1180,15 @@ function saveDeckCache() {
       .forEach((k) => { delete state.deckAi[k]; });
   }
   writeJson(DECK_CACHE_KEY, state.deckAi);
+}
+
+/* Oldest out first, by the stamp each estimate carries. */
+function capAiCache() {
+  const keys = Object.keys(state.aiCache);
+  if (keys.length <= AI_CACHE_MAX) return;
+  keys.sort((a, b) => (state.aiCache[a].at || 0) - (state.aiCache[b].at || 0))
+    .slice(0, keys.length - AI_CACHE_MAX)
+    .forEach((k) => { delete state.aiCache[k]; });
 }
 
 async function fetchDeckSummary(v) {
@@ -3837,23 +3895,70 @@ function tickDonate() {
 }
 setInterval(tickDonate, DONATE_TICK_MS);
 
+/* The lightbox art. Drawn rather than photographed: the reference carries a
+   stock photo of people, which is not ours to reproduce, so this is the same
+   warmth in the brand's own hand — a coin dropped into an open palm on the
+   time-to-money gradient, with the wordmark's own Z on the coin. */
+const DONATE_HERO = `
+  <div class="donate-hero" aria-hidden="true">
+    <svg viewBox="0 0 460 172" preserveAspectRatio="xMidYMid slice" role="img">
+      <defs>
+        <linearGradient id="dhg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#8b5cf6"/><stop offset=".5" stop-color="#6d54f0"/><stop offset="1" stop-color="#16a394"/>
+        </linearGradient>
+        <radialGradient id="dhc" cx=".5" cy=".35" r=".75">
+          <stop offset="0" stop-color="#ffffff" stop-opacity=".22"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+        </radialGradient>
+      </defs>
+      <rect width="460" height="172" fill="url(#dhg)"/>
+      <rect width="460" height="172" fill="url(#dhc)"/>
+      <g fill="#ffffff" opacity=".55">
+        <circle cx="70" cy="40" r="2.4"/><circle cx="392" cy="52" r="3"/><circle cx="352" cy="28" r="1.8"/>
+        <circle cx="104" cy="120" r="2"/><circle cx="412" cy="120" r="2.2"/><circle cx="50" cy="92" r="1.6"/>
+        <path d="M304 38l1.6 4 4 1.6-4 1.6-1.6 4-1.6-4-4-1.6 4-1.6z"/>
+        <path d="M150 32l1.3 3.2 3.2 1.3-3.2 1.3-1.3 3.2-1.3-3.2-3.2-1.3 3.2-1.3z"/>
+      </g>
+      <!-- the coin, mid-drop, carrying the wordmark Z -->
+      <g transform="translate(230 60)">
+        <ellipse cx="0" cy="34" rx="26" ry="7" fill="#3a2a68" opacity=".18"/>
+        <circle r="30" fill="#ffd878" stroke="#eeb43a" stroke-width="3"/>
+        <circle r="22.5" fill="none" stroke="#fff0c8" stroke-width="2"/>
+        <path d="M-10 -11h20l-17 22h17" fill="none" stroke="#a9741a" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>
+      <!-- an open palm, cupped to catch it -->
+      <g transform="translate(230 150)">
+        <path d="M-62 -6 C -66 -20 -52 -28 -44 -20 C -46 -34 -30 -34 -28 -22 C -24 -34 -8 -32 -8 -20
+                 C -4 -30 12 -26 10 -14 C 22 -18 34 -10 30 2 C 24 20 4 30 -18 30 C -42 30 -58 16 -62 -6 Z"
+              fill="#f7e2c6"/>
+        <path d="M-62 -6 C -66 -20 -52 -28 -44 -20 C -46 -34 -30 -34 -28 -22 C -24 -34 -8 -32 -8 -20
+                 C -4 -30 12 -26 10 -14 C 22 -18 34 -10 30 2 C 24 20 4 30 -18 30 C -42 30 -58 16 -62 -6 Z"
+              fill="none" stroke="#e0b988" stroke-width="2" opacity=".7"/>
+        <path d="M-44 -20 C -40 -12 -34 -8 -28 -8 M-28 -22 C -24 -14 -18 -10 -12 -11
+                 M-8 -20 C -4 -13 2 -11 8 -13" fill="none" stroke="#e6c79b" stroke-width="1.6" stroke-linecap="round" opacity=".8"/>
+      </g>
+    </svg>
+  </div>`;
+
 function donateSheet() {
   if (!state.donateOpen) return '';
   return `
   <div class="no-print donate-backdrop" data-donate-backdrop>
     <div class="donate-sheet" role="dialog" aria-modal="true" aria-labelledby="donate-title">
       <button class="donate-x" data-act="donate-close" aria-label="Close">×</button>
-      <div class="donate-kicker">A note from the maker</div>
-      <h2 id="donate-title" class="donate-title">
-        <span class="donate-l1">HELP US IMPROVE</span>
-        <span class="donate-l2">DONATE A DOLLAR</span>
-      </h2>
-      <p class="donate-copy">
-        ZIMPAN is free, carries no ads, and never sells what you log. A dollar covers
-        the server it runs on and the time that goes into the next feature.
-      </p>
-      <button class="donate-cta" data-act="donate-go">${NAV_ICONS.donate}<span>Donate Now</span></button>
-      <button class="donate-later" data-act="donate-close">Maybe later</button>
+      ${DONATE_HERO}
+      <div class="donate-body">
+        <span class="donate-chip">A note from the maker</span>
+        <h2 id="donate-title" class="donate-title">
+          <span class="donate-l1">HELP US IMPROVE</span>
+          <span class="donate-l2">DONATE A DOLLAR</span>
+        </h2>
+        <p class="donate-copy">
+          ZIMPAN is free, carries no ads, and never sells what you log. A dollar covers
+          the server it runs on and the time that goes into the next feature.
+        </p>
+        <button class="donate-cta" data-act="donate-go">${NAV_ICONS.donate}<span>Donate Now</span></button>
+        <button class="donate-later" data-act="donate-close">Maybe later</button>
+      </div>
     </div>
   </div>`;
 }
@@ -6286,7 +6391,14 @@ function toggleTimer() {
       return;
     }
     state.formError.timer = '';
-    state.timerStart = Date.now(); save(); render(); return;
+    /* The live timer is synced state, so starting it is news for the other
+       devices — the mobile layout already stamps and queues here, and the
+       desktop was silently not, which is why a timer started on the laptop
+       never appeared on the phone. */
+    state.timerStart = Date.now();
+    state.timerUpdatedAt = Date.now();
+    state.dirty.timer = true;
+    save(); queueSync(0); render(); return;
   }
   const round = CONFIG.roundToMinutes || 1;
   const startD = new Date(state.timerStart), endD = new Date();
@@ -6314,6 +6426,8 @@ function toggleTimer() {
   state.entries = state.entries.concat([touch('entries', entry)]);
   state.timerStart = null;
   state.timerActivity = '';
+  state.timerUpdatedAt = Date.now();
+  state.dirty.timer = true;
   state.selectedDate = entry.date;
   // Stopping a timer is the natural moment to ask what it was — same rule as a
   // manual entry, including the "skipped this session" suppression.
@@ -7529,7 +7643,7 @@ state.m = {
   insightTab: 'time', insightRange: 'week', accountOpen: false,
   stepsOpen: false, stepsDraft: '', weightOpen: false, weightDraft: '',
   pickNew: false, pickNewName: '',
-  donateOpen: false, donateAmt: 50, donateThanks: false,
+  donateOpen: false, donateThanks: false,
   /* Which calorie dial has its breakdown open: 'burn', 'food', or nothing. */
   calOpen: null
 };
@@ -9018,18 +9132,27 @@ function mDonateSheet() {
   </div>`, '30px 22px 34px');
   }
   return mSheet(`
-  <div style="width:38px;height:4px;border-radius:999px;background:#d5d2df;margin:0 auto 18px;"></div>
-  <div style="font-family:var(--font-heading);font-weight:700;font-size:25px;line-height:1.15;color:#16131f;">Keep Zimpan going</div>
-  <p style="margin:8px 0 18px;font-size:14px;line-height:1.5;color:#575168;">Voluntary, one-off, and it buys no extra features — everyone gets the same app. Thank you either way.</p>
-  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:18px;">
-    ${[20, 50, 100, 250].map((a) => `
-      <button data-act="m-donate-amt" data-amt="${a}" aria-pressed="${s.donateAmt === a}"
-        style="min-height:46px;border-radius:14px;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;${mChip(s.donateAmt === a)}">${esc(mMoney(a))}</button>`).join('')}
-  </div>
-  <a class="btn btn-primary" href="${DONATE_URL}" data-donate data-m-donate target="_blank" rel="noopener noreferrer"
-    style="width:100%;min-height:52px;font-size:16px;box-shadow:0 6px 18px rgba(79,70,229,.32);">Give ${esc(mMoney(s.donateAmt))}</a>
-  <button data-act="m-donate-close"
-    style="width:100%;min-height:42px;border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;color:#756f88;margin-top:4px;">Not now</button>`, '24px 22px 30px');
+  <div style="margin:-24px -20px 0;position:relative;">
+    <button data-act="m-donate-close" aria-label="Close"
+      style="position:absolute;top:12px;right:14px;z-index:2;width:30px;height:30px;border:0;border-radius:50%;cursor:pointer;
+             background:rgba(36,31,48,.42);color:#fff;font-size:19px;line-height:1;display:grid;place-items:center;">✕</button>
+    <div style="height:150px;border-radius:24px 24px 0 0;overflow:hidden;">${DONATE_HERO}</div>
+    <div style="margin-top:-14px;border-radius:22px 22px 0 0;background:#fbf3e4;padding:20px 20px 4px;text-align:center;">
+      <span style="display:inline-block;margin-bottom:12px;padding:5px 13px;border:1px solid rgba(184,137,46,.34);border-radius:999px;
+                   font-size:10px;letter-spacing:.14em;text-transform:uppercase;font-weight:600;color:#9a6f22;background:rgba(242,215,154,.26);">A note from the maker</span>
+      <div style="font-family:var(--font-heading);font-weight:700;line-height:1.04;">
+        <div style="font-size:clamp(24px,7.4vw,30px);color:#14a05c;white-space:nowrap;">HELP US IMPROVE</div>
+        <div style="font-size:clamp(24px,7.4vw,30px);color:#1d6f8f;white-space:nowrap;">DONATE A DOLLAR</div>
+      </div>
+      <p style="margin:12px 0 18px;font-size:13.5px;line-height:1.6;color:#6b5f4a;">Zimpan is free, carries no ads, and never sells what you log. A dollar covers the server it runs on and the next feature you have been asking for.</p>
+      <a class="btn" href="${DONATE_URL}" data-donate data-m-donate target="_blank" rel="noopener noreferrer"
+        style="display:inline-flex;align-items:center;justify-content:center;gap:9px;width:100%;min-height:52px;border-radius:999px;
+               background:linear-gradient(180deg,#f2c552,#d99a1f);color:#3d2c05;font-family:var(--font-body);font-size:16px;font-weight:700;
+               box-shadow:0 4px 14px rgba(160,110,10,.34);border:0;">${nodeIcon('heart', 18)}<span>Donate Now</span></a>
+      <button data-act="m-donate-close"
+        style="width:100%;min-height:42px;border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:12.5px;font-weight:600;color:#9a6f22;text-decoration:underline;margin-top:10px;">Maybe later</button>
+    </div>
+  </div>`, '24px 20px 0');
 }
 
 /* The avatar's sheet. Not in the design, and it is here for two things the
@@ -9669,7 +9792,6 @@ const M_ACTIONS = {
   /* donate */
   'm-donate-open': () => mSet({ donateOpen: true, donateThanks: false }),
   'm-donate-close': () => mSet({ donateOpen: false, donateThanks: false }),
-  'm-donate-amt': (el) => mSet({ donateAmt: Number(el.dataset.amt) }),
 };
 
 /* PayPal reports nothing back, so the thanks state is put up on the way out

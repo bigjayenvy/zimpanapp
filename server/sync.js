@@ -73,8 +73,8 @@ export async function changesSince(userId, since) {
              FROM categories WHERE user_id = ? AND updated_at > ?`, [userId, since]),
     query(`SELECT name, color, position, updated_at, deleted
              FROM purposes WHERE user_id = ? AND updated_at > ?`, [userId, since]),
-    one(`SELECT currency, weight_kg, sleep_min, steps_json, tracks_json,
-                timer_start, timer_cat, display_name, updated_at
+    one(`SELECT currency, weight_kg, sleep_min, steps_json, ai_cache_json, tracks_json,
+                timer_start, timer_cat, timer_activity, display_name, updated_at
            FROM users WHERE id = ?`, [userId])
   ]);
 
@@ -121,7 +121,8 @@ export async function changesSince(userId, since) {
        has to learn about it even if nothing else on the row has moved. */
     timer: user
       ? { start: user.timer_start == null ? null : Number(user.timer_start),
-          category: user.timer_cat || '', updatedAt: Number(user.updated_at) }
+          category: user.timer_cat || '', activity: user.timer_activity || '',
+          updatedAt: Number(user.updated_at) }
       : null,
     /* Sent whole rather than filtered by `since`: the map carries a stamp per
        date and the client merges on those, so it needs every day it has not
@@ -129,6 +130,12 @@ export async function changesSince(userId, since) {
        JSON already parsed on some versions and as a string on others. */
     steps: user && user.steps_json
       ? (typeof user.steps_json === 'string' ? JSON.parse(user.steps_json) : user.steps_json)
+      : null,
+    /* Sent whole, like steps and for the same reason: each entry carries its
+       own stamp and the client merges on those, so it needs every key it has
+       not seen rather than only those touched since it last asked. */
+    aiCache: user && user.ai_cache_json
+      ? (typeof user.ai_cache_json === 'string' ? JSON.parse(user.ai_cache_json) : user.ai_cache_json)
       : null
   };
 }
@@ -231,6 +238,38 @@ export async function applyChanges(userId, changes) {
     steps = clean;
   }
 
+  /* The food cache: {textKey: {kcal, protein, carbs, fat, items, at}}. Like
+     steps it is client-grown, so it is validated key by key and rebuilt rather
+     than stored as sent — an unknown shape would otherwise be handed back to
+     every device forever. Numbers are clamped, not trusted; items is a short
+     list of {name, kcal}; anything else on the object is dropped. */
+  let aiCache = null;
+  if (c.aiCache && typeof c.aiCache === 'object' && !Array.isArray(c.aiCache)) {
+    const clean = {};
+    const keys = Object.keys(c.aiCache);
+    if (keys.length > 400) fail('aiCache carries more meals than the ceiling');
+    for (const key of keys) {
+      if (typeof key !== 'string' || key.length > 64) fail('aiCache key is not a short string');
+      const row = c.aiCache[key];
+      if (!row || typeof row !== 'object') fail(`aiCache.${key} is not an object`);
+      const items = Array.isArray(row.items)
+        ? row.items.slice(0, 40).map((it, i) => ({
+          name: str((it && it.name) ?? '', `aiCache.${key}.items[${i}].name`, 80, { allowEmpty: true }),
+          kcal: int((it && it.kcal) ?? 0, `aiCache.${key}.items[${i}].kcal`, 0, 100000)
+        }))
+        : [];
+      clean[key] = {
+        kcal: int(row.kcal ?? 0, `aiCache.${key}.kcal`, 0, 100000),
+        protein: int(row.protein ?? 0, `aiCache.${key}.protein`, 0, 100000),
+        carbs: int(row.carbs ?? 0, `aiCache.${key}.carbs`, 0, 100000),
+        fat: int(row.fat ?? 0, `aiCache.${key}.fat`, 0, 100000),
+        items,
+        at: stamp(row.at, `aiCache.${key}.at`)
+      };
+    }
+    aiCache = clean;
+  }
+
   let weight = null;
   if (c.weightKg && typeof c.weightKg === 'object') {
     const raw = c.weightKg.value;
@@ -273,7 +312,9 @@ export async function applyChanges(userId, changes) {
     const start = raw == null || raw === '' ? null : stamp(raw, 'timer.start');
     const cat = c.timer.category == null || c.timer.category === ''
       ? null : str(c.timer.category, 'timer.category', 60);
-    timer = [start, cat, stamp(c.timer.updatedAt, 'timer.updatedAt')];
+    const act = c.timer.activity == null || c.timer.activity === ''
+      ? null : str(c.timer.activity, 'timer.activity', 200);
+    timer = [start, cat, act, stamp(c.timer.updatedAt, 'timer.updatedAt')];
   }
 
   await transaction(async (conn) => {
@@ -303,14 +344,37 @@ export async function applyChanges(userId, changes) {
         [tracks[0], tracks[1], userId, tracks[1]]);
     }
     if (timer) {
-      await conn.execute('UPDATE users SET timer_start = ?, timer_cat = ?, updated_at = ? WHERE id = ? AND updated_at <= ?',
-        [timer[0], timer[1], timer[2], userId, timer[2]]);
+      await conn.execute('UPDATE users SET timer_start = ?, timer_cat = ?, timer_activity = ?, updated_at = ? WHERE id = ? AND updated_at <= ?',
+        [timer[0], timer[1], timer[2], timer[3], userId, timer[3]]);
     }
     /* Merged here rather than overwritten. A device only sends the days it
        knows about, so writing its map wholesale would erase any day recorded
        on another device that this one has not pulled yet — and with the outbox
        already clear, nothing would ever push it back. Locked for the read so
        two devices pushing at once cannot each merge onto the same stale copy. */
+    /* Merged, not overwritten, exactly like steps: a device only knows the
+       meals it refined, so writing its map wholesale would drop estimates made
+       on another device. Newer stamp wins; the read is locked so two pushes
+       cannot each merge onto the same stale copy. */
+    if (aiCache) {
+      const [[row]] = await conn.execute('SELECT ai_cache_json FROM users WHERE id = ? FOR UPDATE', [userId]);
+      const held = row && row.ai_cache_json
+        ? (typeof row.ai_cache_json === 'string' ? JSON.parse(row.ai_cache_json) : row.ai_cache_json)
+        : {};
+      const merged = Object.assign({}, held);
+      for (const [key, incoming] of Object.entries(aiCache)) {
+        const mine = merged[key];
+        if (!mine || Number(incoming.at) > Number(mine.at)) merged[key] = incoming;
+      }
+      // Cap server-side too, oldest first, so the row cannot grow forever.
+      const ks = Object.keys(merged);
+      if (ks.length > 400) {
+        ks.sort((a, b) => (merged[a].at || 0) - (merged[b].at || 0))
+          .slice(0, ks.length - 400).forEach((k) => { delete merged[k]; });
+      }
+      await conn.execute('UPDATE users SET ai_cache_json = ?, updated_at = GREATEST(updated_at, ?) WHERE id = ?',
+        [JSON.stringify(merged), Date.now(), userId]);
+    }
     if (steps) {
       const [[row]] = await conn.execute('SELECT steps_json FROM users WHERE id = ? FOR UPDATE', [userId]);
       const held = row && row.steps_json

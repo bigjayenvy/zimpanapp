@@ -34,6 +34,10 @@ CREATE TABLE IF NOT EXISTS users (
   -- and merged per date on the client using the per-date stamp — which is what
   -- lets two devices each record a different day without either winning.
   steps_json    JSON         NULL,
+  -- The food-estimate cache, keyed by a hash of the meal text. Synced so a
+  -- meal refined on one device is not re-sent to the AI from another. Merged
+  -- by a per-entry stamp, the same way steps_json is.
+  ai_cache_json JSON         NULL,
   -- Which trackers the user asked to be prompted about:
   -- {"time": true, "money": true, "steps": false, "meals": false}. A column
   -- rather than a table for the same reason steps_json is one: four booleans
@@ -45,6 +49,9 @@ CREATE TABLE IF NOT EXISTS users (
   -- The activity is deliberately absent: this flow names the entry on stop.
   timer_start   BIGINT       NULL,
   timer_cat     VARCHAR(60)  NULL,
+  -- What the running timer is called. Kept beside its start and category so a
+  -- timer started on one device carries its name to the others.
+  timer_activity VARCHAR(200) NULL,
   -- 'user', 'manager' or 'superadmin'. Managers read the admin dashboard,
   -- superadmins also write to it. Everyone else never sees it exists.
   role          VARCHAR(16)  NOT NULL DEFAULT 'user',

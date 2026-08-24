@@ -886,32 +886,50 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     display: flex; align-items: center; justify-content: center;
     padding: 20px; overflow: auto;
   }
+  /* Overflow hidden so the hero's top corners are clipped to the sheet's
+     radius; the sheet itself no longer paints — the hero and the cream body
+     each paint their own half. */
   .donate-sheet {
-    position: relative; width: 460px; max-width: 100%;
-    background: var(--color-bg); border-radius: 18px;
-    padding: 34px 30px 26px; text-align: center;
-    box-shadow: var(--shadow-lg);
+    position: relative; width: 430px; max-width: 100%;
+    border-radius: 20px; overflow: hidden; text-align: center;
+    box-shadow: var(--shadow-lg); background: #fbf3e4;
   }
+  .donate-hero { position: relative; height: 168px; }
+  .donate-hero svg { display: block; width: 100%; height: 100%; }
+  /* The X rides on the hero, so it is white on the gradient. */
   .donate-x {
-    position: absolute; top: 8px; right: 12px; border: 0; background: transparent;
-    font-size: 24px; line-height: 1; color: var(--color-neutral-600);
-    cursor: pointer; padding: 4px 8px;
+    position: absolute; top: 12px; right: 14px; z-index: 2; border: 0;
+    width: 30px; height: 30px; border-radius: 50%; cursor: pointer;
+    background: color-mix(in srgb, #241f30 42%, transparent); color: #fff;
+    font-size: 19px; line-height: 1; display: flex; align-items: center; justify-content: center;
   }
-  .donate-x:hover { color: var(--color-text); }
-  .donate-kicker {
-    font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
-    color: var(--color-neutral-600); margin-bottom: 12px;
+  .donate-x:hover { background: color-mix(in srgb, #241f30 62%, transparent); }
+  /* The cream lower half. It overlaps the hero by a hair and rounds its own
+     top, so the two meet on a soft seam rather than a hard line. */
+  .donate-body {
+    position: relative; margin-top: -14px; border-radius: 20px 20px 0 0;
+    background: #fbf3e4; padding: 22px 30px 26px;
   }
-  .donate-title { margin: 0 0 15px; display: flex; flex-direction: column; gap: 1px; }
+  /* A framed pill rather than bare small caps, the way the reference sets it. */
+  .donate-chip {
+    display: inline-block; margin-bottom: 14px; padding: 5px 13px;
+    border: 1px solid color-mix(in srgb, #b8892e 34%, transparent); border-radius: 999px;
+    font-size: 10px; letter-spacing: .14em; text-transform: uppercase; font-weight: 600;
+    color: #9a6f22; background: color-mix(in srgb, #f2d79a 26%, transparent);
+  }
+  .donate-title { margin: 0 0 15px; display: flex; flex-direction: column; gap: 2px; }
+  /* Sized to keep each phrase on its own line — the reference sets it two lines,
+     not four. clamp lets it give way on the narrowest phones rather than
+     overflowing. nowrap holds "DONATE A DOLLAR" together. */
   .donate-title span {
-    font-family: var(--font-heading); font-weight: 700; font-size: 40px;
-    line-height: .98; letter-spacing: .005em;
+    font-family: var(--font-heading); font-weight: 700;
+    font-size: clamp(26px, 8.2vw, 33px); line-height: 1.02; letter-spacing: .004em; white-space: nowrap;
   }
   .donate-l1 { color: #14a05c; }
   .donate-l2 { color: #1d6f8f; }
   .donate-copy {
     margin: 0 0 20px; font-size: 13.5px; line-height: 1.6;
-    color: var(--color-neutral-800);
+    color: #6b5f4a;
   }
   .donate-cta {
     display: inline-flex; align-items: center; justify-content: center; gap: 9px;
@@ -930,8 +948,9 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .donate-later:hover { color: var(--color-text); }
 
   @media (max-width: 560px) {
-    .donate-sheet { padding: 30px 20px 22px; }
-    .donate-title span { font-size: 31px; }
+    .donate-hero { height: 148px; }
+    .donate-body { padding: 20px 20px 22px; }
+    .donate-title span { font-size: clamp(24px, 8vw, 30px); }
     .donate-copy { font-size: 12.5px; }
     .donate-cta { font-size: 15px; padding: 13px 18px; }
   }
