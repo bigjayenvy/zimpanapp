@@ -3804,33 +3804,150 @@ function notePromptDialog() {
     </div>`;
 }
 
-/* The desktop's rendering of the balance question. The phone has its own,
-   below — one state, one set of words, two shapes, the way the donate ask and
-   the account panel already work. */
+/* ── the money-out question, drawn ──
+
+   Two screens on one flag: the question, while the spend is unfiled, and where
+   it leaves you once it is answered. The markup below is written once and
+   dropped into both frames — the laptop's dialog and the phone's sheet — so
+   the two layouts cannot drift into saying different things about the same
+   spend. Only the frame around it differs, the way the donate ask already
+   works.
+
+   The art is drawn rather than photographed: same 1.7 stroke and the same
+   currentColor as the rest of the icon set, so the scale on this card reads as
+   the scale on the summary card. Everything sits in a 64×56 box, which lets a
+   card hold one without measuring it. */
+const DQ_ART = {
+  // A coin above a balance: the spend going onto the scale it is weighed on.
+  scales: '<circle cx="32" cy="8.6" r="5.4"/><circle cx="32" cy="8.6" r="1.5" fill="currentColor" stroke="none"/>'
+    + '<path d="M32 15.4v5.4"/><path d="M13 21h38"/><path d="M32 21v22.4"/>'
+    + '<path d="M26.2 43.4h11.6l2 4H24.2Z"/>'
+    + '<path d="M13 21 7.6 33.4A6.4 6.4 0 0 0 18.4 33.4Z"/>'
+    + '<path d="M51 21 45.6 33.4A6.4 6.4 0 0 0 56.4 33.4Z"/>',
+  /* The same coin, going somewhere else entirely.
+
+     Every point that meets the body is solved off the body's own ellipse
+     rather than placed by eye: an ear whose base floats above the back reads
+     as a fin, and a snout that only grazes the edge reads as a circle stuck
+     on. The coin hangs above the slot with no line drawn between them — the
+     line made a lollipop out of it. */
+  piggy: '<path d="M8 31C8 23.5 14.6 17.4 23 16.4c2.5-.3 5.2-.2 7.6.3L36.6 8l5.8 12.4'
+    + 'c2.8 1.9 5 4.3 6.2 7.1h4a4.9 4.9 0 0 1 0 9.9h-4.2c-2.2 4.8-7.6 8.4-14.4 9.4'
+    + '-6.4 1-12.6-.4-16.6-3.4C10.4 39.6 8 35.6 8 31Z"/>'
+    + '<circle cx="54.4" cy="30.4" r="1" fill="currentColor" stroke="none"/><circle cx="54.4" cy="34.2" r="1" fill="currentColor" stroke="none"/>'
+    + '<circle cx="38.4" cy="26.4" r="1.6" fill="currentColor" stroke="none"/>'
+    + '<path d="M17.4 43v5.4M33.6 45.2v3.2"/><path d="M8.2 27.4c-4.2-.4-5.2 3.8-1.8 4.8"/>'
+    + '<path d="M17.4 20.6h9"/><circle cx="24" cy="8" r="5"/>'
+    + '<circle cx="24" cy="8" r="1.5" fill="currentColor" stroke="none"/>',
+  // What is left: a wallet, with a note edge showing above the fold.
+  wallet: '<path d="M15.6 17.4v-3.2a3.4 3.4 0 0 1 3.4-3.4h20a3.4 3.4 0 0 1 3.4 3.4v3.2"/>'
+    + '<rect x="5.6" y="17.4" width="52.8" height="30.4" rx="6.4"/>'
+    + '<path d="M58.4 27.2h-10.4a6.2 6.2 0 0 0 0 12.4h10.4"/>'
+    + '<circle cx="51.4" cy="33.4" r="2" fill="currentColor" stroke="none"/>',
+  /* Money arriving and money leaving. The stack and the arrow are kept clear of
+     one another: overlapped, the arrowhead reads as part of the coins and the
+     direction — the whole point of the drawing — stops being legible. */
+  inflow: '<ellipse cx="18" cy="24" rx="9.4" ry="3.6"/><path d="M8.6 24v16.8a9.4 3.6 0 0 0 18.8 0V24"/>'
+    + '<path d="M8.6 30.6a9.4 3.6 0 0 0 18.8 0"/><path d="M8.6 36.2a9.4 3.6 0 0 0 18.8 0"/>'
+    + '<path d="M45 46V16"/><path d="M35.6 25.4 45 16l9.4 9.4"/>',
+  outflow: '<rect x="5.6" y="27" width="29" height="17.4" rx="3.6"/>'
+    + '<circle cx="20.1" cy="35.7" r="4.2"/>'
+    + '<path d="M10.4 27v-3a3 3 0 0 1 3-3h22.2a3 3 0 0 1 3 3v16.6"/>'
+    + '<path d="M51 11.6v27"/><path d="M43.6 31.2 51 38.6l7.4-7.4"/>'
+};
+const dqArt = (name) => `<svg class="dq-art" viewBox="0 0 64 56" fill="none" stroke="currentColor"
+  stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${DQ_ART[name] || ''}</svg>`;
+
+/* The question. The two answers are shown as the two things they actually are
+   — two ways of filing one spend — rather than as a yes and a no with the
+   difference buried in a paragraph above them. The amount rides on the seam
+   between them, because it is the subject of both. */
+function deductQuestion(c) {
+  return `
+  <div class="dq">
+    <h4 class="dq-title">${esc(c.title)}</h4>
+    <p class="dq-sub">${esc(c.sub)}</p>
+    <div class="dq-opts">
+      <span class="dq-pill">${esc(c.spend)}</span>
+      <div class="dq-opt is-take">
+        ${dqArt('scales')}
+        <span class="dq-cap">Reduce balance</span>
+        <p class="dq-copy">Comes off Money In, so the balance stays a true running total.</p>
+      </div>
+      <div class="dq-opt is-aside">
+        <span class="dq-tag">Savings fund</span>
+        ${dqArt('piggy')}
+        <span class="dq-cap">Keep apart</span>
+        <p class="dq-copy">Logged as a spend of its own. For savings, or anything reimbursed.</p>
+      </div>
+    </div>
+    <button class="dq-switch" data-act="deduct-remember" role="switch" aria-checked="${state.deductRemember}">
+      <span class="dq-track"><span class="dq-knob"></span></span>
+      <span>Do this every time — stop asking</span>
+    </button>
+    <div class="dq-acts">
+      <button class="btn btn-primary dq-go" data-act="deduct-yes">Yes, take it off</button>
+      <button class="btn btn-secondary dq-go" data-act="deduct-no">No, keep it aside</button>
+    </div>
+  </div>`;
+}
+
+/* The answer. Three figures rather than a sentence carrying all three: the
+   balance is the one being asked about, and burying it mid-sentence between
+   the other two is what made it hard to find.
+
+   Spending is everything logged, including anything held aside — that total
+   answers "what did I spend", which is not the question the balance answers.
+   The gap between them is named in the footnote rather than left to be
+   noticed. */
+function deductResult(c) {
+  const st = c.st;
+  const f = (cents) => amount(Math.abs(cents) / 100);
+  const over = st.leftCents < 0;
+  const cards = [
+    {
+      cls: over ? 'is-over' : 'is-bal', tag: 'Current balance', art: 'wallet',
+      amt: f(st.leftCents), unit: over ? 'over' : 'left',
+      // Describes the figure rather than restating the heading above it.
+      note: over ? 'How far past Money In you have gone.' : 'Your running net funds.'
+    },
+    { cls: 'is-in', tag: 'Total income', art: 'inflow', amt: f(st.inCents), unit: 'in', note: 'Total funds received.' },
+    { cls: 'is-out', tag: 'Total spending', art: 'outflow', amt: f(st.outCents), unit: 'out', note: 'Total funds spent.' }
+  ];
+  const aside = st.asideCents
+    ? ` ${f(st.asideCents)} is held aside across ${st.asideCount} ${st.asideCount === 1 ? 'entry' : 'entries'}, so it is in what you spent but not off your balance.`
+    : '';
+  return `
+  <div class="dq">
+    <h4 class="dq-title">${esc(c.title)}</h4>
+    <p class="dq-sub">${esc(c.sub)}</p>
+    <div class="dq-stats">
+      ${cards.map((s) => `
+        <div class="dq-stat ${s.cls}">
+          <span class="dq-stat-tag">${esc(s.tag)}</span>
+          ${dqArt(s.art)}
+          <div class="dq-stat-fig">
+            <span class="dq-stat-amt">${esc(s.amt)}</span>
+            <span class="dq-stat-unit">${esc(s.unit)}</span>
+            <span class="dq-stat-note">${esc(s.note)}</span>
+          </div>
+        </div>`).join('')}
+    </div>
+    <p class="dq-foot">This summary is based on ${esc(c.window)}. Change it on any entry later.${esc(aside)}</p>
+    <button class="btn btn-primary dq-done" data-act="deduct-close">Done</button>
+  </div>`;
+}
+
+/* The desktop's frame. The backdrop scrolls and centres safely: a result panel
+   taller than a short window would otherwise overflow the top of a centred
+   flex box, where no scroll can reach it. */
 function deductDialog() {
   if (!state.deductAsk) return '';
   const c = deductCopy();
-  const done = state.deductAsk.done;
-  const tone = c.tone === 'over' ? 'var(--zg-alert)' : 'var(--color-accent-700)';
   return `
-    <div style="position:fixed;inset:0;background:color-mix(in srgb, var(--color-neutral-900) 55%, transparent);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50;">
-      <div class="blueprint" style="width:460px;max-width:100%;padding:26px 26px 24px;background:var(--color-bg);">
-        <h4 style="margin:0 0 8px;${done ? `color:${tone};` : ''}">${esc(c.title)}</h4>
-        <p style="margin:0 0 16px;font-size:13.5px;line-height:1.6;color:var(--color-neutral-800);">${esc(c.body)}</p>
-        ${done
-          ? `<div style="display:flex;align-items:center;gap:10px;">
-              <span style="font-size:11.5px;color:var(--color-neutral-600);margin-right:auto;">Across ${esc(c.window)}. Change it on any entry later.</span>
-              <button class="btn btn-primary" data-act="deduct-close">Done</button>
-            </div>`
-          : `<label style="display:flex;align-items:center;gap:9px;font-size:13px;color:var(--color-neutral-800);margin-bottom:16px;cursor:pointer;">
-              <input type="checkbox" data-act="deduct-remember"${state.deductRemember ? ' checked' : ''}
-                style="width:17px;height:17px;accent-color:var(--color-accent);cursor:pointer;">
-              Do this every time — stop asking
-            </label>
-            <div style="display:flex;gap:10px;flex-wrap:wrap;">
-              <button class="btn btn-primary" data-act="deduct-yes">Yes, take it off</button>
-              <button class="btn btn-secondary" data-act="deduct-no">No, keep it aside</button>
-            </div>`}
+    <div style="position:fixed;inset:0;background:color-mix(in srgb, var(--color-neutral-900) 55%, transparent);display:flex;align-items:safe center;justify-content:safe center;padding:20px;z-index:50;overflow:auto;">
+      <div class="blueprint dq-shell" style="background:var(--color-bg);">
+        ${state.deductAsk.done ? deductResult(c) : deductQuestion(c)}
       </div>
     </div>`;
 }
@@ -6505,19 +6622,20 @@ function deductStatus() {
 
 function deductCopy() {
   const row = deductRow();
+  // The subject line is the same on both screens: the spend that raised the
+  // question is the spend the answer is about, and repeating it is what ties
+  // the second screen to the first.
   const spend = row ? amount(Number(row.out) || 0) : '';
+  const sub = `${spend} has been logged.`;
   if (!state.deductAsk || !state.deductAsk.done) {
-    return {
-      title: 'Deduct this amount from Money In?',
-      body: `${spend} is logged. Counting it against your money in keeps a running balance; leaving it aside still logs the spend, it just does not come off — which is what you want for something reimbursed, or money that came from savings.`
-    };
+    return { title: 'Deduct this amount from Money In?', sub, spend };
   }
   const st = deductStatus();
   return {
     title: st.tone === 'over' ? 'You are past what came in' : st.tone === 'none' ? 'Nothing in to take it from' : 'Where that leaves you',
-    body: `${st.line}`,
-    // Named so the figure cannot be mistaken for the window on screen behind it.
-    window: 'everything you have logged', tone: st.tone
+    sub, spend, st,
+    // Named so the figures cannot be mistaken for the window on screen behind them.
+    window: 'everything you have logged'
   };
 }
 
@@ -8116,30 +8234,7 @@ function mCalItems(dates, kind) {
 function mDeductSheet() {
   if (!state.deductAsk) return '';
   const c = deductCopy();
-  const done = state.deductAsk.done;
-  const tone = c.tone === 'over' ? '#d92d20' : c.tone === 'none' ? '#756f88' : '#0e9f6e';
-  return mSheet(`
-  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
-    <span style="width:34px;height:34px;flex:none;border-radius:11px;display:grid;place-items:center;
-                 background:${done ? `${tone}1f` : '#eceefe'};color:${done ? tone : '#3f4bc4'};">${nodeIcon(done ? 'scales' : 'funnel', 18)}</span>
-    <span style="font-family:var(--font-heading);font-weight:700;font-size:20px;line-height:1.2;color:#16131f;">${esc(c.title)}</span>
-  </div>
-  <p style="margin:0 0 ${done ? 18 : 16}px;font-size:14px;line-height:1.55;color:#575168;">${esc(c.body)}</p>
-  ${done
-    ? `<p style="margin:0 0 16px;font-size:11.5px;color:#9995ab;">Across ${esc(c.window)}. You can change it on the entry later.</p>
-       <button class="btn btn-primary" data-act="deduct-close" style="width:100%;min-height:50px;font-size:15.5px;">Done</button>`
-    : `<button data-act="deduct-remember" aria-pressed="${state.deductRemember}"
-        style="display:flex;align-items:center;gap:10px;width:100%;padding:12px 0;margin-bottom:14px;border:0;background:transparent;
-               cursor:pointer;font-family:var(--font-body);font-size:14px;color:#3b3648;text-align:left;">
-        <span style="width:22px;height:22px;flex:none;border-radius:7px;display:grid;place-items:center;
-                     border:1.5px solid ${state.deductRemember ? '#5f3ac9' : 'rgba(47,28,102,.25)'};
-                     background:${state.deductRemember ? '#5f3ac9' : 'transparent'};color:#fff;">${state.deductRemember ? nodeIcon('check', 14) : ''}</span>
-        Do this every time — stop asking
-      </button>
-      <div style="display:flex;flex-direction:column;gap:10px;">
-        <button class="btn btn-primary" data-act="deduct-yes" style="width:100%;min-height:50px;font-size:15.5px;">Yes, take it off</button>
-        <button class="btn btn-secondary" data-act="deduct-no" style="width:100%;min-height:50px;font-size:15.5px;">No, keep it aside</button>
-      </div>`}`, '24px 20px 30px');
+  return mSheet(state.deductAsk.done ? deductResult(c) : deductQuestion(c), '24px 18px 28px');
 }
 
 function mCalSheet() {

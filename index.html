@@ -879,6 +879,137 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .report-tools .btn { display: inline-flex; align-items: center; gap: 7px; }
 
+  /* — the money-out question —
+     One class set behind two frames: the laptop's dialog and the phone's sheet
+     drop the same markup in, so what the two layouts say about a spend cannot
+     drift apart.
+
+     The accent tokens are repointed on the block itself rather than the teal
+     being hardcoded into each rule — the same trick [data-app="money"] uses
+     above. It matters because the phone's sheet is rendered outside that
+     wrapper: without this the primary button would come out violet there and
+     teal on the laptop, for the same question. */
+  .dq {
+    --color-accent: #16a394;
+    --color-accent-2: #0f766e;
+    --color-accent-100: #e6f7f4;
+    --color-accent-200: #c7ede7;
+    --color-accent-600: #199184;
+    --color-accent-700: #10756c;
+    --grad-brand: linear-gradient(115deg, #2bb8a5 0%, #16a394 45%, #0f766e 100%);
+    --grad-brand-hover: linear-gradient(115deg, #22a795 0%, #12907f 45%, #0b6259 100%);
+    text-align: center;
+  }
+  .dq-shell { width: 470px; max-width: 100%; margin: auto; padding: 24px 24px 22px; }
+  /* Scoped rather than bare, so the mobile type scale's `.blueprint h4` — a
+     more specific selector — does not shrink the title inside the laptop's
+     dialog when the window is narrow. */
+  .dq .dq-title {
+    margin: 0 0 5px; font-family: var(--font-heading); font-weight: 700;
+    font-size: 21px; line-height: 1.22; color: var(--color-text);
+  }
+  .dq-sub { margin: 0; font-size: 12.5px; color: var(--color-neutral-600); }
+  .dq-art { display: block; width: 64px; height: 56px; }
+
+  /* — the two ways of filing it — */
+  .dq-opts {
+    position: relative; display: grid; grid-template-columns: 1fr 1fr;
+    gap: 10px; margin-top: 22px;
+  }
+  /* The amount rides the seam between the two cards: it is the subject of both,
+     and putting it on either one would read as belonging to that answer. */
+  .dq-pill {
+    position: absolute; top: 0; left: 50%; transform: translate(-50%, -50%); z-index: 2;
+    padding: 5px 15px; border-radius: 999px; white-space: nowrap;
+    background: #fff; border: 1.5px solid color-mix(in srgb, #16a394 40%, transparent);
+    font-family: var(--font-heading); font-weight: 700; font-size: 14px; color: #0f766e;
+    box-shadow: 0 2px 8px color-mix(in srgb, #16a394 22%, transparent);
+  }
+  .dq-opt {
+    position: relative; display: flex; flex-direction: column; align-items: center;
+    padding: 24px 12px 16px; border-radius: 16px; border: 1.5px solid;
+  }
+  .dq-opt .dq-art { margin-bottom: 8px; }
+  .dq-opt.is-take { border-color: color-mix(in srgb, #16a394 34%, transparent); background: #f0faf8; color: #0b5750; }
+  .dq-opt.is-aside { border-color: color-mix(in srgb, #b8892e 30%, transparent); background: #fdf7ea; color: #7d5a15; }
+  .dq-cap { font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; font-weight: 700; }
+  .dq-copy { margin: 6px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--color-neutral-800); }
+  .dq-tag {
+    position: absolute; top: 8px; right: 8px; max-width: calc(100% - 16px);
+    padding: 3px 8px; border-radius: 999px;
+    font-size: 8px; letter-spacing: .09em; text-transform: uppercase; font-weight: 700;
+    color: #8a6415; background: color-mix(in srgb, #e9a13b 26%, transparent);
+  }
+
+  /* — "do this every time" —
+     A switch rather than a checkbox: it sets a standing preference, which is
+     what a switch means and what a tickbox on a form does not. */
+  .dq-switch {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    width: 100%; margin: 20px 0 14px; padding: 4px 0; border: 0; background: transparent;
+    cursor: pointer; font-family: var(--font-body); font-size: 13px; color: var(--color-text);
+  }
+  .dq-track {
+    position: relative; flex: none; width: 40px; height: 23px; border-radius: 999px;
+    background: color-mix(in srgb, var(--color-text) 20%, transparent); transition: background .16s ease;
+  }
+  .dq-knob {
+    position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 3px color-mix(in srgb, #241f30 34%, transparent);
+    transition: transform .16s ease;
+  }
+  .dq-switch[aria-checked="true"] .dq-track { background: #16a394; }
+  .dq-switch[aria-checked="true"] .dq-knob { transform: translateX(17px); }
+  .dq-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .dq-go { width: 100%; min-height: 46px; border-radius: 999px; font-size: 14.5px; }
+
+  /* — where it leaves you — */
+  .dq-stats { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+  .dq-stat {
+    position: relative; display: flex; align-items: center; gap: 14px; text-align: left;
+    padding: 28px 15px 16px; border-radius: 16px; border: 1.5px solid;
+  }
+  .dq-stat .dq-art { flex: none; width: 74px; height: 64px; }
+  .dq-stat-tag {
+    position: absolute; top: 9px; right: 12px; padding: 3px 9px; border-radius: 999px;
+    font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase; font-weight: 700;
+  }
+  .dq-stat-fig { display: flex; flex-direction: column; min-width: 0; }
+  .dq-stat-amt {
+    font-family: var(--font-heading); font-weight: 700;
+    font-size: clamp(21px, 6.2vw, 27px); line-height: 1.06;
+  }
+  .dq-stat-unit { font-size: 12.5px; font-weight: 600; opacity: .78; }
+  .dq-stat-note { margin-top: 5px; font-size: 11.5px; line-height: 1.4; color: var(--color-neutral-800); }
+  .dq-stat.is-bal { border-color: color-mix(in srgb, #16a394 34%, transparent); background: #f0faf8; color: #0b5750; }
+  .dq-stat.is-bal .dq-stat-tag { background: color-mix(in srgb, #16a394 17%, transparent); color: #0b5750; }
+  .dq-stat.is-in { border-color: color-mix(in srgb, #b8892e 30%, transparent); background: #fdf7ea; color: #7d5a15; }
+  .dq-stat.is-in .dq-stat-tag { background: color-mix(in srgb, #e9a13b 26%, transparent); color: #7d5a15; }
+  /* Spending and an overdrawn balance share the alert red, but not the same
+     weight: two identical red cards in one column cannot be told apart at a
+     glance, and only one of them is a warning. Spending stays a soft wash;
+     the overdrawn balance takes a full-strength border. */
+  .dq-stat.is-out, .dq-stat.is-over { background: #fdf2f1; color: #8f1d14; }
+  .dq-stat.is-out { border-color: color-mix(in srgb, #d92d20 22%, transparent); }
+  .dq-stat.is-over { border-width: 2px; border-color: color-mix(in srgb, #d92d20 62%, transparent); }
+  .dq-stat.is-out .dq-stat-tag { background: color-mix(in srgb, #d92d20 12%, transparent); color: #8f1d14; }
+  .dq-stat.is-over .dq-stat-tag { background: #d92d20; color: #fff; }
+  .dq-foot { margin: 15px 0 14px; font-size: 11.5px; line-height: 1.55; color: var(--color-neutral-600); }
+  .dq-done { width: 100%; min-height: 48px; border-radius: 999px; font-size: 15px; }
+
+  /* On a narrow phone the two cards are still side by side — the comparison is
+     the point of the screen — but the type gives way rather than the layout. */
+  @media (max-width: 430px) {
+    .dq .dq-title { font-size: 19px; }
+    .dq-opts { gap: 8px; }
+    .dq-opt { padding: 22px 9px 14px; }
+    .dq-opt .dq-art { width: 56px; height: 49px; }
+    .dq-copy { font-size: 11px; }
+    .dq-go { font-size: 13.5px; padding-inline: 8px; }
+    .dq-stat { gap: 11px; padding: 26px 12px 15px; }
+    .dq-stat .dq-art { width: 64px; height: 56px; }
+  }
+
   /* — donation lightbox — */
   .donate-backdrop {
     position: fixed; inset: 0; z-index: 70;
