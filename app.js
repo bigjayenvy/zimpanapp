@@ -10094,20 +10094,41 @@ function mTopButton() {
          box-shadow:0 6px 18px rgba(47,28,102,.18);cursor:pointer;display:none;place-items:center;">${nodeIcon('up', 19)}</button>`;
 }
 
+/* Two either side of the button that logs. Adding Ask left the row with one
+   tab on the left and two on the right, which read as lopsided because it was:
+   the + is centred, so the tabs have to be even or it leans.
+
+   Donate takes the fourth slot rather than something invented to fill it — it
+   already had a home on the phone (the nudge sheet) and no way in from the
+   chrome. It keeps the amber it wears everywhere else instead of taking the
+   violet of a nav item, because it is not one: the other four move you around
+   the app, and this one leaves it. */
 function mTabs() {
   const on = state.m.screen;
-  const tab = (act, glyph, label, active) => `
+  const tab = (act, glyph, label, active, tone) => `
     <button data-act="${act}"${active ? ' aria-current="page"' : ''}
-      style="border:0;background:transparent;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;font-family:var(--font-body);font-size:11px;font-weight:600;min-width:60px;min-height:44px;color:${active ? '#7450e4' : '#9995ab'};">
+      style="border:0;background:transparent;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;font-family:var(--font-body);font-size:11px;font-weight:600;min-width:52px;min-height:46px;color:${tone || (active ? '#7450e4' : '#9995ab')};">
       <span style="line-height:1;">${glyph}</span>${label}
     </button>`;
+  /* The two sides are their own flex boxes with the button between them, rather
+     than five children sharing one space-around. That is what actually holds
+     the + in the middle: Ask is only drawn where the server has a key for it,
+     so counting on the tabs to come out even leans the row the other way on an
+     install without one. Each side spreads its own, whatever it holds.
+
+     Padding pulled in and the tabs narrowed, because five items plus a 58px
+     button do not fit a 320px screen at the old 26px inset. */
+  const side = (inner) => `<div style="flex:1;min-width:0;display:flex;align-items:center;justify-content:space-around;">${inner}</div>`;
   return `
-<div style="position:fixed;left:0;right:0;bottom:0;z-index:10;height:92px;display:flex;align-items:center;justify-content:space-around;padding:0 26px 22px;background:linear-gradient(180deg,rgba(248,247,251,0),rgba(248,247,251,.96) 42%);backdrop-filter:blur(8px);">
-  ${tab('m-go-home', nodeIcon('home', 21), 'Home', on === 'home')}
+<div style="position:fixed;left:0;right:0;bottom:0;z-index:10;height:92px;display:flex;align-items:center;padding:0 10px 22px;background:linear-gradient(180deg,rgba(248,247,251,0),rgba(248,247,251,.96) 42%);backdrop-filter:blur(8px);">
+  ${side(`
+    ${tab('m-go-home', nodeIcon('home', 21), 'Home', on === 'home')}
+    ${tab('m-donate-open', nodeIcon('heart', 21), 'Donate', false, '#e08a1e')}`)}
   <button data-act="m-flow-open" aria-label="Log something"
     style="width:58px;height:58px;flex:none;border:0;border-radius:50%;cursor:pointer;background:${M_GRAD_FLAT};box-shadow:0 10px 24px rgba(79,70,229,.4);color:#fff;font-size:26px;font-weight:300;line-height:1;margin-bottom:12px;">+</button>
-  ${tab('m-go-insights', nodeIcon('insights', 21), 'Insights', on === 'insights')}
-  ${state.aiEstimates ? tab('chat-open', nodeIcon('pulse', 21), 'Ask', state.chat.open) : ''}
+  ${side(`
+    ${tab('m-go-insights', nodeIcon('insights', 21), 'Insights', on === 'insights')}
+    ${state.aiEstimates ? tab('chat-open', nodeIcon('pulse', 21), 'Ask', state.chat.open) : ''}`)}
 </div>`;
 }
 
