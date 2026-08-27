@@ -1793,16 +1793,25 @@ const isGroceryRow = (row) => {
 const SERVINGS = [
   // Drinks and supplements first: they are the ones most often written
   // alongside a meal, and several of them are close to free.
-  { g: 'water', re: /\bwater\b|tubig/, kcal: 0, p: 0, c: 0, f: 0 },
+  { g: 'water', re: /\bwater\b|tubig/, kcal: 0, p: 0, c: 0, f: 0, serve: 250 },
   /* Condiments, so "fish with soy sauce" does not bill the sauce as an
      unrecognised side dish worth a hundred and seventy calories. */
   { g: 'condiment', re: /soy sauce|toyo|vinegar|suka|ketchup|patis|fish sauce|\bsauce\b|mustard|sriracha|hot sauce|\bsalt\b|pepper\b|spices/, kcal: 15, p: 0, c: 2, f: 0.5, serve: 20 },
   { g: 'supplement', re: /creatine|multivitamin|vitamins?\b|electrolyte|\bbcaa\b|pre-?workout/, kcal: 5, p: 0, c: 1, f: 0 },
-  { g: 'supplement', re: /whey|protein powder|protein shake|mass gainer/, kcal: 120, p: 24, c: 3, f: 1.5 },
-  { g: 'coffee', re: /black coffee|americano|espresso|brewed coffee|kapeng barako|black kape/, kcal: 5, p: 0, c: 1, f: 0 },
-  { g: 'coffee', re: /latte|cappuccino|mocha|frappe|white coffee|3-?in-?1/, kcal: 150, p: 6, c: 18, f: 6 },
-  { g: 'coffee', re: /coffee|kape/, kcal: 60, p: 2, c: 8, f: 2 },
-  { g: 'tea', re: /green tea|black tea|\btea\b(?! ?(?:milk|boba))/, kcal: 2, p: 0, c: 0, f: 0 },
+  { g: 'supplement', re: /whey|protein powder|protein shake|mass gainer/, kcal: 120, p: 24, c: 3, f: 1.5, serve: 300 },
+  { g: 'coffee', re: /black coffee|americano|espresso|brewed coffee|kapeng barako|black kape/, kcal: 5, p: 0, c: 1, f: 0, serve: 240 },
+  { g: 'coffee', re: /latte|cappuccino|mocha|frappe|white coffee|3-?in-?1/, kcal: 150, p: 6, c: 18, f: 6, serve: 350 },
+  { g: 'coffee', re: /coffee|kape/, kcal: 60, p: 2, c: 8, f: 2, serve: 240 },
+  /* Named tea drinks before plain tea, and the order is load-bearing: the tea
+     rule below guards against "tea milk" with a lookahead, which does nothing
+     for "milk tea" or "iced tea", where the qualifier comes first. Sitting
+     under plain tea these two were billed at two calories a cup — a large milk
+     tea read as lighter than the water it was made with. First match wins, so
+     being above it is the fix; a lookbehind would parse-error on older iOS
+     Safari and take the whole file with it. */
+  { g: 'drink', re: /milk tea|boba/, kcal: 250, p: 3, c: 45, f: 6, serve: 500 },
+  { g: 'drink', re: /soda|coke|sprite|softdrink|iced tea|juice/, kcal: 180, p: 0, c: 44, f: 0, serve: 400 },
+  { g: 'tea', re: /green tea|black tea|\btea\b(?! ?(?:milk|boba))/, kcal: 2, p: 0, c: 0, f: 0, serve: 240 },
 
   // Baked goods — the gap that started this. A croissant is mostly butter.
   { g: 'baked', re: /croissant|croisant|crossaint|crosaint/, kcal: 250, p: 5, c: 26, f: 14 },
@@ -1840,9 +1849,8 @@ const SERVINGS = [
   { g: 'fastfood', re: /burger|pizza|fries|lumpia|tempura|siomai/, kcal: 400, p: 15, c: 40, f: 20 },
   { g: 'instant', re: /instant noodle|canned|spam|corned beef/, kcal: 380, p: 13, c: 45, f: 16 },
   { g: 'dessert', re: /cake|donut|pastry|leche flan|ice cream|halo-halo|dessert|chocolate/, kcal: 330, p: 4, c: 45, f: 15, serve: 100 },
-  { g: 'drink', re: /milk tea|boba/, kcal: 250, p: 3, c: 45, f: 6 },
-  { g: 'drink', re: /soda|coke|sprite|softdrink|iced tea|juice/, kcal: 180, p: 0, c: 44, f: 0 },
-  { g: 'dairy', re: /yogurt|cheese|\bmilk\b(?! ?tea)/, kcal: 130, p: 8, c: 10, f: 6 },
+  { g: 'dairy', re: /\bmilk\b(?! ?tea)/, kcal: 120, p: 8, c: 12, f: 5, serve: 240 },
+  { g: 'dairy', re: /yogurt|cheese/, kcal: 130, p: 8, c: 10, f: 6 },
 ];
 
 // A meal we cannot read at all still happened; ignoring it would understate
@@ -1874,8 +1882,22 @@ const SIZE_WORDS = [
 /* A number followed by a unit of mass is a weight, not a count. Reading "250
    grams of fish" as two hundred and fifty fish is how a day's food reached
    seventeen thousand calories. */
-const MASS_RE = /(\d+(?:\.\d+)?)\s*(kgs?|kilos?|kilograms?|gs?\b|gr\b|grams?|oz|ounces?|lbs?|pounds?)\b/i;
-const TO_GRAMS = { kg: 1000, kilo: 1000, kilogram: 1000, g: 1, gr: 1, gram: 1, oz: 28.35, ounce: 28.35, lb: 453.6, pound: 453.6 };
+/* Volume belongs here as much as weight. Without it "330ml coke" missed this
+   rule entirely and fell through to the count below, where the 330 was read as
+   a number of cokes and clamped to twenty of them — the same failure this
+   regex was written to stop, arriving through the unit it did not know.
+
+   Millilitres are counted as grams: everything drinkable here is near enough
+   to the density of water, and a rule priced per 330ml can does not care about
+   the third decimal. `l` is last in the alternation so `lbs` still wins the
+   match, and it keeps its word boundary so "large" is not a litre. */
+const MASS_RE = /(\d+(?:\.\d+)?)\s*(kgs?|kilos?|kilograms?|mls?|millilit(?:re|er)s?|cls?|dls?|lit(?:re|er)s?|fl\.?\s*ozs?|gs?\b|gr\b|grams?|ozs?|ounces?|lbs?|pounds?|l\b)\b/i;
+const TO_GRAMS = {
+  kg: 1000, kilo: 1000, kilogram: 1000, g: 1, gr: 1, gram: 1,
+  oz: 28.35, ounce: 28.35, lb: 453.6, pound: 453.6,
+  ml: 1, millilitre: 1, milliliter: 1, cl: 10, dl: 100, l: 1000, litre: 1000, liter: 1000,
+  floz: 29.57
+};
 
 // Typical serving weight where a rule does not name its own.
 const DEFAULT_SERVE_G = 120;
@@ -1887,8 +1909,10 @@ const DEFAULT_SERVE_G = 120;
 function portionOf(item, hit) {
   const mass = MASS_RE.exec(item);
   if (mass) {
-    const unit = mass[2].toLowerCase().replace(/s$/, '');
-    const grams = Number(mass[1]) * (TO_GRAMS[unit] || TO_GRAMS[unit.replace(/s$/, '')] || 1);
+    // "fl. oz" and "fl oz" are the same unit as "floz"; the plural is not a
+    // different one. Normalised in one place so the table needs one key each.
+    const unit = mass[2].toLowerCase().replace(/[.\s]/g, '').replace(/s$/, '');
+    const grams = Number(mass[1]) * (TO_GRAMS[unit] || 1);
     const serve = (hit && hit.serve) || DEFAULT_SERVE_G;
     return Math.max(0.2, Math.min(5, grams / serve));
   }
@@ -2139,6 +2163,25 @@ const METS = [
   { re: /pilates|stretch/, met: 3.0 },
   { re: /yoga/, met: 2.5 },
   { re: /walk|lakad|stroll/, met: 3.5 },
+
+  /* Domestic effort. Housework is work — it is hours on your feet carrying
+     things — and filing it as nothing made a Saturday of chores read as a day
+     spent sitting down. Values are the Compendium's, which is where the rest of
+     this table comes from, and they sit at the bottom of the range because that
+     is honestly where they belong: an hour of cooking is not an hour of boxing.
+
+     Below the sport rules on purpose. "Cleaning the bike" is still filed as
+     cycling by the rule above, which is the reading most people intend. */
+  { re: /garden|halaman|mowing|lawn|yard work/, met: 4.0 },
+  { re: /car ?wash|wash(?:ing)? the car|hugas kotse/, met: 3.5 },
+  { re: /chores|housework|cleaning|clean the|maglinis|sweeping|\bsweep\b|mopping|\bmop\b|vacuum|laundry|labada|wash(?:ing)? (?:the )?dishes|hugas pinggan|iron(?:ing)? clothes|tidy/, met: 3.3 },
+  /* The act, not the food. Bare "cook" would take "home cooked lunch" off the
+     eaten side of the ledger and file the meal as exercise — METS is matched
+     before the food reading, so a rule that is loose here silently deletes
+     calories eaten. Gerunds only, and "cooked" on its own stays a description
+     of what was served. */
+  { re: /cooking|cooked for|nagluto|magluto|meal ?prep|baking(?! soda)/, met: 2.5 },
+  { re: /grocer|palengke|errand/, met: 2.3 },
   // Floor for anything filed as exercise but not named: the category is in the
   // text being matched, so a Workout entry is never worth nothing.
   { re: /workout|exercise|cardio|training/, met: 5.0 }
@@ -2229,12 +2272,12 @@ function burnFor(entries, weightKg, days, dates) {
 }
 
 function foodReport(entries, money, days) {
-  /* One tracker owns intake: the time tracker.
+  /* One tracker owns intake: the activity tracker.
 
      A meal is one event that can leave two traces — a block of time and a
      payment — and counting both read lunch as two lunches. Rather than guess
      which payment belongs to which meal, the line is drawn where it needs no
-     guessing at all: the time tracker records what you ate, the money tracker
+     guessing at all: the activity tracker records what you ate, the money tracker
      records what it cost, and only the first feeds the calorie count.
 
      Nothing is thrown away. What you bought and what you paid to eat both still
@@ -2260,7 +2303,7 @@ function foodReport(entries, money, days) {
     return {
       meals: 0,
       observation: uncounted.length
-        ? `No meals logged in the time tracker${per}, though ${uncounted.length} food ${uncounted.length === 1 ? 'entry is' : 'entries are'} in the money tracker. Calories are read from the time tracker only — paying for a meal, or shopping for one, is not the same as eating it — so log what you ate there and this fills in.`
+        ? `No meals logged in the activity tracker${per}, though ${uncounted.length} food ${uncounted.length === 1 ? 'entry is' : 'entries are'} in the money tracker. Calories are read from the activity tracker only — paying for a meal, or shopping for one, is not the same as eating it — so log what you ate there and this fills in.`
         : `No meals logged${per}. Food is the easiest thing to eat without noticing, and the hardest to remember accurately a week later — logging even roughly is what makes any of this readable.`,
       advice: 'Log a meal or two and answer the “What did you eat?” question. Two or three days is enough for a pattern to show.',
       nutrition: '', kcal: 0,
@@ -2285,7 +2328,7 @@ function foodReport(entries, money, days) {
   if (paidFor.length) {
     // Not "only" — the same meal may well be logged in both, and this sentence
     // has to read true either way. What it states is that money adds no calories.
-    parts.push(`${paidFor.length} food ${paidFor.length === 1 ? 'payment is' : 'payments are'} logged too. Calories are read from the time tracker alone, so anything you ate needs an entry there to count.`);
+    parts.push(`${paidFor.length} food ${paidFor.length === 1 ? 'payment is' : 'payments are'} logged too. Calories are read from the activity tracker alone, so anything you ate needs an entry there to count.`);
   }
   if (bought.length) {
     parts.push(`${bought.length} food ${bought.length === 1 ? 'shop' : 'shops'} logged too — read for what you buy, not counted as eaten.`);
@@ -3220,7 +3263,7 @@ function mobileNav(v) {
 
   return `
   <nav class="bottomnav no-print" aria-label="Main">
-    ${item('app-time', 'time', 'Time', !v.isMoney)}
+    ${item('app-time', 'time', 'Activity', !v.isMoney)}
     ${item('app-money', 'money', 'Money', v.isMoney)}
     <a class="bn-donate" href="${DONATE_URL}" data-donate target="_blank" rel="noopener noreferrer">
       <span class="bn-icon">${NAV_ICONS.donate}</span><span class="bn-label">Donate</span>
@@ -3242,7 +3285,7 @@ function stickyBar(v) {
       padding: 7px 15px; border-radius: 999px; cursor: pointer; white-space: nowrap;">${esc(label)}</button>`;
 
   const controls = v.isMoney
-    ? `${pill('app-time', 'Time Tracker', false)}${pill('app-money', 'Money Tracker', true)}`
+    ? `${pill('app-time', 'Activity Tracker', false)}${pill('app-money', 'Money Tracker', true)}`
     : `${pill('entry-mode-timer', 'Track Real Time', state.entryMode === 'timer', ' data-jump="entry"')}
        ${pill('entry-mode-manual', 'Manual Entry', state.entryMode === 'manual', ' data-jump="entry"')}`;
 
@@ -3271,7 +3314,7 @@ function header(v) {
   <div class="appbar">
     ${wordmark(26, 20)}
     <div class="appbar-tabs" style="display: flex; border: 1px solid var(--color-divider); border-radius: 999px; overflow: hidden;">
-      <button data-act="app-time" style="${tabStyle(!v.isMoney)}">Time Tracker</button>
+      <button data-act="app-time" style="${tabStyle(!v.isMoney)}">Activity Tracker</button>
       <button data-act="app-money" style="${tabStyle(v.isMoney)}">Money Tracker</button>
     </div>
     <div class="appbar-meta">
@@ -8317,7 +8360,7 @@ function mCalSheet() {
         ? ` across ${dates.length} days — about ${Math.round(total / dates.length).toLocaleString('en-US')} a day.`
         : '.'}${ai ? ' Estimated by AI from what you wrote.' : ''}`
       : food
-        ? 'No meals logged in the time tracker for this window. Calories are read from there alone — paying for a meal is not the same as eating it.'
+        ? 'No meals logged in the activity tracker for this window. Calories are read from there alone — paying for a meal is not the same as eating it.'
         : 'Nothing logged here reads as movement, and no steps were counted.'}
   </p>
   <div>${items.map(row).join('')}</div>
@@ -8727,7 +8770,7 @@ function mFlowKind() {
   const chip = mDayChip;
   return `
 <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:24px;">
-  ${card('time', nodeIcon('clock', 22), 'Time', 'Something you did', '#f2eefe', '#5f3ac9')}
+  ${card('time', nodeIcon('clock', 22), 'Activity', 'Something you did', '#f2eefe', '#5f3ac9')}
   ${card('money', esc(mGlyph()), 'Money', 'Something you spent or earned', '#eceefe', '#3f4bc4')}
 </div>
 ${mLabel('When')}
@@ -9064,7 +9107,7 @@ function mDetail() {
   <button data-act="m-go-home"
     style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:14px;color:#7450e4;padding:6px 0;font-weight:600;">← Today</button>
   <div class="card" style="margin-top:14px;border-radius:22px;box-shadow:0 4px 14px rgba(47,28,102,.1);padding:20px;gap:0;">
-    <div><span class="tag ${money ? 'tag-accent-2' : 'tag-accent'}" style="padding:4px 11px;">${money ? 'Money' : 'Time'} · ${esc(cat)}</span></div>
+    <div><span class="tag ${money ? 'tag-accent-2' : 'tag-accent'}" style="padding:4px 11px;">${money ? 'Money' : 'Activity'} · ${esc(cat)}</span></div>
     <div style="font-family:var(--font-heading);font-weight:700;font-size:27px;line-height:1.15;color:#16131f;margin-top:12px;">${esc(row.activity)}</div>
     <div style="font-family:var(--font-heading);font-weight:700;font-size:40px;line-height:1.1;margin-top:6px;color:${money && dir === 'in' ? '#1c8a63' : '#16131f'};">${esc(money ? (dir === 'in' ? '+' : '−') + mMoney(amt) : mDur(span(row)))}</div>
     <div style="height:1px;background:rgba(22,19,31,.12);margin:18px 0;"></div>
@@ -9115,7 +9158,7 @@ function mInsights() {
   </div>
   ${mRangeChips('m-insight-range', mInsightKey())}
   <div class="seg" style="display:flex;width:100%;gap:6px;padding:4px;background:#e8e6ef;border-color:transparent;margin-bottom:18px;">
-    ${opt('time', 'Time')}${opt('money', 'Money')}
+    ${opt('time', 'Activity')}${opt('money', 'Money')}
   </div>
 
   ${mReportCard(money)}
@@ -9354,7 +9397,7 @@ function mResetDraft() {
 function mCommit() {
   const s = state.m;
   const date = mDraftIso();
-  const label = (mDraftLabel() || (mIsMoney() ? 'Money' : 'Time')).slice(0, 200);
+  const label = (mDraftLabel() || (mIsMoney() ? 'Money' : 'Activity')).slice(0, 200);
   const note = s.note.trim().slice(0, 500);
 
   if (mIsMoney()) {
