@@ -633,6 +633,8 @@ const state = {
   pickRename: null, pickRenameName: '',
   // Which calorie dial has been opened for a breakdown: { kind, scope }.
   calOpen: null,
+  // Whether the once-a-day "what happened yesterday" offer is on screen.
+  recapAsk: false,
   newPurposeOpen: false, newPurposeName: '',
 
   /* Which searchable picker is open — 'category', 'purpose', or null — and what
@@ -1422,6 +1424,9 @@ async function afterSignIn(user) {
   /* After the sync, so the summary is written from the log this device has just
      finished pulling rather than the one it woke up with. */
   warmDeckSummary();
+  // Same reasoning: yesterday is only worth offering once this device has
+  // pulled what the other one logged.
+  maybeAskRecap();
 }
 
 /* ── google sign-in ──
@@ -1538,6 +1543,9 @@ async function boot() {
          not — and saying "offline" there sends people to check their wifi. */
       state.auth = { email: state.account, currency: state.currency };
       setNet(err.status === 503 ? 'paused' : 'offline', '');
+      // Offered from the local copy too — the report reads what is on this
+      // device, and being offline does not make yesterday less interesting.
+      maybeAskRecap();
     }
     render();
   }
@@ -4184,6 +4192,54 @@ function deductDialog() {
     </div>`;
 }
 
+/* ── yesterday, offered once ──
+
+   The first time the app is opened on a new day, and only then. The key is its
+   own localStorage entry rather than a field on state, for the same reason the
+   donation ask's is: it describes this browser and has no business syncing to
+   the account and following someone onto their other devices — being shown the
+   recap on the laptop is not a reason to withhold it on the phone.
+
+   Only offered when there is something to show. "Would you like to know what
+   happened yesterday" is a poor question to ask someone who logged nothing
+   yesterday, and a worse one to answer with an empty deck. Answering either way
+   marks the day done: "Not now" means not now, not "ask again on the next
+   render". */
+const RECAP_SEEN_KEY = 'zimpan.recap.v1';
+const recapSeenOn = () => { try { return localStorage.getItem(RECAP_SEEN_KEY) || ''; } catch (err) { return ''; } };
+const markRecapSeen = () => { try { localStorage.setItem(RECAP_SEEN_KEY, iso(new Date())); } catch (err) { /* private mode */ } };
+
+function maybeAskRecap() {
+  if (!state.auth || state.recapAsk) return;
+  const today = iso(new Date());
+  if (recapSeenOn() === today) return;
+  const y = mShiftIso(today, -1);
+  const had = state.entries.some((e) => e.date === y) || state.money.some((e) => e.date === y);
+  if (!had) return;
+  state.recapAsk = true;
+  render();
+}
+
+function recapDialog() {
+  if (!state.recapAsk) return '';
+  return `
+    <div style="position:fixed;inset:0;background:color-mix(in srgb, var(--color-neutral-900) 55%, transparent);display:flex;align-items:safe center;justify-content:safe center;padding:20px;z-index:65;overflow:auto;"
+         data-backdrop="recap-no">
+      <div class="blueprint" style="width:420px;max-width:100%;margin:auto;padding:26px 26px 22px;background:var(--color-bg);text-align:center;">
+        <div style="width:54px;height:54px;margin:0 auto 14px;border-radius:50%;display:grid;place-items:center;
+                    background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-accent-700);">${nodeIcon('calendar', 24)}</div>
+        <h4 style="margin:0 0 6px;">Would you like to know what happened yesterday?</h4>
+        <p style="margin:0 0 18px;font-size:13.5px;line-height:1.6;color:var(--color-neutral-700);">
+          Your report cards for ${esc(dayLabel(mShiftIso(iso(new Date()), -1)))}, in the time it takes to read them.
+        </p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <button class="btn btn-primary" data-act="recap-yes" style="min-height:44px;border-radius:999px;">Show me</button>
+          <button class="btn btn-secondary" data-act="recap-no" style="min-height:44px;border-radius:999px;">Not now</button>
+        </div>
+      </div>
+    </div>`;
+}
+
 /* ── the donation ask ──
 
    Once a day, and only after twenty minutes of the app actually being used:
@@ -5259,6 +5315,51 @@ function moneyChart(series) {
   });
 }
 
+/* Money in and money out as two lines over the window.
+
+   The bar chart in the insights block answers "which day was heavy" — each day
+   read on its own against the days beside it. Two lines answer a different
+   question: whether what comes in and what goes out are converging, crossing or
+   holding apart. Same series, and both are worth having; a bar chart cannot
+   show a trend and a line chart cannot show a single day's weight.
+
+   Drawn in a viewBox with no fixed pixel size, so it scales with its column
+   rather than needing a breakpoint of its own. */
+function moneyLines(series) {
+  const pts = (series || []);
+  // Two points make a line; one makes a dot that says nothing a tile does not.
+  if (pts.length < 2) return '';
+  if (!pts.some((d) => d.up || d.down)) return '';
+
+  const W = 560, H = 190, L = 10, R = 10, T = 14, B = 26;
+  const top = Math.max(1, ...pts.map((d) => Math.max(d.up, d.down)));
+  const x = (i) => L + (i * (W - L - R)) / (pts.length - 1);
+  const y = (val) => T + (1 - val / top) * (H - T - B);
+  const line = (key) => pts.map((d, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(d[key]).toFixed(1)}`).join(' ');
+  const dots = (key, color) => pts.map((d, i) => (d.logged
+    ? `<circle cx="${x(i).toFixed(1)}" cy="${y(d[key]).toFixed(1)}" r="2.6" fill="${color}"></circle>` : '')).join('');
+
+  const IN = '#16a394', OUT = '#d92d20';
+  const inSum = pts.reduce((a, d) => a + d.up, 0);
+  const outSum = pts.reduce((a, d) => a + d.down, 0);
+
+  return `
+          <div class="mline">
+            <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="mline-svg" role="img"
+                 aria-label="Money in and money out for each day in this window">
+              <line x1="${L}" y1="${(H - B).toFixed(1)}" x2="${W - R}" y2="${(H - B).toFixed(1)}" class="mline-axis"></line>
+              <path d="${line('up')}" fill="none" stroke="${IN}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"></path>
+              <path d="${line('down')}" fill="none" stroke="${OUT}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"></path>
+              ${dots('up', IN)}${dots('down', OUT)}
+            </svg>
+            <div class="mline-foot">
+              <span class="mline-key"><i style="background:${IN};"></i>In · ${esc(amount(inSum))}</span>
+              <span class="mline-key"><i style="background:${OUT};"></i>Out · ${esc(amount(outSum))}</span>
+              <span class="mline-span">${esc(dayLabel(pts[0].date))} – ${esc(dayLabel(pts[pts.length - 1].date))}</span>
+            </div>
+          </div>`;
+}
+
 /* The shape of the window, between the four totals and the prose. The tiles
    above it say what the fortnight came to; this says which days it came from,
    which is the part a single number cannot carry. Hidden on a one-day window,
@@ -5751,6 +5852,13 @@ function moneyDesktop(v) {
           <div style="display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0;">${legend(v)}</div>
         </div>
       </div>
+
+      ${v.rangeCash && moneyLines(v.rangeCash) ? `
+      <div class="blueprint" style="padding: 20px 22px 20px;">
+        <h4 style="margin: 0 0 4px;">Money in and out</h4>
+        <div style="font-size: 12px; color: var(--color-neutral-600); margin-bottom: 12px;">Whether the two are converging or holding apart, day by day.</div>
+        ${moneyLines(v.rangeCash)}
+      </div>` : ''}
 
       ${insightsHeading()}
       ${insightsCard(v)}
@@ -6638,6 +6746,7 @@ function render() {
   ${state.reportOpen ? reportSheet() : ''}
   ${pickDeleteDialog()}
   ${notePromptDialog()}
+  ${recapDialog()}
   ${calBreakdownDialog()}
   ${deductDialog()}
   ${donateSheet()}
@@ -7502,6 +7611,18 @@ const ACTIONS = {
     state.focusField = 'pick-new-name';
     render();
   },
+  'recap-yes': () => {
+    markRecapSeen();
+    state.recapAsk = false;
+    state.deckRange = 'yesterday';
+    state.reportOpen = true;
+    deckIndex = 0;
+    render();
+  },
+  // Either answer settles the day. "Not now" means not now, not "ask again in
+  // a minute", so it is marked seen exactly like a yes.
+  'recap-no': () => { markRecapSeen(); state.recapAsk = false; render(); },
+
   'cal-open': (el) => {
     state.calOpen = { kind: el.dataset.kind, scope: el.dataset.scope };
     render();
@@ -9730,6 +9851,7 @@ function mobileApp() {
        it, so it has to reach every layout that can ask — and it is already
        responsive, so there is nothing to rebuild. -->
   ${aiConsentDialog()}
+  ${recapDialog()}
   <!-- Same reasoning, and it was missing: toggleTimer is shared with this
        layout and raises a note prompt when it stops, so the phone could set a
        prompt that nothing here drew — the question was asked and then swallowed,

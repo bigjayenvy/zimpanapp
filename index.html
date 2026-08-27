@@ -906,6 +906,18 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .cal-more:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
   .cal-more:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 
+  /* — money in and out, as lines —
+     preserveAspectRatio is none so the plot fills its column at any width; the
+     strokes are vector-effect'd so stretching the box does not stretch the line
+     weight with it. */
+  .mline-svg { display: block; width: 100%; height: 190px; }
+  .mline-svg path { vector-effect: non-scaling-stroke; }
+  .mline-axis { stroke: color-mix(in srgb, var(--color-text) 14%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .mline-foot { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; margin-top: 10px; font-size: 11.5px; color: var(--color-neutral-700); }
+  .mline-key { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+  .mline-key i { width: 10px; height: 3px; border-radius: 2px; flex: none; }
+  .mline-span { margin-left: auto; color: var(--color-neutral-600); font-weight: 400; }
+
   /* — sleep, night by night —
      A column per night in the window, coloured by the band it falls in. Fixed
      height rather than aspect-driven: the bars are read against each other and
