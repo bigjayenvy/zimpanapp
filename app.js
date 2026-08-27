@@ -1109,19 +1109,32 @@ async function refineFood(scope) {
   if (scope === 'past' && !compute().pastSingleDate) return;
   if (scope === 'm' && mRangeDates().length !== 1) return;
 
-  if (state.aiCache[food.key]) { render(); return; }
+  return askEstimate(food.detail, food.key, scope);
+}
+
+/* The estimate for one named day, for the automatic path. Same fetch, same
+   cache, same key — only the thing that decided to ask is different. */
+function refineDay(date) {
+  const day = buildDayFood(date);
+  if (day) askEstimate(day.detail, day.key, 'auto');
+}
+
+/* The one place an estimate is fetched and stored. The button and the automatic
+   refresh both come through here so the key, the stamping and the error
+   handling cannot drift apart between them. */
+async function askEstimate(detail, key, scope) {
+  if (!detail || !key) return;
+  if (state.aiCache[key]) { render(); return; }
 
   state.aiBusy = scope;
   state.aiError = '';
   render();
   try {
-    const res = await API.estimate(food.detail);
+    const res = await API.estimate(detail);
     /* Stamped and queued so the answer reaches the other devices: the cache is
        keyed on the meal text, so once it has synced a meal refined on the
-       laptop really is already refined on the phone — which is what the comment
-       at the top of this function has always claimed and, until it synced, was
-       not true. */
-    state.aiCache[food.key] = Object.assign({}, res.estimate, { at: Date.now() });
+       laptop really is already refined on the phone. */
+    state.aiCache[key] = Object.assign({}, res.estimate, { at: Date.now() });
     capAiCache();
     state.dirty.ai = true;
     writeJson(AI_CACHE_KEY, state.aiCache);
@@ -2255,10 +2268,49 @@ function entryEnergy(e) {
 
   // Eaten, not bought: a grocery run has no business wearing a "kcal eaten" chip.
   if (isEatenRow(e)) {
-    const kcal = nutritionFor([e]).kcal;
-    return kcal ? { kind: 'food', kcal, label: `~${kcal.toLocaleString('en-US')} kcal eaten` } : null;
+    const local = nutritionFor([e]).kcal;
+    if (!local) return null;
+    /* A refinement has to reach the row as well as the block above it. Refined
+       in one place and not the other, the card and the "What you ate" figure
+       disagree about the same meal — which is the thing the report block's own
+       comment says must never happen, applied one level down.
+
+       The day's correction is apportioned across the day's rows rather than
+       claimed per item: the estimate is asked for a day's worth of text at
+       once, so what it actually knows is that day's total. Scaling by the ratio
+       keeps the rows summing to exactly the figure on the block, which is the
+       property that matters — no row claims a precision the estimate has not
+       got. */
+    const day = dayFood(e.date);
+    const kcal = day && day.ai && day.local.kcal
+      ? Math.max(1, Math.round(local * (day.ai.kcal / day.local.kcal)))
+      : local;
+    return { kind: 'food', kcal, refined: !!(day && day.ai), label: `~${kcal.toLocaleString('en-US')} kcal eaten` };
   }
   return null;
+}
+
+/* The food reading for one day, built through foodReport so the cache key is
+   derived in exactly one place. A second copy of that derivation would look
+   right and miss the cache on the first difference in punctuation.
+
+   A day is the unit because refining is always a single day — every entry into
+   it insists on one — so a row's figure cannot change depending on which range
+   happens to be on screen. Memoised per render because the entry list asks for
+   the same day once per row. */
+function buildDayFood(date) {
+  const rows = state.entries.filter((r) => r.date === date);
+  return rows.length ? foodReport(rows, [], [date]) : null;
+}
+
+let renderSeq = 0;
+let dayFoodMemo = { at: -1, map: new Map() };
+function dayFood(date) {
+  if (dayFoodMemo.at !== renderSeq) dayFoodMemo = { at: renderSeq, map: new Map() };
+  if (dayFoodMemo.map.has(date)) return dayFoodMemo.map.get(date);
+  const r = buildDayFood(date);
+  dayFoodMemo.map.set(date, r);
+  return r;
 }
 
 /* Resting burn — what the body spends doing nothing. Proper formulae want
@@ -4771,7 +4823,15 @@ function foodBlock(food, scope, canRefine) {
     ? `Roughly ${ai.kcal.toLocaleString('en-US')} kcal — around ${ai.protein}g protein, ${ai.carbs}g carbs, ${ai.fat}g fat.`
     : food.nutrition;
 
-  const refine = !canRefine || !state.aiEstimates || !food.detail ? '' : `
+  /* Hidden once there is nothing left for it to do. Estimates now happen by
+     themselves as soon as a note is written, so for anyone who has consented
+     the button is a control that has already fired — asked for, and removed.
+
+     It stays in the two cases where it is still the only way through: before
+     consent, where it is how someone opts in, and when an estimate has not
+     landed, where it is the retry. */
+  const done = !!ai && state.aiConsent;
+  const refine = done || !canRefine || !state.aiEstimates || !food.detail ? '' : `
             <div style="margin-top: 9px; display: flex; align-items: center; gap: 9px; flex-wrap: wrap;">
               <button class="drawer-btn btn-refine" data-act="refine-food" data-scope="${esc(scope)}"${busy ? ' disabled' : ''}>
                 ${busy ? '<span class="spinner"></span> Checking…' : (ai ? 'Check again' : 'Refine with AI')}
@@ -6403,6 +6463,8 @@ function restoreFocus(f) {
 }
 
 function render() {
+  // Bumped so per-render memos (dayFood) know their answers are stale.
+  renderSeq += 1;
   const f = captureFocus();
   /* Every render replaces the whole tree, which collapses the document to
      nothing for an instant and takes the scroll position with it — switching
@@ -6871,6 +6933,32 @@ const promptFor = (kind, row, q) => ({
   placeholder: q.placeholder, activity: row.activity
 });
 
+/* Refining without being asked to, once the note that makes it worth asking has
+   been written.
+
+   Consent is required and never solicited here. Someone who has already agreed
+   to estimates gets them; someone who has not is left alone rather than met
+   with a consent dialog in the middle of logging their lunch — the button in
+   the insights block is still there for them, and is how they would opt in.
+
+   Nothing is spent twice: a day whose text is already in the cache returns
+   without a request, which is the same gate the button has always used. The
+   estimate is asked for the row's own day, because that is the unit the figure
+   is apportioned over. */
+function autoRefine(id) {
+  if (!state.aiConsent || !state.aiEstimates) return;
+  const row = state.entries.find((r) => r.id === id);
+  if (!row || !isEatenRow(row)) return;
+  /* Built fresh, never off the per-render memo. updateEntry defers its repaint
+     through scheduleRender, so at this moment the memo still describes the day
+     as it was before the note landed — asking from it spent a request on the
+     old text and filed the answer under the old key, leaving the note that
+     triggered it still unrefined. */
+  const day = buildDayFood(row.date);
+  if (!day || !day.detail || state.aiCache[day.key]) return;
+  askEstimate(day.detail, day.key, 'auto');
+}
+
 function closeFollowUp(saveIt) {
   const p = state.notePrompt;
   state.notePrompt = null;
@@ -6888,6 +6976,9 @@ function closeFollowUp(saveIt) {
     if (text || had) {
       if (p.kind === 'entries') {
         updateEntry(p.id, { note: text.slice(0, 500) });
+        // The note is what an estimate reads, so the moment it lands is the
+        // moment there is something new to ask about.
+        autoRefine(p.id);
       } else {
         /* Raised before the write, because updateMoney renders — asking after
            it would set the state and then nobody would draw it.
