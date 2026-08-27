@@ -7871,7 +7871,7 @@ const ACTIONS = {
   },
 
   'open-report': () => {
-    state.reportOpen = true; deckIndex = 0; render();
+    state.reportOpen = true; deckIndex = 0; deckScroll = 0; render();
     /* Remembered so the next visit can have the summary ready before it is
        asked for. Written on first use rather than assumed: the warm-up costs a
        call, and it should only ever be spent on someone who reads these. */
@@ -7894,7 +7894,7 @@ const ACTIONS = {
     state.deckRange = el.dataset.key;
     // A different window is a different set of cards; the track is rebuilt at
     // the start rather than left pointing at a card that may no longer exist.
-    deckIndex = 0;
+    deckIndex = 0; deckScroll = 0;
     save(); render();
     // Each window gets its own summaries, cached, so coming back is free.
     fetchDeckSummary(deckView());
@@ -7971,7 +7971,7 @@ const ACTIONS = {
     state.recapAsk = false;
     state.deckRange = 'yesterday';
     state.reportOpen = true;
-    deckIndex = 0;
+    deckIndex = 0; deckScroll = 0;
     render();
   },
   // Either answer settles the day. "Not now" means not now, not "ask again in
@@ -11382,6 +11382,12 @@ function clipText(x, s, max) {
    in `state` keeps a swipe from triggering a render, which would rebuild the
    track under the finger doing the swiping. */
 let deckIndex = 0;
+/* How far down the card you had read. The companion to deckIndex: that one
+   survives a render, this one is where the same unbidden render used to drop
+   you — same card, back at the top, halfway through a sentence. A long card
+   scrolls inside its own .deck-body, so the page-level restore in render()
+   never touched it. */
+let deckScroll = 0;
 
 function deckGo(i) {
   const track = root.querySelector('[data-deck-track]');
@@ -11409,6 +11415,11 @@ function paintDeck() {
   if (!slides.length) return;
   deckIndex = Math.max(0, Math.min(slides.length - 1, deckIndex));
   if (deckIndex) track.scrollLeft = slides[deckIndex].offsetLeft;
+  // And back to the line you were on, not just the card it was on.
+  if (deckScroll) {
+    const body = slides[deckIndex].querySelector('.deck-body');
+    if (body) body.scrollTop = deckScroll;
+  }
   root.querySelectorAll('.deck-bar').forEach((b, i) => b.classList.toggle('is-on', i === deckIndex));
 }
 
@@ -11416,6 +11427,9 @@ function paintDeck() {
    open, and re-binding on every render would stack listeners. */
 root.addEventListener('scroll', (ev) => {
   const track = ev.target;
+  /* Reading down a card. Recorded here rather than read off the DOM at render
+     time, because by then the tree that held it is already gone. */
+  if (track.matches && track.matches('.deck-body')) { deckScroll = track.scrollTop; return; }
   if (!track.matches || !track.matches('[data-deck-track]')) return;
   const slides = [...track.querySelectorAll('.deck-slide')];
   if (!slides.length) return;
@@ -11427,6 +11441,9 @@ root.addEventListener('scroll', (ev) => {
   });
   if (best === deckIndex) return;
   deckIndex = best;
+  // A different card starts at its own beginning; carrying the last card's
+  // depth over would open this one part-way down for no reason.
+  deckScroll = 0;
   // Painted directly; a render here would fight the scroll that caused it.
   root.querySelectorAll('.deck-bar').forEach((b, i) => b.classList.toggle('is-on', i === deckIndex));
 }, true);
