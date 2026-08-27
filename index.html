@@ -535,6 +535,17 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      is a feature that does not exist. */
   .m-pick .pick-del { opacity: .55; width: 34px; }
 
+  /* Renaming happens in the row itself rather than in a dialog over the top of
+     it: the list is the thing being edited, and a panel covering it would hide
+     the other names — which are exactly what you check a new one against. */
+  .pick-row.is-editing { gap: 4px; align-items: center; }
+  .pick-rename { flex: 1; min-width: 0; min-height: 32px; font-size: 13.5px; padding-inline: 8px; }
+  /* The two controls beside it stay put while editing — a confirm that only
+     appears on hover is a confirm nobody finds. */
+  .pick-row.is-editing .pick-del { opacity: 1; }
+  .pick-ok { color: var(--color-accent-700); font-size: 14px; }
+  .pick-ok:hover { background: color-mix(in srgb, var(--color-accent) 16%, transparent); color: var(--color-accent-900); }
+
   .pick-create { flex: none; display: flex; gap: 6px; padding-top: 6px; border-top: 1px solid var(--color-divider); }
   .pick-create .input { flex: 1; min-width: 0; min-height: 34px; font-size: 13.5px; }
   .pick-create .btn { flex: none; min-height: 34px; padding-inline: 14px; font-size: 13px; }

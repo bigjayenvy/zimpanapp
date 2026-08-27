@@ -629,6 +629,8 @@ const state = {
   mForm: { date: todayIso, activity: '', purpose: 'Groceries', in: '', out: '' },
 
   newCatOpen: false, newCatName: '',
+  // Which vocabulary entry is being renamed, and the name being typed for it.
+  pickRename: null, pickRenameName: '',
   newPurposeOpen: false, newPurposeName: '',
 
   /* Which searchable picker is open — 'category', 'purpose', or null — and what
@@ -3090,6 +3092,71 @@ function options(names, selected, extra) {
    synced, so this reaches every device the account is signed into and there is
    no undo — which is why it counts what it is about to destroy and says the
    number out loud before doing it. */
+const renamingPick = (kind, name) =>
+  !!(state.pickRename && state.pickRename.kind === kind && state.pickRename.name === name);
+
+/* Renaming a category or a purpose.
+
+   The name IS the reference — every entry carries it as a string, not an id —
+   so a rename that touched only the vocabulary would orphan every row filed
+   under the old one. They are rewritten here, which is the one place in the app
+   allowed to rewrite what someone typed: the field is a pointer, not prose.
+
+   It cannot be done in place either. Categories and purposes sync keyed on
+   their name, so editing the record would teach the server the new name while
+   it went on serving the old one beside it. Old name tombstoned, new one put
+   back at the same index.
+
+   The index matters for more than order: colour is derived from position, so
+   appending the renamed one would silently repaint it and everything after. */
+function renamePick() {
+  const t = state.pickRename;
+  if (!t) return;
+  const money = t.kind === 'purpose';
+  const vocab = money ? 'purposes' : 'categories';
+  const noun = money ? 'purpose' : 'category';
+  const from = t.name;
+  const to = String(state.pickRenameName || '').trim().slice(0, 60);
+
+  if (!to || to === from) { ACTIONS['pick-rename-cancel'](); return; }
+  if (state[vocab].some((c) => c.name !== from && c.name.toLowerCase() === to.toLowerCase())) {
+    flash(`There is already a ${noun} called ${to}`);
+    return;
+  }
+  const at = state[vocab].findIndex((c) => c.name === from);
+  if (at < 0) { ACTIONS['pick-rename-cancel'](); return; }
+  const held = state[vocab][at];
+
+  state[vocab] = state[vocab].map((c, i) => (i === at
+    ? touch(vocab, { name: to, color: held.color, position: held.position })
+    : c));
+  // Stamped so the old name goes on the other devices too, rather than coming
+  // back on the next pull and sitting there beside its replacement.
+  bury(vocab, from);
+
+  const rowKind = money ? 'money' : 'entries';
+  const field = money ? 'purpose' : 'category';
+  state[rowKind] = state[rowKind].map((r) => (r[field] === from
+    ? touch(rowKind, Object.assign({}, r, { [field]: to }))
+    : r));
+
+  // Everything else still holding the name it just lost.
+  if (money) {
+    if (state.mForm.purpose === from) state.mForm = Object.assign({}, state.mForm, { purpose: to });
+  } else {
+    if (state.timerCategory === from) state.timerCategory = to;
+    if (state.form.category === from) state.form = Object.assign({}, state.form, { category: to });
+  }
+  if (state.logFilter === from) state.logFilter = to;
+  if (state.m && state.m.cat === from) state.m.cat = to;
+
+  state.pickRename = null; state.pickRenameName = '';
+  state.pickOpen = null; state.pickQuery = '';
+  clearFocus();
+  save(); queueSync(0); render();
+  flash(`Renamed · ${from} → ${to}`);
+}
+
 function pickDeleteDialog() {
   const t = state.pickDelete;
   if (!t) return '';
@@ -3151,14 +3218,25 @@ function pickerField(kind, label, names, selected, newLabel) {
                 type="text" placeholder="Search ${esc(label.toLowerCase())}…" autocomplete="off"
                 aria-label="Search ${esc(label.toLowerCase())}">
               <div class="pick-list" data-pick-list>
-                ${names.map((n) => `
+                ${names.map((n) => (renamingPick(kind, n) ? `
+                <span class="pick-row is-editing">
+                  <input class="input pick-rename" data-k="pick-rename-name" data-sync="pickRenameName"
+                    value="${esc(state.pickRenameName)}" data-enter="pick-rename-save"
+                    aria-label="Rename ${esc(n)}" autocomplete="off">
+                  <button type="button" class="pick-del pick-ok" data-act="pick-rename-save"
+                    aria-label="Save the new name" title="Save">✓</button>
+                  <button type="button" class="pick-del" data-act="pick-rename-cancel"
+                    aria-label="Cancel renaming" title="Cancel">✕</button>
+                </span>` : `
                 <span class="pick-row">
                   <button type="button" class="pick-opt${n === selected ? ' is-on' : ''}" role="option"
                     aria-selected="${n === selected}" data-act="pick-choose" data-pick="${esc(kind)}"
                     data-name="${esc(n)}" data-find="${esc(n.toLowerCase())}">${esc(withIcon(n))}</button>
+                  <button type="button" class="pick-del" data-act="pick-rename" data-pick="${esc(kind)}"
+                    data-name="${esc(n)}" aria-label="Rename ${esc(n)}" title="Rename ${esc(n)}">✎</button>
                   <button type="button" class="pick-del" data-act="pick-del" data-pick="${esc(kind)}"
                     data-name="${esc(n)}" aria-label="Delete ${esc(n)}" title="Delete ${esc(n)}">✕</button>
-                </span>`).join('')}
+                </span>`)).join('')}
                 <div class="pick-empty" hidden>Nothing matches that.</div>
               </div>
               ${pickCreateRow(kind, newLabel)}
@@ -3872,6 +3950,11 @@ function migrateScreen() {
   </div>`;
 }
 
+/* Whether the entry behind the open prompt already carries a note. Only then
+   is there anything to remove, and only then is the button worth drawing —
+   offering "Remove note" on a blank one is offering to do nothing. */
+const noteOnRow = (p) => !!(p && ((findRow(p.kind, p.id) || {}).note || '').trim());
+
 function notePromptDialog() {
   const p = state.notePrompt;
   if (!p) return '';
@@ -3885,6 +3968,8 @@ function notePromptDialog() {
           style="width:100%;resize:vertical;min-height:88px;font:inherit;font-size:14px;line-height:1.5;padding:10px 12px;">${esc(state.noteDraft)}</textarea>
         <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;">
           <span style="font-size:11.5px;color:var(--color-neutral-600);margin-right:auto;">Logged against “${esc(p.activity || 'this entry')}”. Optional.</span>
+          ${noteOnRow(p) ? `<button class="btn btn-ghost" data-act="note-remove"
+            style="color:#8a2f4a;">Remove note</button>` : ''}
           <button class="btn btn-ghost" data-act="note-skip">Skip</button>
           <button class="btn btn-primary" data-act="note-save">Save note</button>
         </div>
@@ -6793,8 +6878,14 @@ function closeFollowUp(saveIt) {
   const text = state.noteDraft.trim();
   state.noteDraft = '';
   if (saveIt) {
-    // Saving means the question is welcome; it keeps being asked next time.
-    if (text) {
+    /* Saving means the question is welcome; it keeps being asked next time.
+
+       An empty box is written when there was a note there before, which is how
+       a note gets removed: clearing it and saving used to fall past this branch
+       and leave the old text in place, so there was no way to take one back.
+       Still nothing to do when there was no note and none was typed. */
+    const had = ((findRow(p.kind, p.id) || {}).note || '').trim();
+    if (text || had) {
       if (p.kind === 'entries') {
         updateEntry(p.id, { note: text.slice(0, 500) });
       } else {
@@ -6918,6 +7009,9 @@ const ACTIONS = {
   'reset-submit': submitReset,
   'note-save': () => closeFollowUp(true),
   'note-skip': () => closeFollowUp(false),
+  // Empties the box and saves, so removal goes through the one write path
+  // rather than a second one that could drift from it.
+  'note-remove': () => { state.noteDraft = ''; closeFollowUp(true); },
   'note-edit': (el) => editNote(el.dataset.kind, el.dataset.id),
 
   'auth-submit': submitAuth,
@@ -7223,6 +7317,18 @@ const ACTIONS = {
     state.focusField = 'pick-new-name';
     render();
   },
+  'pick-rename': (el) => {
+    state.pickRename = { kind: el.dataset.pick, name: el.dataset.name };
+    state.pickRenameName = el.dataset.name || '';
+    // Tapping "rename" is asking to type, so the caret belongs in the field.
+    state.focusField = 'pick-rename-name';
+    render();
+  },
+  'pick-rename-cancel': () => {
+    state.pickRename = null; state.pickRenameName = ''; clearFocus(); render();
+  },
+  'pick-rename-save': () => renamePick(),
+
   'pick-del': (el) => {
     state.pickDelete = { kind: el.dataset.pick, name: el.dataset.name };
     render();
@@ -8875,7 +8981,14 @@ function mFlowCategory() {
       type="text" placeholder="Search ${esc(label)}…" autocomplete="off"
       aria-label="Search ${esc(label)}" style="min-height:42px;font-size:15px;">
     <div class="pick-list" data-pick-list style="max-height:46vh;">
-      ${rows.map((c) => `
+      ${rows.map((c) => (renamingPick(money ? 'purpose' : 'category', c.name) ? `
+        <span class="pick-row is-editing">
+          <input class="input pick-rename" data-k="pick-rename-name" data-sync="pickRenameName"
+            value="${esc(state.pickRenameName)}" data-enter="pick-rename-save"
+            aria-label="Rename ${esc(c.name)}" autocomplete="off" style="min-height:42px;font-size:15px;">
+          <button type="button" class="pick-del pick-ok" data-act="pick-rename-save" aria-label="Save the new name">✓</button>
+          <button type="button" class="pick-del" data-act="pick-rename-cancel" aria-label="Cancel renaming">✕</button>
+        </span>` : `
         <span class="pick-row">
           <button type="button" class="pick-opt${c.name === s.cat ? ' is-on' : ''}" role="option"
             aria-selected="${c.name === s.cat}" data-act="m-pick-choose"
@@ -8883,9 +8996,11 @@ function mFlowCategory() {
             <span style="width:9px;height:9px;flex:none;border-radius:50%;background:${esc(mColor(c.name, money))};"></span>
             <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;">${esc(c.name)}</span>
           </button>
+          <button type="button" class="pick-del" data-act="pick-rename" data-pick="${money ? 'purpose' : 'category'}"
+            data-name="${esc(c.name)}" aria-label="Rename ${esc(c.name)}">✎</button>
           <button type="button" class="pick-del" data-act="pick-del" data-pick="${money ? 'purpose' : 'category'}"
             data-name="${esc(c.name)}" aria-label="Delete ${esc(c.name)}">✕</button>
-        </span>`).join('')}
+        </span>`)).join('')}
       <div class="pick-empty" hidden style="padding:12px 10px;font-size:14px;color:#756f88;">Nothing matches that.</div>
     </div>
     ${state.m.pickNew
@@ -9391,6 +9506,11 @@ function mobileApp() {
        it, so it has to reach every layout that can ask — and it is already
        responsive, so there is nothing to rebuild. -->
   ${aiConsentDialog()}
+  <!-- Same reasoning, and it was missing: toggleTimer is shared with this
+       layout and raises a note prompt when it stops, so the phone could set a
+       prompt that nothing here drew — the question was asked and then swallowed,
+       and with it the only way to take a note back off an entry. -->
+  ${notePromptDialog()}
   ${state.reportOpen ? reportSheet() : ''}
   ${pickDeleteDialog()}
 </div>`;
