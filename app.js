@@ -2941,6 +2941,9 @@ function compute() {
     rangeLabel: s.range === 'day' ? 'this day' : `last ${RANGE_DAYS[s.range] || 1} days`,
     leaderboard: totals.map((t) => ({ name: t.name, color: t.color, label: fmtShort(t.mins), width: `${Math.round((t.mins / top) * 100)}%` })),
 
+    // Every date in the window, enumerated — a chart needs the nights with
+    // nothing logged as much as the ones with something.
+    windowDates,
     focusName: focusItem ? focusItem.name : null,
     focusColor: focusItem ? focusItem.color : null,
     focusPct: focusItem ? `${Math.round((focusItem.mins / (total || 1)) * 100)}%` : '',
@@ -4424,6 +4427,79 @@ function legend(v) {
 
    Rendered from render() rather than from inside a chart card: it is an overlay
    over the whole page, and both trackers open the same one. */
+/* The bands people actually act on, in minutes.
+
+   Under 6h30 is short; 6h30 to 7h is borderline; 7h to 9h is where most
+   guidance settles; over 9h is worth noticing too, because long sleep is not
+   simply more of a good thing. Boundaries land in the kinder band — seven hours
+   exactly is a good night, not a borderline one. */
+const sleepBandOf = (m) => (
+  m < 390 ? { color: '#d92d20', label: 'under 6h 30m' }
+    : m < 420 ? { color: '#e9a13b', label: '6h 30m – 7h' }
+      : m <= 540 ? { color: '#0e9f6e', label: '7h – 9h' }
+        : { color: '#241f30', label: 'over 9h' });
+
+const isSleepName = (name) => /sleep|tulog|nap/i.test(String(name || ''));
+
+/* Sleep, night by night, instead of a table of entries. Named apart from the
+   report deck's sleepChart, which draws the same subject through the shared
+   barChart helper and has no bands — two functions of one name in one file and
+   the later declaration silently wins, which is how this first ran.
+
+   A list answers "when did I sleep". The question anyone opening this has is
+   "am I getting enough", and that is a shape rather than rows — so the entries
+   stay underneath and the shape goes on top. Totals per day, because two
+   entries on one night are one night's sleep. */
+function sleepNightsChart(v) {
+  const dates = (v.windowDates || []).slice().sort();
+  if (!dates.length) return '';
+  const inRange = new Set(dates);
+  const byDate = {};
+  state.entries.forEach((e) => {
+    if (e.category !== v.focusName || !inRange.has(e.date)) return;
+    byDate[e.date] = (byDate[e.date] || 0) + (span(e) || 0);
+  });
+  const days = dates.map((d) => ({ date: d, mins: byDate[d] || 0 }));
+  if (!days.some((d) => d.mins)) return '';
+
+  // Scaled to nine hours or the longest night, whichever is greater, so the
+  // good band sits at a consistent height across windows.
+  const top = Math.max(540, ...days.map((d) => d.mins));
+  const logged = days.filter((d) => d.mins);
+  const avg = Math.round(logged.reduce((a, d) => a + d.mins, 0) / (logged.length || 1));
+
+  const bars = days.map((d) => {
+    const band = d.mins ? sleepBandOf(d.mins) : null;
+    const h = d.mins ? Math.max(3, Math.round((d.mins / top) * 100)) : 0;
+    return `
+        <div class="sleep-col" title="${esc(dayLabel(d.date))} · ${d.mins ? esc(dur(d.mins)) : 'nothing logged'}">
+          <div class="sleep-track">
+            ${d.mins
+              ? `<div class="sleep-bar" style="height:${h}%;background:${band.color};"></div>`
+              : '<div class="sleep-none"></div>'}
+          </div>
+          <span class="sleep-day">${new Date(d.date + 'T00:00:00').getDate()}</span>
+        </div>`;
+  }).join('');
+
+  const key = [
+    { color: '#d92d20', label: 'under 6h 30m' },
+    { color: '#e9a13b', label: '6h 30m – 7h' },
+    { color: '#0e9f6e', label: '7h – 9h' },
+    { color: '#241f30', label: 'over 9h' }
+  ].map((b) => `<span class="sleep-key"><i style="background:${b.color};"></i>${esc(b.label)}</span>`).join('');
+
+  return `
+      <div class="sleep-chart">
+        <div class="sleep-chart-head">
+          <span>Each night in ${esc(v.rangeLabel)}</span>
+          ${logged.length ? `<span class="sleep-avg">${esc(dur(avg))} average across ${logged.length} ${logged.length === 1 ? 'night' : 'nights'}</span>` : ''}
+        </div>
+        <div class="sleep-cols">${bars}</div>
+        <div class="sleep-keys">${key}</div>
+      </div>`;
+}
+
 function focusPanel(v) {
   if (!v.focusOpen) return '';
 
@@ -4447,6 +4523,7 @@ function focusPanel(v) {
             <button class="focus-x" data-act="focus-clear" aria-label="Close">×</button>
           </div>
           <div class="focus-body">
+            ${isSleepName(v.focusName) ? sleepNightsChart(v) : ''}
             ${rows || '<div style="padding: 26px 0; text-align: center; font-size: 13px; color: var(--color-neutral-600);">Nothing logged here in this range.</div>'}
           </div>
           <div class="focus-foot">

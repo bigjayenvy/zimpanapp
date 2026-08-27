@@ -906,6 +906,29 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .cal-more:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
   .cal-more:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 
+  /* — sleep, night by night —
+     A column per night in the window, coloured by the band it falls in. Fixed
+     height rather than aspect-driven: the bars are read against each other and
+     against the bands, so the plot has to be the same height whether the window
+     is seven nights or thirty. */
+  .sleep-chart { margin: 2px 0 18px; padding: 14px 14px 12px; border-radius: 14px; background: color-mix(in srgb, var(--color-accent) 6%, transparent); }
+  .sleep-chart-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    flex-wrap: wrap; margin-bottom: 12px; font-size: 11.5px; color: var(--color-neutral-700);
+  }
+  .sleep-avg { font-weight: 600; color: var(--color-accent-700); }
+  .sleep-cols { display: flex; align-items: flex-end; gap: 3px; height: 110px; overflow-x: auto; }
+  .sleep-col { flex: 1 1 0; min-width: 12px; display: flex; flex-direction: column; align-items: center; height: 100%; }
+  .sleep-track { flex: 1; width: 100%; display: flex; align-items: flex-end; }
+  .sleep-bar { width: 100%; border-radius: 4px 4px 0 0; min-height: 3px; }
+  /* A night with nothing logged is a gap, drawn as one — a zero-height bar and
+     an absent bar look identical, and only one of them is honest. */
+  .sleep-none { width: 100%; height: 3px; border-radius: 2px; background: color-mix(in srgb, var(--color-text) 14%, transparent); }
+  .sleep-day { margin-top: 5px; font-size: 9.5px; color: var(--color-neutral-600); white-space: nowrap; }
+  .sleep-keys { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 12px; }
+  .sleep-key { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--color-neutral-700); }
+  .sleep-key i { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+
   /* — the money-out question —
      One class set behind two frames: the laptop's dialog and the phone's sheet
      drop the same markup in, so what the two layouts say about a spend cannot
