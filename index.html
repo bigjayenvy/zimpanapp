@@ -165,9 +165,13 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      to, and the popover sits on white rather than the surface tint so it reads
      as a sheet over the step rather than part of it. */
   .m-pick .pick-pop { background: #fff; padding: 10px; }
+  /* 46 rather than 44. Forty-four is the minimum a touch target is allowed to
+     be, and sitting exactly on it meant the measured height straddled the line
+     — sub-pixel layout put some rows a hair under. A minimum is a floor to
+     clear, not a number to land on. */
   .m-pick .pick-opt {
     display: flex; align-items: center; gap: 9px;
-    min-height: 44px; padding: 8px 10px; font-size: 15px; border-radius: 10px;
+    min-height: 46px; padding: 8px 10px; font-size: 15px; border-radius: 10px;
   }
   /* `filterPicker` hides rows with the `hidden` attribute, which works through
      the UA rule [hidden] { display: none }. A class selector setting display
