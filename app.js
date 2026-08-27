@@ -5278,9 +5278,7 @@ const ROWS_COLLAPSED = 5;
 function timeTableCard(v) {
   /* The filter narrows the list before the drawer counts it, so "3 more" means
      three more of what you are actually looking at. */
-  const shown = state.logFilter
-    ? v.dayList.filter((e) => e.category === state.logFilter)
-    : v.dayList;
+  const shown = logFiltered(v.dayList);
   const visible = state.drawers.activities || shown.length <= ROWS_COLLAPSED
     ? shown
     : shown.slice(0, ROWS_COLLAPSED);
@@ -5428,7 +5426,14 @@ function timeDesktop(v) {
 }
 
 function moneyDesktop(v) {
-  const rows = v.mDayList.map((e) => `
+  /* The same three controls the activity tracker carries above its table, in
+     the same place and off the same state: search across everything logged,
+     narrow the day to one purpose, and get back to today. searchRows() has
+     always spanned both trackers, so the search half needed surfacing rather
+     than building — money entries were findable, just not from here. */
+  const shown = logFiltered(v.mDayList);
+  const searching = !!String(state.searchQuery || '').trim();
+  const rows = shown.map((e) => `
               <tr>
                 <td data-col="activity"><input class="cell-input" data-k="mr-${esc(e.id)}-a" data-change="money-activity" data-id="${esc(e.id)}" value="${esc(e.activity)}"${e.note ? ` title="${esc(e.note)}"` : ''}><button class="cell-note" data-act="note-edit" data-kind="money" data-id="${esc(e.id)}" title="${e.note ? esc(e.note) : 'Add a note for this entry'}"${e.note ? ' data-has-note' : ''}>${e.note ? 'Note' : 'Add note'}</button></td>
                 <td data-col="purpose"><select data-change="money-purpose" data-id="${esc(e.id)}" style="${rowChipStyle(purposeColor(e.purpose))}">${options(pickPurposes().map((p) => p.name), e.purpose)}</select></td>
@@ -5482,14 +5487,19 @@ function moneyDesktop(v) {
           </div>` : ''}
       </div>
 
-      <div class="blueprint" style="padding: 18px 22px 8px;">        ${dayNav(v, `${v.mDayList.length} entries`)}
-        <div class="rows-scroll">
-        <table class="table rows">
-          <thead><tr><th style="width: 34%">Activity</th><th style="width: 26%">Purpose</th><th style="width: 18%; text-align: right;">Received</th><th style="width: 18%; text-align: right;">Spent</th><th></th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-        </div>
-        ${v.mDayList.length === 0 ? '<div style="padding: 26px 0 30px; text-align: center; font-size: 13px; color: var(--color-neutral-600);">Nothing logged for this day yet.</div>' : ''}
+      <div>
+        <div style="margin:0 0 14px;">${searchField({ tools: true, list: v.mDayList })}</div>
+        <div id="search-body">${searching ? searchBody() : ''}</div>
+        ${searching ? '' : `
+        <div class="blueprint" style="padding: 18px 22px 8px;">        ${dayNav(v, `${shown.length} ${shown.length === 1 ? 'entry' : 'entries'}`)}
+          <div class="rows-scroll">
+          <table class="table rows">
+            <thead><tr><th style="width: 34%">Activity</th><th style="width: 26%">Purpose</th><th style="width: 18%; text-align: right;">Received</th><th style="width: 18%; text-align: right;">Spent</th><th></th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+          </div>
+          ${shown.length === 0 ? `<div style="padding: 26px 0 30px; text-align: center; font-size: 13px; color: var(--color-neutral-600);">${state.logFilter ? `Nothing in ${esc(state.logFilter)} on this day.` : 'Nothing logged for this day yet.'}</div>` : ''}
+        </div>`}
       </div>
     </div>
 
@@ -10185,11 +10195,24 @@ function searchRangeLabel() {
    exception is the filter currently set — it stays on the list even after a
    move to a day it does not appear on, or the control would disagree with what
    it is doing. */
+/* The money tracker files a row under a purpose where the activity tracker
+   files it under a category. Same control, same state, different field — so
+   the field is a parameter rather than a second copy of all of this. */
+const logFilterKey = () => (state.app === 'money' ? 'purpose' : 'category');
+
 function logFilterNames(list) {
+  const key = logFilterKey();
   const seen = [];
-  list.forEach((e) => { if (e.category && seen.indexOf(e.category) < 0) seen.push(e.category); });
+  list.forEach((e) => { if (e[key] && seen.indexOf(e[key]) < 0) seen.push(e[key]); });
   if (state.logFilter && seen.indexOf(state.logFilter) < 0) seen.push(state.logFilter);
   return seen.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+// The rows left after the pill. Used by both tables, so "3 more" in either
+// drawer counts what you are actually looking at rather than the whole day.
+function logFiltered(list) {
+  const key = logFilterKey();
+  return state.logFilter ? list.filter((e) => e[key] === state.logFilter) : list;
 }
 
 function searchField(o) {
@@ -10231,8 +10254,8 @@ function searchField(o) {
   </div>
   <div class="log-pill${state.logFilter ? ' is-on' : ''}">
     <span aria-hidden="true">${nodeIcon('funnel', 15)}</span>
-    <span class="log-pill-leg">Category:</span>
-    <select data-change="log-filter" aria-label="Filter the day by category">
+    <span class="log-pill-leg">${state.app === 'money' ? 'Purpose' : 'Category'}:</span>
+    <select data-change="log-filter" aria-label="Filter the day by ${state.app === 'money' ? 'purpose' : 'category'}">
       <option value=""${state.logFilter ? '' : ' selected'}>All</option>
       ${names.map((n) => `<option value="${esc(n)}"${n === state.logFilter ? ' selected' : ''}>${esc(n)}</option>`).join('')}
     </select>
