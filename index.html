@@ -890,6 +890,22 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .report-tools .btn { display: inline-flex; align-items: center; gap: 7px; }
 
+  /* A dial you can ask about. Only the two with a list behind them get this —
+     resting and the net are arithmetic over the other two and have nothing to
+     open, so they stay plain and the affordance means something. */
+  /* The way into a dial's breakdown. Its own control rather than the dial being
+     one: two of these captions already contain buttons, and a button inside a
+     button neither parses nor reads. */
+  .cal-more {
+    display: inline-block; margin-top: 7px; padding: 4px 10px;
+    border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+    border-radius: 999px; background: transparent; cursor: pointer;
+    font-family: var(--font-body); font-size: 10.5px; font-weight: 600;
+    color: var(--color-accent-700);
+  }
+  .cal-more:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+  .cal-more:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+
   /* — the money-out question —
      One class set behind two frames: the laptop's dialog and the phone's sheet
      drop the same markup in, so what the two layouts say about a spend cannot

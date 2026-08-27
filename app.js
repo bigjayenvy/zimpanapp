@@ -631,6 +631,8 @@ const state = {
   newCatOpen: false, newCatName: '',
   // Which vocabulary entry is being renamed, and the name being typed for it.
   pickRename: null, pickRenameName: '',
+  // Which calorie dial has been opened for a breakdown: { kind, scope }.
+  calOpen: null,
   newPurposeOpen: false, newPurposeName: '',
 
   /* Which searchable picker is open — 'category', 'purpose', or null — and what
@@ -2366,6 +2368,8 @@ function burnFor(entries, weightKg, days, dates) {
     fromSteps,
     restKcal: Math.round(KCAL_PER_KG_PER_DAY * kg * dayCount),
     days: dayCount,
+    // Kept so a reader can be shown what went into the figure, not only the figure.
+    dates: dates || [],
     assumedWeight: !weightKg
   };
 }
@@ -4642,7 +4646,17 @@ function balanceGauges(food, burn, scope, stepDate) {
   const top = Math.max(eaten, burned, rested, Math.abs(net), 1);
   const ARC = Math.PI * 42;
 
-  const dial = (value, tone, glyph, cap, sub) => {
+  /* Burned and eaten have a list behind them; resting and the net are
+     arithmetic over the other two and have nothing to show. So only those two
+     get the affordance — offering it on a dial that cannot answer is worse than
+     not offering it.
+
+     The affordance is its own small button rather than the whole dial, because
+     two of these captions already contain buttons of their own — the steps link
+     and the weight editor. A `<button>` start tag closes an open button, so
+     wrapping the dial swallowed the three that followed it; and a control
+     nested inside a control is unreachable with a screen reader either way. */
+  const dial = (value, tone, glyph, cap, sub, kind) => {
     const dash = (Math.abs(value) / top) * ARC;
     return `
           <div class="cal-dial">
@@ -4655,6 +4669,8 @@ function balanceGauges(food, burn, scope, stepDate) {
             <div class="cal-value">~${Math.abs(value).toLocaleString('en-US')}</div>
             <div class="cal-cap">${esc(cap)}</div>
             ${sub ? `<div class="cal-sub">${sub}</div>` : ''}
+            ${kind ? `<button type="button" class="cal-more" data-act="cal-open"
+              data-kind="${esc(kind)}" data-scope="${esc(scope)}" aria-haspopup="dialog">See what made it up</button>` : ''}
           </div>`;
   };
 
@@ -4671,9 +4687,9 @@ function balanceGauges(food, burn, scope, stepDate) {
           stepDate ? `${burn.steps
             ? `${burn.steps.toLocaleString('en-US')} steps${burn.fromSteps ? ` · about ${burn.fromSteps.toLocaleString('en-US')} kcal of the figure above` : ''}. `
             : ''}<button class="cal-link" data-act="steps-open" data-date="${esc(stepDate)}">${burn.steps ? 'Edit your steps' : 'Add your steps'}</button>.`
-            : (burn.steps ? `Includes ${burn.steps.toLocaleString('en-US')} steps across the range.` : ''))}
+            : (burn.steps ? `Includes ${burn.steps.toLocaleString('en-US')} steps across the range.` : ''), 'burn')}
         ${dial(eaten, 'var(--zg-donate)', CAL_ICONS.food, 'Calories consumed (food)',
-          food.ai ? 'Refined by AI from what you wrote.' : '')}
+          food.ai ? 'Refined by AI from what you wrote.' : '', 'food')}
         ${dial(rested, 'var(--color-accent-700)', CAL_ICONS.rest, 'Calories burned (at rest)',
           `Roughly burned at rest based on ${burn.assumedWeight
             ? `a default ${DEFAULT_WEIGHT_KG} kg`
@@ -6545,6 +6561,7 @@ function render() {
   ${state.reportOpen ? reportSheet() : ''}
   ${pickDeleteDialog()}
   ${notePromptDialog()}
+  ${calBreakdownDialog()}
   ${deductDialog()}
   ${donateSheet()}
   ${aiConsentDialog()}
@@ -7408,6 +7425,12 @@ const ACTIONS = {
     state.focusField = 'pick-new-name';
     render();
   },
+  'cal-open': (el) => {
+    state.calOpen = { kind: el.dataset.kind, scope: el.dataset.scope };
+    render();
+  },
+  'cal-close': () => { state.calOpen = null; render(); },
+
   'pick-rename': (el) => {
     state.pickRename = { kind: el.dataset.pick, name: el.dataset.name };
     state.pickRenameName = el.dataset.name || '';
@@ -8532,10 +8555,13 @@ function mDeductSheet() {
   return mSheet(state.deductAsk.done ? deductResult(c) : deductQuestion(c), '24px 18px 28px');
 }
 
-function mCalSheet() {
-  const kind = state.m.calOpen;
+/* The breakdown behind a calorie dial: what actually contributed to it, listed.
+   Written for the phone first and now shared, because the desktop's dials had
+   nothing behind them at all — the same figure with no way to ask what it was
+   made of. Everything it used to read off the phone's own state is a parameter,
+   so the two layouts cannot end up describing different meals. */
+function calBreakdown(kind, dates, report, scope, closeAct) {
   if (kind !== 'burn' && kind !== 'food') return '';
-  const dates = mRangeDates();
   const items = mCalItems(dates, kind);
   const food = kind === 'food';
   const tone = food ? '#e9a13b' : '#0e9f6e';
@@ -8545,7 +8571,6 @@ function mCalSheet() {
      reading here exactly as it does on the dial — the two showing different
      totals for the same meals is not a second opinion, it is a question the
      reader cannot answer. The local figure stays, named, underneath. */
-  const report = food ? mFood() : null;
   const ai = report && report.ai;
   const total = ai ? ai.kcal : localTotal;
   const macroTotal = food && counted
@@ -8563,10 +8588,10 @@ function mCalSheet() {
      together, a worse question than the local reading already answers and a
      much more expensive one. */
   const canRefine = food && state.aiEstimates && report && report.detail && dates.length === 1;
-  const busy = state.aiBusy === 'm';
+  const busy = state.aiBusy === scope;
   const refine = !canRefine ? '' : `
   <div style="margin:14px 0 0;display:flex;flex-direction:column;gap:8px;">
-    <button class="btn btn-secondary" data-act="refine-food" data-scope="m"${busy ? ' disabled' : ''}
+    <button class="btn btn-secondary" data-act="refine-food" data-scope="${esc(scope)}"${busy ? ' disabled' : ''}
       style="width:100%;min-height:46px;font-size:14.5px;display:inline-flex;align-items:center;justify-content:center;gap:9px;">
       ${busy ? '<span class="spinner"></span> Checking…' : (ai ? 'Check again' : 'Refine with AI')}
     </button>
@@ -8586,14 +8611,14 @@ function mCalSheet() {
                    color:${r.vague ? '#9995ab' : tone};">${r.vague ? 'not read' : `~${r.kcal.toLocaleString('en-US')}`}</span>
     </div>`;
 
-  return mSheet(`
+  return `
   <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;">
     <span style="display:flex;align-items:center;gap:9px;">
       <span style="width:34px;height:34px;flex:none;border-radius:11px;display:grid;place-items:center;
                    background:${food ? '#fdf1de' : '#e3f5ed'};color:${tone};">${nodeIcon(food ? 'plate' : 'flame', 18)}</span>
       <span style="font-family:var(--font-heading);font-weight:700;font-size:20px;color:#16131f;">${food ? 'What you ate' : 'What burned it'}</span>
     </span>
-    <button data-act="m-sheet-close" aria-label="Close"
+    <button data-act="${esc(closeAct)}" aria-label="Close"
       style="flex:none;border:0;background:transparent;cursor:pointer;font-size:19px;color:#575168;min-width:40px;min-height:40px;">✕</button>
   </div>
   ${macroTotal ? `
@@ -8628,7 +8653,38 @@ function mCalSheet() {
     ${food
       ? `Calories and grams are read from what you wrote in each entry, against a table of typical servings. An entry with nothing written down cannot be priced, which is what “not read” means.${ai ? ' The totals above came from the AI estimate; the figures on each meal are the local reading.' : ''}`
       : 'Priced from the activity and how long it ran, against your weight. Overlapping entries are counted once.'}
-  </p>`, '22px 20px 30px');
+  </p>`;
+}
+
+/* The phone's frame around it — a sheet, like every other panel on that layout. */
+function mCalSheet() {
+  const kind = state.m.calOpen;
+  if (kind !== 'burn' && kind !== 'food') return '';
+  const dates = mRangeDates();
+  return mSheet(calBreakdown(kind, dates, kind === 'food' ? mFood() : null, 'm', 'm-sheet-close'), '22px 20px 30px');
+}
+
+/* The laptop's frame around the same thing. The dials on this layout showed a
+   figure and offered no way to ask what was in it; the phone has had that
+   since the gauges were added. Same list, same wording, in the dialog shape
+   this layout already uses.
+
+   `scope` names which of the two blocks was asked — the page draws them twice,
+   for today and for the window behind it, and they describe different days. */
+function calBreakdownDialog() {
+  const o = state.calOpen;
+  if (!o) return '';
+  const v = compute();
+  const today = o.scope === 'today';
+  const dates = today ? [todayIso] : ((v.pastBurn && v.pastBurn.dates) || []);
+  const report = today ? v.todayFood : v.pastFood;
+  return `
+    <div style="position:fixed;inset:0;background:color-mix(in srgb, var(--color-neutral-900) 55%, transparent);display:flex;align-items:safe center;justify-content:safe center;padding:20px;z-index:60;overflow:auto;"
+         data-backdrop="cal-close">
+      <div class="blueprint" style="width:460px;max-width:100%;margin:auto;padding:22px 24px 24px;background:var(--color-bg);">
+        ${calBreakdown(o.kind, dates, report, o.scope, 'cal-close')}
+      </div>
+    </div>`;
 }
 
 /* The food reading for the window on screen. Same function the desktop calls,
@@ -10673,6 +10729,7 @@ document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') { ev.preventDefault(); state.pickOpen = null; state.pickQuery = ''; render(); return; }
   }
   // Topmost first: the follow-up dialog sits above the report sheet.
+  if (ev.key === 'Escape' && state.calOpen) { ACTIONS['cal-close'](); return; }
   if (ev.key === 'Escape' && state.pickDelete) { ACTIONS['pick-del-cancel'](); return; }
   if (ev.key === 'Escape' && String(state.searchQuery || '').trim()) { ACTIONS['search-clear'](); return; }
   if (ev.key === 'Escape' && state.notePrompt) { closeFollowUp(false); return; }
