@@ -100,7 +100,7 @@ async function prepareDatabase() {
 /* The endpoints that hold up without MySQL. Everything else under /api/ needs
    it, so the guard below is a deny-list of one line rather than a decoration on
    every route — a new route is protected by default. */
-const DB_FREE = new Set(['/api/config', '/api/currencies', '/api/health']);
+const DB_FREE = new Set(['/api/config', '/api/currencies', '/api/health', '/api/ready']);
 
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/') || DB_FREE.has(req.path) || dbReady) return next();
@@ -113,8 +113,27 @@ app.use((req, res, next) => {
 
 /* Says whether the database is the problem without needing shell access — the
    question that took a while to answer the last time this went down. The
-   underlying error stays in the log: it names the host and user. */
+   underlying error stays in the log: it names the host and user.
+
+   Two endpoints because there are two questions, and answering both with one
+   status code is what turned a partial outage into a total one.
+
+   Liveness: is this process up and serving? That is what a gateway's health
+   check is asking, and the answer is yes whenever this handler runs at all —
+   so it is always 200. It used to return 503 while the database was away,
+   which is exactly when the design above is busy keeping the site usable
+   without one. A gateway polling it would mark the upstream down and serve 502
+   for everything, including index.html and app.js, which need no database.
+   The 200 carries the database's real state in the body, so nothing is hidden.
+
+   Readiness: can this process do the work that needs MySQL? That is what a
+   deploy gate or an alert wants, and it is a different question with its own
+   path, still answering 503 so a check can fail on it deliberately. */
 app.get('/api/health', (req, res) => {
+  res.json({ ok: true, database: dbReady ? 'ready' : 'unavailable', ready: dbReady });
+});
+
+app.get('/api/ready', (req, res) => {
   res.status(dbReady ? 200 : 503).json({ ok: dbReady, database: dbReady ? 'ready' : 'unavailable' });
 });
 
@@ -585,6 +604,38 @@ const server = app.listen(PORT, () => {
 server.on('error', (err) => {
   console.error('[zimpan] could not start the server:', err.message);
   process.exit(1);
+});
+
+/* ── the two ways a process dies without saying why ──
+
+   Node kills the process on an unhandled promise rejection. Every route here
+   goes through wrap(), so a rejecting handler reaches Express rather than the
+   default handler — but wrap() cannot cover a promise nobody awaited: a
+   setTimeout callback, a fire-and-forget write, a listener. One of those ends
+   the process, Passenger serves 502 until something restarts it, and the log
+   says nothing about it.
+
+   Rejections are logged and survived. The alternative is dying for a stray
+   promise in a background task while every request in flight was fine, and a
+   web server that stops answering is worse than one carrying an unhandled
+   rejection it has told you about.
+
+   Uncaught exceptions are logged and then fatal, deliberately. By that point
+   the stack has unwound through unknown code and state is no longer
+   trustworthy; a clean exit lets Passenger start a fresh process, which is a
+   recovery, where limping on is a guess. The listener is closed first so
+   requests in flight are allowed to finish. */
+process.on('unhandledRejection', (reason) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  console.error(`[zimpan] unhandled rejection: ${err.message}\n${err.stack || ''}`);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error(`[zimpan] uncaught exception, exiting: ${err.message}\n${err.stack || ''}`);
+  // Never hang on a wedged socket: exit anyway if the drain does not finish.
+  const bail = setTimeout(() => process.exit(1), 5000);
+  if (typeof bail.unref === 'function') bail.unref();
+  server.close(() => process.exit(1));
 });
 
 prepareDatabase();
