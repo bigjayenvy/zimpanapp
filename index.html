@@ -910,6 +910,63 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .cal-more:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
   .cal-more:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 
+  /* — the asking lightbox —
+     One shell for every dialog that puts a question. Scrolls and centres
+     safely: a tall one on a short phone would otherwise overflow the top of a
+     centred flex box, where no scroll can reach it. */
+  .lb-back {
+    position: fixed; inset: 0; z-index: 70; overflow: auto; padding: 20px;
+    background: color-mix(in srgb, var(--color-neutral-900) 58%, transparent);
+    display: flex; align-items: safe center; justify-content: safe center;
+  }
+  .lb {
+    position: relative; width: 420px; max-width: 100%; margin: auto;
+    background: var(--color-bg); border-radius: 22px; padding: 26px 26px 22px;
+    box-shadow: var(--shadow-lg); text-align: center;
+  }
+  /* Its own corner, clear of the title. The consent dialogs used to borrow the
+     donation sheet's, which is placed to sit on that sheet's picture band —
+     without one it landed on the heading. */
+  .lb-x {
+    position: absolute; top: 12px; right: 12px; z-index: 2;
+    width: 34px; height: 34px; border: 0; border-radius: 50%; cursor: pointer;
+    background: color-mix(in srgb, var(--color-text) 7%, transparent);
+    color: var(--color-neutral-700); font-size: 15px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .lb-x:hover { background: color-mix(in srgb, var(--color-text) 14%, transparent); color: var(--color-text); }
+  /* The medallion. Tinted from the tone the dialog is about, so a deletion, a
+     privacy question and a note are told apart before a word is read. */
+  .lb-mark {
+    width: 56px; height: 56px; margin: 2px auto 14px; border-radius: 18px;
+    display: grid; place-items: center;
+    background: color-mix(in srgb, var(--lb-tone) 13%, transparent);
+    color: var(--lb-tone);
+  }
+  .lb-kicker {
+    font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase;
+    font-weight: 700; margin-bottom: 6px;
+  }
+  .lb-title {
+    margin: 0 0 10px; font-family: var(--font-heading); font-weight: 700;
+    font-size: 21px; line-height: 1.24; color: var(--color-text);
+  }
+  .lb-body { font-size: 13.5px; line-height: 1.6; color: var(--color-neutral-800); text-align: left; }
+  .lb-body p { margin: 0 0 11px; }
+  .lb-body p:last-child { margin-bottom: 0; }
+  .lb-acts { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+  .lb-acts .btn { flex: 1 1 auto; min-height: 46px; border-radius: 999px; justify-content: center; }
+  .lb-foot { margin: 12px 0 0; font-size: 11px; line-height: 1.5; color: var(--color-neutral-600); }
+
+  @media (max-width: 430px) {
+    .lb { padding: 22px 18px 18px; border-radius: 20px; }
+    .lb-title { font-size: 19px; }
+    /* Stacked, because two pill buttons side by side on a narrow phone leaves
+       neither with room for its own words. */
+    .lb-acts { flex-direction: column-reverse; }
+    .lb-acts .btn { width: 100%; }
+  }
+
   /* — chat with Zimpan —
      One class set behind two frames, like the money-out question: the phone
      drops it into a sheet, the laptop into a dialog. The log scrolls inside a

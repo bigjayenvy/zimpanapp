@@ -246,7 +246,7 @@ const FOLLOW_UPS = [
   },
   {
     key: 'food',
-    re: /\bfood\b|\beat\b|eating|\bate\b|\bmeal\b|breakfast|lunch|dinner|snack|merienda|restaurant|dining|kape|coffee|cafe|takeout|kain/,
+    re: /\bfood\b|\beat\b|eating|\bate\b|\bdrinks?\b|\bdrank\b|\bmeal\b|breakfast|lunch|dinner|snack|merienda|restaurant|dining|kape|coffee|cafe|takeout|kain|inuman/,
     title: 'What did you eat?',
     hint: 'Optional — a line about the meal is enough.',
     placeholder: 'e.g. grilled chicken, rice, salad'
@@ -355,7 +355,7 @@ function seedState() {
     // Starting set for a new account. Existing accounts keep whatever they have.
     categories: [
       'Chores', 'Workout', 'Potato Couching', 'Family Time', 'Focus Work',
-      'Eat', 'Sleep', 'Prayers and Reflections', 'Meetings', 'Cooking'
+      'Eat / Drink', 'Sleep', 'Prayers and Reflections', 'Meetings', 'Cooking'
     ].map((name, i) => ({ name, color: PALETTE[i % PALETTE.length] })),
     purposes: PURPOSES.map((n, i) => ({ name: n, color: MONEY_PALETTE[i % MONEY_PALETTE.length] }))
   };
@@ -1891,6 +1891,21 @@ const SERVINGS = [
   { g: 'coffee', re: /black coffee|americano|espresso|brewed coffee|kapeng barako|black kape/, kcal: 5, p: 0, c: 1, f: 0, serve: 240 },
   { g: 'coffee', re: /latte|cappuccino|mocha|frappe|white coffee|3-?in-?1/, kcal: 150, p: 6, c: 18, f: 6, serve: 350 },
   { g: 'coffee', re: /coffee|kape/, kcal: 60, p: 2, c: 8, f: 2, serve: 240 },
+  /* Alcohol was in the labels table — it is named as something to watch — but
+     never in this one, so a drink was a meal nobody could read and got billed
+     as UNKNOWN_MEAL: 450 calories and twenty grams of protein for a glass of
+     wine. Priced per standard serve, so "half glass wine" halves it.
+
+     `gin` and `rum` carry word boundaries or they match ginger and crumble.
+     There is deliberately no rule for "spirit": this app has a wellbeing
+     dimension by that name, and reading a quiet evening as a shot of vodka is
+     a worse failure than not reading it at all. */
+  { g: 'alcohol', re: /cocktail|mojito|margarita|pi(?:ñ|n)a colada|sangria|negroni/, kcal: 250, p: 0, c: 25, f: 0, serve: 250 },
+  { g: 'alcohol', re: /\bwines?\b|prosecco|champagne|merlot|cabernet|chardonnay|rose wine/, kcal: 125, p: 0, c: 4, f: 0, serve: 150 },
+  { g: 'alcohol', re: /\bbeers?\b|lager|pilsner|stout|cerveza|san ?mig/, kcal: 140, p: 1.6, c: 11, f: 0, serve: 330 },
+  { g: 'alcohol', re: /whisk(?:y|ey)|vodka|\bgin\b|\brum\b|tequila|brandy|liquor/, kcal: 100, p: 0, c: 0, f: 0, serve: 44 },
+  { g: 'alcohol', re: /alcohol|inuman|\bbooze\b/, kcal: 150, p: 0, c: 8, f: 0, serve: 200 },
+
   /* Named tea drinks before plain tea, and the order is load-bearing: the tea
      rule below guards against "tea milk" with a lookahead, which does nothing
      for "milk tea" or "iced tea", where the qualifier comes first. Sitting
@@ -2418,7 +2433,18 @@ function foodReport(entries, money, days) {
   const bought = entries.filter(isGroceryRow).concat(money.filter(isGroceryRow));
   const uncounted = paidFor.concat(bought);
 
-  const withNotes = rows.filter((r) => (r.note || '').trim());
+  /* A row counts as described if it says what was in it — and the activity is
+     allowed to be where that is said. The old rule looked only at the note, so
+     "half glass wine" logged as the activity with nothing in the note was
+     treated as a meal that said nothing: no detail, and therefore no Refine
+     button, on the entries most in need of one.
+
+     A bare meal label still counts as saying nothing. MEAL_LABEL is what
+     separates them: strip "Lunch" and there is nothing left, strip it from
+     "Lunch: half glass wine" and there is. */
+  const describes = (r) => !!((r.note || '').trim()
+    || String(r.activity || '').toLowerCase().replace(MEAL_LABEL, '').trim());
+  const withNotes = rows.filter(describes);
   const text = rows.concat(uncounted)
     .map((r) => `${r.activity || ''} ${r.note || ''}`).join(' ').toLowerCase();
   const found = FOOD_GROUPS.filter((g) => g.re.test(text));
@@ -2476,7 +2502,11 @@ function foodReport(entries, money, days) {
   const n = nutritionFor(rows);
   /* What would be sent for an AI estimate, and what the cache is keyed on. Only
      the food itself — no dates, no amounts, nothing identifying. */
-  const detail = withNotes.map((r) => `${r.activity || ''}: ${r.note || ''}`.trim()).join('\n');
+  // Joined only where both halves exist, so a row described by its activity
+  // alone does not go up as "half glass wine:" with a dangling colon.
+  const detail = withNotes
+    .map((r) => [String(r.activity || '').trim(), String(r.note || '').trim()].filter(Boolean).join(': '))
+    .join('\n');
   /* A refinement already asked for and answered, keyed by the text it was asked
      about — so it survives a reload and is found again the moment the same
      meals are on screen. */
@@ -3249,23 +3279,22 @@ function pickDeleteDialog() {
   const money = t.kind === 'purpose';
   const rows = (money ? state.money : state.entries).filter((r) => (money ? r.purpose : r.category) === t.name);
   const noun = money ? 'purpose' : 'category';
-  return `
-  <div class="dialog-backdrop" data-backdrop="pick-del-cancel" style="z-index:70;">
-    <div class="dialog" style="max-width:400px;">
-      <div class="dialog-title">Delete “${esc(t.name)}”?</div>
-      <div class="dialog-body">
-        ${rows.length
-          ? `<strong>This also deletes ${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}</strong> logged under it.
-             They go from every device you are signed in on, and they cannot be brought back.`
-          : `Nothing is logged under this ${noun}, so only the ${noun} itself goes.`}
-      </div>
-      <div class="dialog-actions">
-        <button class="btn btn-secondary" data-act="pick-del-cancel">Cancel</button>
-        <button class="btn" data-act="pick-del-confirm"
-          style="background:#8a2f4a;color:#fff;border-color:#8a2f4a;">${rows.length ? `Delete ${noun} and ${rows.length}` : `Delete ${noun}`}</button>
-      </div>
-    </div>
-  </div>`;
+  return lightbox({
+    icon: 'trash',
+    // Alert red, because this is the one dialog here that destroys something.
+    tone: 'var(--zg-alert)',
+    kicker: rows.length ? 'This cannot be undone' : 'Just checking',
+    title: `Delete “${t.name}”?`,
+    closeAct: 'pick-del-cancel',
+    body: rows.length
+      ? `<p><strong>This also deletes ${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}</strong>
+         logged under it. They go from every device you are signed in on, and they cannot be brought back.</p>`
+      : `<p>Nothing is logged under this ${esc(noun)}, so only the ${esc(noun)} itself goes.</p>`,
+    actions: `
+      <button class="btn btn-secondary" data-act="pick-del-cancel">Cancel</button>
+      <button class="btn" data-act="pick-del-confirm"
+        style="background:#8a2f4a;color:#fff;border-color:#8a2f4a;">${rows.length ? `Delete ${esc(noun)} and ${rows.length}` : `Delete ${esc(noun)}`}</button>`
+  });
 }
 
 /* Naming a new one without leaving the list you were searching. It used to
@@ -3747,6 +3776,11 @@ const ICON_PATHS = {
     + '<path d="M15.8 9.4a3.7 3.7 0 0 1 0 5.2"/><path d="M18.4 6.8a7.4 7.4 0 0 1 0 10.4"/>',
   mute: '<path d="M4.4 9.4h3.4L12.6 5.4v13.2L7.8 14.6H4.4Z" stroke-linejoin="round"/>'
     + '<path d="M16.2 10.2 20.6 14.6M20.6 10.2 16.2 14.6"/>',
+  shield: '<path d="M12 3.2 19.4 6v6c0 4.4-3 7.3-7.4 8.8C7.6 19.3 4.6 16.4 4.6 12V6Z" stroke-linejoin="round"/>'
+    + '<path d="M9.2 12.2 11.3 14.3 15 10.4"/>',
+  trash: '<path d="M4.6 6.8h14.8"/><path d="M9.4 6.8V5.2a1.6 1.6 0 0 1 1.6-1.6h2a1.6 1.6 0 0 1 1.6 1.6v1.6"/>'
+    + '<path d="M6.6 6.8 7.5 19a1.8 1.8 0 0 0 1.8 1.6h5.4a1.8 1.8 0 0 0 1.8-1.6l.9-12.2" stroke-linejoin="round"/>'
+    + '<path d="M10.4 10.4v6.2M13.6 10.4v6.2"/>',
   scales: '<path d="M12 4.5v15.3M7.7 19.8h8.6M4.3 8.6h15.4"/>'
     + '<path d="M4.3 8.6 2.2 13.3a2.3 2.3 0 0 0 4.2 0Z" stroke-linejoin="round"/>'
     + '<path d="M19.7 8.6l-2.1 4.7a2.3 2.3 0 0 0 4.2 0Z" stroke-linejoin="round"/>'
@@ -4055,23 +4089,51 @@ const noteOnRow = (p) => !!(p && ((findRow(p.kind, p.id) || {}).note || '').trim
 function notePromptDialog() {
   const p = state.notePrompt;
   if (!p) return '';
+  return lightbox({
+    icon: 'pencil',
+    tone: 'var(--color-accent)',
+    kicker: p.activity ? `Logged against “${p.activity}”` : 'Optional',
+    title: p.title,
+    body: `
+      <p style="margin:0 0 10px;font-size:12.5px;color:var(--color-neutral-600);">${esc(p.hint)}</p>
+      <textarea class="input" data-k="note-draft" data-sync="noteDraft" rows="4" maxlength="500"
+        placeholder="${esc(p.placeholder)}"
+        style="width:100%;resize:vertical;min-height:92px;font:inherit;font-size:14px;line-height:1.5;padding:10px 12px;">${esc(state.noteDraft)}</textarea>`,
+    actions: `
+      ${noteOnRow(p) ? `<button class="btn btn-ghost" data-act="note-remove" style="color:#8a2f4a;">Remove note</button>` : ''}
+      <button class="btn btn-ghost" data-act="note-skip">Skip</button>
+      <button class="btn btn-primary" data-act="note-save">Save note</button>`
+  });
+}
+
+/* ── one shell for the dialogs that ask something ──
+
+   Every one of these was its own hand-built box, and the two consent dialogs
+   had borrowed the donation sheet's — which is styled around a picture band
+   across the top. Without that band the close button, positioned to ride on
+   it, floated over the title on bare cream, and the kicker sat hard against
+   the top edge because the padding lived in a body element these dialogs do
+   not have.
+
+   So: a medallion with the icon of whatever is being asked about, a kicker, a
+   title, the body, and a row of actions. The icon is the point of it — a
+   question about your log, a question about a meal, a question about deleting
+   something, and a note all looked identical before, and the first thing read
+   on any of them was the word "Before". */
+function lightbox(o) {
+  const tone = o.tone || 'var(--color-accent)';
   return `
-    <div style="position:fixed;inset:0;background:color-mix(in srgb, var(--color-neutral-900) 55%, transparent);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50;">
-      <div class="blueprint" style="width:440px;max-width:100%;padding:26px 26px 24px;background:var(--color-bg);">
-        <h4 style="margin:0 0 4px;">${esc(p.title)}</h4>
-        <div style="font-size:12px;color:var(--color-neutral-600);margin-bottom:14px;">${esc(p.hint)}</div>
-        <textarea class="input" data-k="note-draft" data-sync="noteDraft" rows="4" maxlength="500"
-          placeholder="${esc(p.placeholder)}"
-          style="width:100%;resize:vertical;min-height:88px;font:inherit;font-size:14px;line-height:1.5;padding:10px 12px;">${esc(state.noteDraft)}</textarea>
-        <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;">
-          <span style="font-size:11.5px;color:var(--color-neutral-600);margin-right:auto;">Logged against “${esc(p.activity || 'this entry')}”. Optional.</span>
-          ${noteOnRow(p) ? `<button class="btn btn-ghost" data-act="note-remove"
-            style="color:#8a2f4a;">Remove note</button>` : ''}
-          <button class="btn btn-ghost" data-act="note-skip">Skip</button>
-          <button class="btn btn-primary" data-act="note-save">Save note</button>
-        </div>
-      </div>
-    </div>`;
+  <div class="no-print lb-back"${o.closeAct ? ` data-backdrop="${esc(o.closeAct)}"` : ''}>
+    <div class="lb" role="dialog" aria-modal="true" aria-label="${esc(o.title)}">
+      ${o.closeAct ? `<button class="lb-x" data-act="${esc(o.closeAct)}" aria-label="Close">✕</button>` : ''}
+      <div class="lb-mark" style="--lb-tone:${tone};" aria-hidden="true">${nodeIcon(o.icon, 26)}</div>
+      ${o.kicker ? `<div class="lb-kicker" style="color:${tone};">${esc(o.kicker)}</div>` : ''}
+      <h2 class="lb-title">${esc(o.title)}</h2>
+      <div class="lb-body">${o.body}</div>
+      ${o.actions ? `<div class="lb-acts">${o.actions}</div>` : ''}
+      ${o.foot ? `<p class="lb-foot">${o.foot}</p>` : ''}
+    </div>
+  </div>`;
 }
 
 /* ── the money-out question, drawn ──
@@ -4537,28 +4599,28 @@ function mChatSheet() {
    does, notes and all, because that is what makes it able to answer. */
 function chatConsentDialog() {
   if (!state.chatAsking) return '';
-  return `
-  <div class="no-print donate-backdrop">
-    <div class="donate-sheet" role="dialog" aria-modal="true" aria-labelledby="chat-consent-title" style="text-align:left;">
-      <button class="donate-x" data-act="chat-consent-no" aria-label="Close">×</button>
-      <div class="donate-kicker">Before we do this</div>
-      <h2 id="chat-consent-title" style="margin:0 0 12px;font-family:var(--font-heading);font-size:24px;line-height:1.2;">Send your log so it can answer?</h2>
-      <p style="margin:0 0 12px;font-size:13px;line-height:1.6;color:var(--color-neutral-800);">
-        To answer questions about what you have tracked, the assistant is sent your last ${CHAT_DAYS} days —
-        your activities, categories, amounts, and <strong>the notes you wrote on them</strong>. That is more
-        than the meal estimates send, which is why this is a separate question.
-      </p>
-      <p style="margin:0 0 18px;font-size:13px;line-height:1.6;color:var(--color-neutral-800);">
-        It goes to Anthropic's Claude API with each question and is not stored by us. Your name, your email
-        and your password never go. The assistant can only read — it cannot add, change or delete anything.
-        Close the chat and the conversation is gone.
-      </p>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;">
-        <button class="btn btn-primary" data-act="chat-consent-yes">Yes, let it read my log</button>
-        <button class="btn btn-ghost" data-act="chat-consent-no">No thanks</button>
-      </div>
-    </div>
-  </div>`;
+  /* Its own words, because it is a bigger ask than the meal estimate: that one
+     promises only a food description leaves the device, and this sends the log
+     itself. The shield rather than the chat mark — the question here is about
+     privacy, not about chatting. */
+  return lightbox({
+    icon: 'shield',
+    tone: 'var(--color-accent)',
+    kicker: 'Before we do this',
+    title: 'Send your log so it can answer?',
+    closeAct: 'chat-consent-no',
+    body: `
+      <p>To answer questions about what you have tracked, the assistant is sent your last
+      ${CHAT_DAYS} days — your activities, categories, amounts, and <strong>the notes you wrote on
+      them</strong>. That is more than the meal estimates send, which is why this is a separate
+      question.</p>
+      <p>It goes to Anthropic's Claude API with each question and is not stored by us. Your name,
+      your email and your password never go. The assistant can only read — it cannot add, change or
+      delete anything. Close the chat and the conversation is gone.</p>`,
+    actions: `
+      <button class="btn btn-ghost" data-act="chat-consent-no">No thanks</button>
+      <button class="btn btn-primary" data-act="chat-consent-yes">Yes, let it read my log</button>`
+  });
 }
 
 /* ── the donation ask ──
@@ -5714,26 +5776,22 @@ function sleepBlock(sleep, scope) {
    and this is the one place that stops being strictly true. */
 function aiConsentDialog() {
   if (!state.aiAsking) return '';
-  return `
-  <div class="no-print donate-backdrop">
-    <div class="donate-sheet" role="dialog" aria-modal="true" aria-labelledby="ai-consent-title" style="text-align: left;">
-      <button class="donate-x" data-act="ai-decline" aria-label="Close">×</button>
-      <div class="donate-kicker">Before we do this</div>
-      <h2 id="ai-consent-title" style="margin: 0 0 12px; font-family: var(--font-heading); font-size: 24px; line-height: 1.2;">Send this meal to be estimated?</h2>
-      <p style="margin: 0 0 12px; font-size: 13px; line-height: 1.6; color: var(--color-neutral-800);">
-        To get a closer figure, the text of what you ate is sent to Anthropic's Claude API, which returns an estimate.
-        Only the food description goes — not your name, your account, your dates or anything else you track.
-      </p>
-      <p style="margin: 0 0 18px; font-size: 13px; line-height: 1.6; color: var(--color-neutral-800);">
-        Everything else in ZIMPAN stays as it is: nothing is sent unless you press this button, and the answer is
-        kept on this device so the same meal is never sent twice. You can carry on using the built-in estimate instead.
-      </p>
-      <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-        <button class="btn btn-primary" data-act="ai-accept">Yes, estimate it</button>
-        <button class="btn btn-ghost" data-act="ai-decline">No thanks</button>
-      </div>
-    </div>
-  </div>`;
+  return lightbox({
+    icon: 'plate',
+    tone: 'var(--zg-donate)',
+    kicker: 'Before we do this',
+    title: 'Send this meal to be estimated?',
+    closeAct: 'ai-decline',
+    body: `
+      <p>To get a closer figure, the text of what you ate is sent to Anthropic's Claude API, which
+      returns an estimate. Only the food description goes — not your name, your account, your dates
+      or anything else you track.</p>
+      <p>Nothing is sent unless you press this button, and the answer is kept on this device so the
+      same meal is never sent twice. You can carry on using the built-in estimate instead.</p>`,
+    actions: `
+      <button class="btn btn-ghost" data-act="ai-decline">No thanks</button>
+      <button class="btn btn-primary" data-act="ai-accept">Yes, estimate it</button>`
+  });
 }
 
 function todayCard(v) {
