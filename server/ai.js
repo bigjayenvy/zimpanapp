@@ -311,3 +311,101 @@ export async function summariseDeck(facts) {
   if (!Object.keys(out).length) throw new Error('The summary came back empty.');
   return out;
 }
+
+/* ── chat ──
+
+   "Chat with Zimpan": questions answered from the log the client sends with
+   each turn. Unlike the two above, this one is prose rather than a schema —
+   there is no shape to constrain, only a subject to stay on.
+
+   Read-only by construction. Nothing here writes, and the system prompt says
+   so, because a model told it can log things will offer to and then appear to
+   have done it. The client does not act on replies either way: the only path
+   into the log is still the log's own screens.
+
+   The whole conversation is sent every turn and nothing is kept here. The
+   server holds no transcript — the browser owns it, which keeps this endpoint
+   stateless and means a chat that is closed is a chat that is gone. */
+const CHAT_SYSTEM = `You are the assistant inside ZIMPAN, an app for tracking time, money, food, sleep and exercise.
+
+You are answering questions about one person's own logged data, which is supplied to you as JSON with each question. Everything you say must come from that data.
+
+- Answer from the log. If the log does not say, say that it does not say — never fill a gap with a plausible number.
+- Be brief and specific. Two or three sentences is usually right. Quote real figures and dates from the data rather than describing them vaguely.
+- The figures are estimates read from what the person typed, not measurements. Treat calorie and nutrition numbers as approximate and say so when it matters.
+- You cannot change anything. You have no way to add, edit or delete an entry. If asked to log something, say that you cannot, and that they can log it on the Activity or Money screen.
+- Be plain and warm, never chirpy. No emoji. Do not open with a greeting or a restatement of the question.
+- On health, money or medication specifics, give general information and say that anything personal belongs with a doctor or a qualified adviser.
+- If a question has nothing to do with what they track, say briefly that it is outside what you can see here.`;
+
+const CHAT_MAX_TURNS = 20;
+const CHAT_MAX_CHARS = 2000;
+
+/* The reply, as text. `history` is the conversation so far and `facts` is the
+   log it is answered from; the facts ride on the newest user turn rather than
+   in the system prompt so that a long chat does not re-send a stale snapshot
+   alongside a fresh question. */
+export async function chatReply(history, facts) {
+  if (!aiConfigured()) throw new Error('Chat is not configured on this server.');
+
+  const turns = (Array.isArray(history) ? history : [])
+    .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string')
+    .slice(-CHAT_MAX_TURNS)
+    .map((m) => ({ role: m.role, content: String(m.text).slice(0, CHAT_MAX_CHARS) }))
+    .filter((m) => m.content.trim());
+
+  if (!turns.length) throw new Error('Nothing to answer.');
+  // The API requires the exchange to end with the user; a trailing assistant
+  // turn means the client sent its own optimistic echo back to us.
+  while (turns.length && turns[turns.length - 1].role === 'assistant') turns.pop();
+  if (!turns.length || turns[turns.length - 1].role !== 'user') throw new Error('Nothing to answer.');
+
+  const last = turns[turns.length - 1];
+  turns[turns.length - 1] = {
+    role: 'user',
+    content: `${last.content}\n\n<log>\n${JSON.stringify(facts || {})}\n</log>`
+  };
+
+  let res;
+  try {
+    res = await anthropic().beta.messages.create({
+      model: MODEL,
+      max_tokens: 1024,
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      system: CHAT_SYSTEM,
+      messages: turns
+    }, { timeout: TIMEOUT_MS });
+  } catch (err) {
+    if (err instanceof Anthropic.RateLimitError) {
+      console.error('[zimpan] chat rate limited');
+      throw new Error('The assistant is busy. Try again shortly.');
+    }
+    if (err instanceof Anthropic.AuthenticationError) {
+      console.error('[zimpan] chat rejected the API key');
+      throw new Error('The assistant refused our credentials.');
+    }
+    if (err instanceof Anthropic.APIConnectionError) {
+      console.error(`[zimpan] chat could not connect: ${err.message}`);
+      throw new Error('Could not reach the assistant.');
+    }
+    console.error(`[zimpan] chat failed${err.status ? ` (${err.status})` : ''}: ${err.message}`);
+    throw new Error('The assistant refused the request.');
+  }
+
+  if (res.stop_reason === 'refusal') {
+    console.error(`[zimpan] chat refused${res.stop_details ? `: ${res.stop_details.category}` : ''}`);
+    throw new Error('The assistant declined that one.');
+  }
+
+  const text = (res.content || [])
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join('')
+    .trim();
+
+  // An empty reply is a failure rather than a silent success: the client would
+  // otherwise show a blank bubble and look broken.
+  if (!text) throw new Error('The assistant came back empty.');
+  return { text, truncated: res.stop_reason === 'max_tokens' };
+}

@@ -472,6 +472,7 @@ const API = {
   push: (since, changes) => api('/api/sync', { method: 'POST', body: { since: since || 0, changes } }),
   estimate: (text) => api('/api/estimate', { method: 'POST', body: { text } }),
   deckSummary: (facts) => api('/api/deck-summary', { method: 'POST', body: { facts } }),
+  chat: (history, facts) => api('/api/chat', { method: 'POST', body: { history, facts } }),
   donateClick: () => api('/api/donate-click', { method: 'POST', body: {} })
 };
 
@@ -507,6 +508,15 @@ function noteDonateClick() {
 
 const AI_CACHE_KEY = 'zimpan.ai.v1';
 const AI_CONSENT_KEY = 'zimpan.ai.consent.v1';
+/* Chat gets its own consent, deliberately not the estimate's. The estimate
+   dialog promises that "only the food description goes — not your name, your
+   account, your dates or anything else you track", and chat sends the log
+   itself, notes included. Reusing that flag would have people who agreed to one
+   sentence of food text silently agreeing to their whole diary. */
+const CHAT_CONSENT_KEY = 'zimpan.ai.chat.v1';
+// Whether replies are read aloud. A per-browser preference: the speaker you
+// have to hand is a fact about the device, not about the account.
+const CHAT_SPEAK_KEY = 'zimpan.ai.speak.v1';
 
 /* The report deck's prose, kept between visits. Persisted rather than held in
    memory because the whole cost of this feature is the calls, and a page reload
@@ -635,6 +645,15 @@ const state = {
   calOpen: null,
   // Whether the once-a-day "what happened yesterday" offer is on screen.
   recapAsk: false,
+  /* "Chat with Zimpan". The transcript lives here and nowhere else — not on the
+     server, not in localStorage — so closing the app ends the conversation.
+     `speak` is whether replies are read aloud; it is remembered per browser. */
+  chat: {
+    open: false, messages: [], draft: '', busy: false, error: '',
+    listening: false, speak: readJson(CHAT_SPEAK_KEY, true) !== false
+  },
+  chatConsent: readJson(CHAT_CONSENT_KEY, false) === true,
+  chatAsking: false,
   newPurposeOpen: false, newPurposeName: '',
 
   /* Which searchable picker is open — 'category', 'purpose', or null — and what
@@ -3520,6 +3539,7 @@ function header(v) {
           <button class="btn btn-ghost" data-act="sign-out" style="font-size:12px;">Sign out</button>
         </span>` : ''}
       <span class="appbar-cta" style="display:flex;align-items:center;gap:10px;">
+        ${state.aiEstimates ? `<button class="btn btn-secondary" data-act="chat-open" style="display:inline-flex;align-items:center;gap:7px;">${nodeIcon('pulse', 15)}<span>Ask Zimpan</span></button>` : ''}
         <a class="btn btn-donate" href="${DONATE_URL}" data-donate target="_blank" rel="noopener noreferrer">${NAV_ICONS.donate}<span>Donate</span></a>
         <button class="btn btn-primary" data-act="open-report" style="position:relative">Your Report Cards</button>
       </span>
@@ -3717,6 +3737,16 @@ const ICON_PATHS = {
     + '<path d="M16.7 3.8c-1.5 1.2-2 3-1.6 5.3.2 1.2.9 1.9 1.8 2v9.1"/>',
   pulse: '<path d="M2.7 12h4.1l2.3-5.3 3.6 10.6 2.4-5.3h6.2"/>'
     + '<circle cx="12" cy="17.3" r="1.3" fill="currentColor" stroke="none"/>',
+  /* Chat's two controls. Drawn like the rest of the set rather than set as
+     emoji: an emoji is a different typeface at a different weight in a row of
+     line icons, and it renders differently on every platform. */
+  mic: '<rect x="9.2" y="3.2" width="5.6" height="11.2" rx="2.8"/>'
+    + '<path d="M5.6 11.6a6.4 6.4 0 0 0 12.8 0"/><path d="M12 18v2.8M8.8 20.8h6.4"/>',
+  stop: '<rect x="6.4" y="6.4" width="11.2" height="11.2" rx="2.4"/>',
+  sound: '<path d="M4.4 9.4h3.4L12.6 5.4v13.2L7.8 14.6H4.4Z" stroke-linejoin="round"/>'
+    + '<path d="M15.8 9.4a3.7 3.7 0 0 1 0 5.2"/><path d="M18.4 6.8a7.4 7.4 0 0 1 0 10.4"/>',
+  mute: '<path d="M4.4 9.4h3.4L12.6 5.4v13.2L7.8 14.6H4.4Z" stroke-linejoin="round"/>'
+    + '<path d="M16.2 10.2 20.6 14.6M20.6 10.2 16.2 14.6"/>',
   scales: '<path d="M12 4.5v15.3M7.7 19.8h8.6M4.3 8.6h15.4"/>'
     + '<path d="M4.3 8.6 2.2 13.3a2.3 2.3 0 0 0 4.2 0Z" stroke-linejoin="round"/>'
     + '<path d="M19.7 8.6l-2.1 4.7a2.3 2.3 0 0 0 4.2 0Z" stroke-linejoin="round"/>'
@@ -4238,6 +4268,297 @@ function recapDialog() {
         </div>
       </div>
     </div>`;
+}
+
+/* What the assistant is given to answer from.
+
+   This is the one place in the app that sends the log itself rather than a
+   summary of it — notes included, which is what makes "what did I eat on
+   Tuesday" answerable at all. It is also why chat has its own consent: the
+   estimate dialog promises the opposite, and that promise still holds for
+   estimates.
+
+   Bounded on purpose. A window rather than everything ever logged, and a cap on
+   rows inside it, because the whole log of a long-standing account is both a
+   large request and more than any question needs. Newest first, so the cap
+   drops the oldest rather than the most relevant.
+
+   No ids, no account, no sync stamps: none of it helps answer a question, and
+   the less that leaves the device the better. */
+const CHAT_DAYS = 60;
+const CHAT_ROWS = 400;
+
+function chatFacts() {
+  const to = iso(new Date());
+  const from = mShiftIso(to, -(CHAT_DAYS - 1));
+  const inWindow = (d) => d >= from && d <= to;
+  const newestFirst = (a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
+
+  const entries = state.entries
+    .filter((e) => inWindow(e.date))
+    .sort(newestFirst)
+    .slice(0, CHAT_ROWS)
+    .map((e) => ({
+      date: e.date, activity: e.activity || '', category: e.category || '',
+      from: clock12(e.from), to: clock12(e.to), minutes: span(e) || 0,
+      note: e.note || undefined
+    }));
+
+  const money = state.money
+    .filter((e) => inWindow(e.date))
+    .sort(newestFirst)
+    .slice(0, CHAT_ROWS)
+    .map((e) => ({
+      date: e.date, activity: e.activity || '', purpose: e.purpose || '',
+      in: Number(e.in) || 0, out: Number(e.out) || 0,
+      offBudget: e.offBudget ? true : undefined,
+      note: e.note || undefined
+    }));
+
+  const bal = moneyStatus(moneyAll());
+  return {
+    today: to,
+    window: { from, to, days: CHAT_DAYS },
+    currency: currency().code,
+    weightKg: state.weightKg || null,
+    // Named so the model does not read a capped list as the whole of it.
+    truncated: {
+      entries: state.entries.filter((e) => inWindow(e.date)).length > CHAT_ROWS,
+      money: state.money.filter((e) => inWindow(e.date)).length > CHAT_ROWS
+    },
+    categories: state.categories.map((c) => c.name),
+    purposes: state.purposes.map((p) => p.name),
+    steps: state.steps || {},
+    balance: {
+      inTotal: bal.inCents / 100, outTotal: bal.outCents / 100,
+      left: bal.leftCents / 100, heldAside: bal.asideCents / 100
+    },
+    entries,
+    money
+  };
+}
+
+/* ── asking, and being answered ──
+
+   The transcript is state and nothing else: no server copy, no localStorage.
+   Closing the chat ends it, which is the honest behaviour for something that
+   sends your log with every question — a history that quietly persisted would
+   be a second copy of the diary nobody asked for.
+
+   The user's turn is appended before the request so it appears immediately;
+   a failure leaves it there with the error beneath it rather than swallowing
+   what was typed. */
+async function chatSend(text) {
+  const q = String(text == null ? state.chat.draft : text).trim();
+  if (!q || state.chat.busy) return;
+  if (!state.chatConsent) { state.chatAsking = true; render(); return; }
+
+  state.chat.messages = state.chat.messages.concat([{ role: 'user', text: q }]);
+  state.chat.draft = '';
+  state.chat.error = '';
+  state.chat.busy = true;
+  chatStopListening();
+  render();
+
+  try {
+    const res = await API.chat(state.chat.messages.map((m) => ({ role: m.role, text: m.text })), chatFacts());
+    const reply = (res.reply && res.reply.text) || '';
+    state.chat.messages = state.chat.messages.concat([{ role: 'assistant', text: reply, truncated: !!(res.reply && res.reply.truncated) }]);
+    if (state.chat.speak) speakReply(reply);
+  } catch (err) {
+    state.chat.error = err.message || 'Could not reach the assistant.';
+  } finally {
+    state.chat.busy = false;
+    render();
+  }
+}
+
+/* ── voice ──
+
+   Both halves are browser features rather than anything the server hears: the
+   microphone goes to the platform's own recognition, and replies are read by
+   the platform's synthesiser. Nothing extra is sent anywhere by either.
+
+   Feature-detected rather than assumed. Recognition in particular is absent or
+   unreliable outside Chromium and recent Safari, so the button is only drawn
+   where it will actually work — an affordance that silently does nothing is
+   worse than one that is not there. */
+const SpeechRec = typeof window !== 'undefined'
+  ? (window.SpeechRecognition || window.webkitSpeechRecognition || null) : null;
+const canHear = () => !!SpeechRec;
+const canSpeak = () => typeof window !== 'undefined' && !!window.speechSynthesis;
+
+let recogniser = null;
+
+function chatStopListening() {
+  state.chat.listening = false;
+  if (recogniser) { try { recogniser.stop(); } catch (err) { /* already stopped */ } }
+  recogniser = null;
+}
+
+function chatListen() {
+  if (!canHear()) return;
+  if (state.chat.listening) { chatStopListening(); render(); return; }
+  // Speaking while it listens would have it transcribe its own last answer.
+  stopSpeaking();
+
+  let rec;
+  try { rec = new SpeechRec(); } catch (err) { state.chat.error = 'This browser will not open the microphone.'; render(); return; }
+  recogniser = rec;
+  rec.lang = (typeof navigator !== 'undefined' && navigator.language) || 'en-US';
+  rec.interimResults = true;
+  rec.continuous = false;
+
+  rec.onresult = (ev) => {
+    let said = '';
+    for (let i = 0; i < ev.results.length; i++) said += ev.results[i][0].transcript;
+    state.chat.draft = said.trim();
+    // Painted rather than re-rendered: a full render mid-dictation would rebuild
+    // the field the words are landing in.
+    paintChatDraft();
+    if (ev.results[ev.results.length - 1].isFinal) {
+      const finished = state.chat.draft;
+      chatStopListening();
+      if (finished) chatSend(finished); else render();
+    }
+  };
+  rec.onerror = (ev) => {
+    chatStopListening();
+    state.chat.error = ev && ev.error === 'not-allowed'
+      ? 'The microphone is blocked for this site. Allow it in your browser settings and try again.'
+      : 'Could not hear that. Try again, or type it.';
+    render();
+  };
+  rec.onend = () => { if (state.chat.listening) { state.chat.listening = false; render(); } };
+
+  try { rec.start(); } catch (err) { chatStopListening(); return; }
+  state.chat.listening = true;
+  state.chat.error = '';
+  render();
+}
+
+function stopSpeaking() {
+  if (canSpeak()) { try { window.speechSynthesis.cancel(); } catch (err) { /* nothing to cancel */ } }
+}
+
+function speakReply(text) {
+  if (!canSpeak() || !text) return;
+  stopSpeaking();
+  try {
+    const u = new SpeechSynthesisUtterance(String(text).slice(0, 1200));
+    u.lang = (typeof navigator !== 'undefined' && navigator.language) || 'en-US';
+    u.rate = 1.02;
+    window.speechSynthesis.speak(u);
+  } catch (err) { /* a device with no voice installed is not an error worth showing */ }
+}
+
+/* The dictation field, repainted without a render for the same reason the
+   category search is: rebuilding an input while words are arriving in it loses
+   both the caret and the text. */
+function paintChatDraft() {
+  const el = document.querySelector('[data-k="chat-draft"]');
+  if (el && el.value !== state.chat.draft) el.value = state.chat.draft;
+}
+
+/* ── the chat panel ──
+
+   One body, two frames — the phone's sheet and the laptop's dialog — the way
+   the calorie breakdown and the money-out question already work. */
+function chatBody(closeAct) {
+  const c = state.chat;
+  const empty = !c.messages.length;
+
+  const bubbles = c.messages.map((m) => `
+    <div class="chat-turn is-${m.role === 'user' ? 'me' : 'it'}">
+      <div class="chat-bubble">${esc(m.text).replace(/\n/g, '<br>')}</div>
+      ${m.truncated ? '<div class="chat-cut">Cut short — ask for the rest if you need it.</div>' : ''}
+    </div>`).join('');
+
+  /* Openers rather than an empty box. Nobody's first instinct is to know what
+     an assistant over their own diary can be asked, and these are the questions
+     the log can actually answer well. */
+  const seeds = ['What did I eat yesterday?', 'Where did my time go this week?', 'What am I spending most on?', 'How has my sleep been?'];
+
+  return `
+  <div class="chat">
+    <div class="chat-head">
+      <span class="chat-mark" aria-hidden="true">${nodeIcon('pulse', 18)}</span>
+      <div class="chat-title">
+        <strong>Chat with Zimpan</strong>
+        <span>Asks nothing of the world — only of what you have logged.</span>
+      </div>
+      ${canSpeak() ? `<button type="button" class="chat-icon${c.speak ? ' is-on' : ''}" data-act="chat-speak"
+        aria-pressed="${c.speak}" title="${c.speak ? 'Replies are read aloud' : 'Replies stay silent'}"
+        aria-label="${c.speak ? 'Stop reading replies aloud' : 'Read replies aloud'}">${nodeIcon(c.speak ? 'sound' : 'mute', 17)}</button>` : ''}
+      <button type="button" class="chat-icon" data-act="${esc(closeAct)}" aria-label="Close">✕</button>
+    </div>
+
+    <div class="chat-log" data-chat-log>
+      ${empty ? `
+        <div class="chat-empty">
+          <p>Ask about anything you have logged — the last ${CHAT_DAYS} days are what it can see.</p>
+          <div class="chat-seeds">
+            ${seeds.map((q) => `<button type="button" class="chat-seed" data-act="chat-seed" data-q="${esc(q)}">${esc(q)}</button>`).join('')}
+          </div>
+        </div>` : bubbles}
+      ${c.busy ? '<div class="chat-turn is-it"><div class="chat-bubble is-wait"><span class="spinner"></span> Reading your log…</div></div>' : ''}
+      ${c.error ? `<div class="chat-err">${esc(c.error)}</div>` : ''}
+    </div>
+
+    <div class="chat-ask">
+      ${canHear() ? `<button type="button" class="chat-mic${c.listening ? ' is-live' : ''}" data-act="chat-listen"
+        aria-pressed="${c.listening}" aria-label="${c.listening ? 'Stop listening' : 'Ask by voice'}"
+        title="${c.listening ? 'Listening — tap to stop' : 'Ask by voice'}">${nodeIcon(c.listening ? 'stop' : 'mic', 18)}</button>` : ''}
+      <input class="input chat-input" type="text" data-k="chat-draft" data-sync="chat.draft"
+        data-enter="chat-send" value="${esc(c.draft)}" autocomplete="off"
+        placeholder="${c.listening ? 'Listening…' : 'Ask about your log'}" aria-label="Ask about your log">
+      <button type="button" class="btn btn-primary chat-send" data-act="chat-send"${c.busy ? ' disabled' : ''}>Ask</button>
+    </div>
+    <p class="chat-foot">Answers are read from what you logged and can be wrong. Nothing here can change your log.</p>
+  </div>`;
+}
+
+function chatDialog() {
+  if (!state.chat.open || mobileOn()) return '';
+  return `
+    <div class="no-print" data-backdrop="chat-close"
+         style="position:fixed;inset:0;background:color-mix(in srgb, var(--color-neutral-900) 55%, transparent);display:flex;align-items:safe center;justify-content:safe center;padding:20px;z-index:66;overflow:auto;">
+      <div class="blueprint chat-shell" style="background:var(--color-bg);">${chatBody('chat-close')}</div>
+    </div>`;
+}
+
+function mChatSheet() {
+  if (!state.chat.open) return '';
+  return mSheet(chatBody('chat-close'), '18px 16px 20px');
+}
+
+/* Its own consent, and its own words. The estimate dialog promises that only a
+   food description leaves the device; this one has to say plainly that the log
+   does, notes and all, because that is what makes it able to answer. */
+function chatConsentDialog() {
+  if (!state.chatAsking) return '';
+  return `
+  <div class="no-print donate-backdrop">
+    <div class="donate-sheet" role="dialog" aria-modal="true" aria-labelledby="chat-consent-title" style="text-align:left;">
+      <button class="donate-x" data-act="chat-consent-no" aria-label="Close">×</button>
+      <div class="donate-kicker">Before we do this</div>
+      <h2 id="chat-consent-title" style="margin:0 0 12px;font-family:var(--font-heading);font-size:24px;line-height:1.2;">Send your log so it can answer?</h2>
+      <p style="margin:0 0 12px;font-size:13px;line-height:1.6;color:var(--color-neutral-800);">
+        To answer questions about what you have tracked, the assistant is sent your last ${CHAT_DAYS} days —
+        your activities, categories, amounts, and <strong>the notes you wrote on them</strong>. That is more
+        than the meal estimates send, which is why this is a separate question.
+      </p>
+      <p style="margin:0 0 18px;font-size:13px;line-height:1.6;color:var(--color-neutral-800);">
+        It goes to Anthropic's Claude API with each question and is not stored by us. Your name, your email
+        and your password never go. The assistant can only read — it cannot add, change or delete anything.
+        Close the chat and the conversation is gone.
+      </p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button class="btn btn-primary" data-act="chat-consent-yes">Yes, let it read my log</button>
+        <button class="btn btn-ghost" data-act="chat-consent-no">No thanks</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 /* ── the donation ask ──
@@ -6746,6 +7067,8 @@ function render() {
   ${state.reportOpen ? reportSheet() : ''}
   ${pickDeleteDialog()}
   ${notePromptDialog()}
+  ${chatDialog()}
+  ${chatConsentDialog()}
   ${recapDialog()}
   ${calBreakdownDialog()}
   ${deductDialog()}
@@ -7611,6 +7934,38 @@ const ACTIONS = {
     state.focusField = 'pick-new-name';
     render();
   },
+  'chat-open': () => {
+    if (!state.aiEstimates) return;
+    state.chat.open = true; state.chat.error = '';
+    // No focusField: opening the panel must not raise the keyboard. Typing is
+    // one tap away and the mic is the point of it.
+    render();
+  },
+  'chat-close': () => {
+    state.chat.open = false;
+    chatStopListening();
+    stopSpeaking();
+    render();
+  },
+  'chat-send': () => chatSend(),
+  'chat-seed': (el) => chatSend(el.dataset.q || ''),
+  'chat-listen': () => chatListen(),
+  'chat-speak': () => {
+    state.chat.speak = !state.chat.speak;
+    writeJson(CHAT_SPEAK_KEY, state.chat.speak);
+    if (!state.chat.speak) stopSpeaking();
+    render();
+  },
+  'chat-consent-yes': () => {
+    state.chatConsent = true;
+    state.chatAsking = false;
+    writeJson(CHAT_CONSENT_KEY, true);
+    render();
+    // Whatever was typed when the question was raised is still in the box.
+    if (state.chat.draft.trim()) chatSend();
+  },
+  'chat-consent-no': () => { state.chatAsking = false; render(); },
+
   'recap-yes': () => {
     markRecapSeen();
     state.recapAsk = false;
@@ -9752,6 +10107,7 @@ function mTabs() {
   <button data-act="m-flow-open" aria-label="Log something"
     style="width:58px;height:58px;flex:none;border:0;border-radius:50%;cursor:pointer;background:${M_GRAD_FLAT};box-shadow:0 10px 24px rgba(79,70,229,.4);color:#fff;font-size:26px;font-weight:300;line-height:1;margin-bottom:12px;">+</button>
   ${tab('m-go-insights', nodeIcon('insights', 21), 'Insights', on === 'insights')}
+  ${state.aiEstimates ? tab('chat-open', nodeIcon('pulse', 21), 'Ask', state.chat.open) : ''}
 </div>`;
 }
 
@@ -9851,6 +10207,8 @@ function mobileApp() {
        it, so it has to reach every layout that can ask — and it is already
        responsive, so there is nothing to rebuild. -->
   ${aiConsentDialog()}
+  ${mChatSheet()}
+  ${chatConsentDialog()}
   ${recapDialog()}
   <!-- Same reasoning, and it was missing: toggleTimer is shared with this
        layout and raises a note prompt when it stops, so the phone could set a
@@ -10928,6 +11286,7 @@ document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') { ev.preventDefault(); state.pickOpen = null; state.pickQuery = ''; render(); return; }
   }
   // Topmost first: the follow-up dialog sits above the report sheet.
+  if (ev.key === 'Escape' && state.chat.open) { ACTIONS['chat-close'](); return; }
   if (ev.key === 'Escape' && state.calOpen) { ACTIONS['cal-close'](); return; }
   if (ev.key === 'Escape' && state.pickDelete) { ACTIONS['pick-del-cancel'](); return; }
   if (ev.key === 'Escape' && String(state.searchQuery || '').trim()) { ACTIONS['search-clear'](); return; }

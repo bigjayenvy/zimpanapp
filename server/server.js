@@ -15,7 +15,7 @@ import {
 import { changesSince, applyChanges, Invalid, CURRENCIES } from './sync.js';
 import { verifyGoogleIdToken } from './google.js';
 import { sendResetEmail } from './mail.js';
-import { estimateNutrition, summariseDeck, aiConfigured } from './ai.js';
+import { estimateNutrition, summariseDeck, chatReply, aiConfigured } from './ai.js';
 import {
   overview as adminOverview, users as adminUsers, donationsFor,
   setRole, addDonation, removeDonation, noteDonateClick, touchSeen, isAdminRole, ROLES
@@ -404,6 +404,39 @@ app.post('/api/estimate', requireUser, wrap(async (req, res) => {
     res.json({ estimate: await estimateNutrition(text) });
   } catch (err) {
     // The reason is already in the log; the message here is safe to show.
+    res.status(502).json({ error: err.message });
+  }
+}));
+
+/* "Chat with Zimpan".
+
+   Rate limited harder than either of the others per request, because a
+   conversation is many requests where a report is one: sixty an hour is a busy
+   afternoon of asking and nowhere near a way to spend the key.
+
+   The body carries the whole conversation and the log it is answered from. Both
+   are capped by size rather than validated field by field — it is the client's
+   own output coming back, and the model is given it as data inside a tag rather
+   than as instructions. Nothing is stored: the transcript lives in the browser,
+   so this endpoint holds no history and a closed chat is a gone chat. */
+app.post('/api/chat', requireUser, wrap(async (req, res) => {
+  if (!aiConfigured()) return res.status(503).json({ error: 'Chat is not configured on this server.' });
+
+  const limited = rateLimit({ key: `chat:${req.user.id}`, limit: 60, windowMs: 60 * 60 * 1000 });
+  if (!limited.ok) return res.status(429).json({ error: `That is a lot of questions. Try again ${retryLabel(limited.retryAfterMs)}.` });
+
+  const body = req.body || {};
+  const history = body.history;
+  if (!Array.isArray(history) || !history.length) return res.status(400).json({ error: 'Nothing to answer.' });
+  if (history.length > 40) return res.status(400).json({ error: 'That conversation is too long to send in one go.' });
+
+  const facts = body.facts && typeof body.facts === 'object' ? body.facts : {};
+  if (JSON.stringify(history).length > 20000) return res.status(400).json({ error: 'That conversation is too long to send in one go.' });
+  if (JSON.stringify(facts).length > 60000) return res.status(400).json({ error: 'That is more log than we can send in one go.' });
+
+  try {
+    res.json({ reply: await chatReply(history, facts) });
+  } catch (err) {
     res.status(502).json({ error: err.message });
   }
 }));

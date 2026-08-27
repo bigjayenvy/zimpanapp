@@ -910,6 +910,74 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .cal-more:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
   .cal-more:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 
+  /* — chat with Zimpan —
+     One class set behind two frames, like the money-out question: the phone
+     drops it into a sheet, the laptop into a dialog. The log scrolls inside a
+     fixed height so the field it is asked from never leaves the screen — a
+     conversation that pushes its own input below the fold is unusable on a
+     phone, which is where this was asked for. */
+  .chat { display: flex; flex-direction: column; min-height: 0; }
+  .chat-shell { width: 460px; max-width: 100%; margin: auto; padding: 16px 18px 14px; }
+  .chat-head { display: flex; align-items: center; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--color-divider); }
+  .chat-mark {
+    width: 34px; height: 34px; flex: none; border-radius: 11px; display: grid; place-items: center;
+    background: color-mix(in srgb, var(--color-accent) 14%, transparent); color: var(--color-accent-700);
+  }
+  .chat-title { display: flex; flex-direction: column; min-width: 0; margin-right: auto; }
+  .chat-title strong { font-family: var(--font-heading); font-size: 16px; line-height: 1.2; }
+  .chat-title span { font-size: 11px; color: var(--color-neutral-600); }
+  .chat-icon {
+    flex: none; border: 0; background: transparent; cursor: pointer; font-size: 15px;
+    min-width: 38px; min-height: 38px; border-radius: 10px; color: var(--color-neutral-700);
+  }
+  .chat-icon:hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+  /* The icons are drawn, so they need centring in their hit area. */
+  .chat-icon svg, .chat-mic svg { margin: 0 auto; }
+  .chat-icon.is-on { color: var(--color-accent-700); }
+
+  .chat-log {
+    flex: 1; min-height: 180px; max-height: min(46vh, 380px); overflow-y: auto;
+    overscroll-behavior: contain; padding: 14px 2px; display: flex; flex-direction: column; gap: 10px;
+  }
+  .chat-turn { display: flex; flex-direction: column; max-width: 86%; }
+  .chat-turn.is-me { align-self: flex-end; align-items: flex-end; }
+  .chat-turn.is-it { align-self: flex-start; align-items: flex-start; }
+  .chat-bubble { padding: 10px 13px; border-radius: 15px; font-size: 14px; line-height: 1.5; }
+  .is-me .chat-bubble { background: var(--color-accent); color: #fff; border-bottom-right-radius: 5px; }
+  .is-it .chat-bubble {
+    background: color-mix(in srgb, var(--color-text) 6%, transparent);
+    color: var(--color-text); border-bottom-left-radius: 5px;
+  }
+  .chat-bubble.is-wait { display: inline-flex; align-items: center; gap: 9px; color: var(--color-neutral-700); }
+  .chat-cut { margin-top: 4px; font-size: 10.5px; color: var(--color-neutral-600); }
+  .chat-err { font-size: 12.5px; line-height: 1.5; color: #8a2f4a; padding: 2px 4px; }
+
+  .chat-empty { margin: auto 0; text-align: center; }
+  .chat-empty p { margin: 0 0 12px; font-size: 13px; line-height: 1.5; color: var(--color-neutral-700); }
+  .chat-seeds { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; }
+  .chat-seed {
+    border: 1px solid color-mix(in srgb, var(--color-accent) 26%, transparent);
+    background: transparent; border-radius: 999px; cursor: pointer; padding: 7px 12px;
+    font-family: var(--font-body); font-size: 12.5px; color: var(--color-accent-700);
+  }
+  .chat-seed:hover { background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+
+  .chat-ask { display: flex; align-items: center; gap: 8px; padding-top: 10px; border-top: 1px solid var(--color-divider); }
+  .chat-input { flex: 1; min-width: 0; min-height: 44px; font-size: 15px; }
+  .chat-send { flex: none; min-height: 44px; border-radius: 999px; padding-inline: 18px; }
+  .chat-mic {
+    flex: none; width: 44px; height: 44px; border-radius: 50%; cursor: pointer;
+    display: grid; place-items: center;
+    border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+    background: transparent; color: var(--color-accent-700);
+  }
+  .chat-mic:hover { background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+  /* Listening has to be unmistakable — it is a live microphone. */
+  .chat-mic.is-live { background: var(--zg-alert); border-color: var(--zg-alert); color: #fff; animation: chat-pulse 1.4s ease-in-out infinite; }
+  @keyframes chat-pulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, #d92d20 45%, transparent); } 50% { box-shadow: 0 0 0 7px transparent; } }
+  @media (prefers-reduced-motion: reduce) { .chat-mic.is-live { animation: none; } }
+  .chat-foot { margin: 9px 0 0; font-size: 10.5px; line-height: 1.45; color: var(--color-neutral-600); text-align: center; }
+
   /* — money in and out, as lines —
      preserveAspectRatio is none so the plot fills its column at any width; the
      strokes are vector-effect'd so stretching the box does not stretch the line
