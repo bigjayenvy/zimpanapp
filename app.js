@@ -1050,6 +1050,48 @@ function queueSync(delay) {
   syncTimer = setTimeout(() => { syncNow(); }, delay == null ? 800 : delay);
 }
 
+/* ── hearing from the other device ──
+
+   Every sync is one round trip: the push carries what changed here, and the
+   reply carries what changed anywhere else. Until now the only thing that ever
+   started one was a local write — so a device that was merely *watching* never
+   asked, and never heard.
+
+   That is the whole of the stopped-timer bug. Start a timer on the laptop and
+   stop it on the phone: the phone's stop reaches the server immediately, and
+   the laptop sits there counting, because the laptop has nothing of its own to
+   say and nothing was asking on its behalf.
+
+   The cadence follows what is at stake. A running timer is the one piece of
+   state that goes stale in seconds and that two devices are likely to be
+   watching at once, so it is checked four times a minute; everything else can
+   wait a minute. A hidden tab asks for nothing — a phone in a pocket and a
+   laptop with the lid down have no screen to keep honest — and asks once on
+   the way back, which is the moment the screen is about to be believed again.
+
+   The clock is reset by any sync, not only by these, so a device being typed
+   into is never also polled. */
+const BEAT_RUNNING_MS = 15000;
+const BEAT_IDLE_MS = 60000;
+const BEAT_TICK_MS = 5000;
+let lastSyncTry = 0;
+
+function syncHeartbeat() {
+  if (!state.auth || state.syncing) return;
+  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+  const due = state.timerStart ? BEAT_RUNNING_MS : BEAT_IDLE_MS;
+  if (Date.now() - lastSyncTry < due) return;
+  queueSync(0);
+}
+setInterval(syncHeartbeat, BEAT_TICK_MS);
+
+/* Coming back to the tab is worth a round trip on its own: whatever is on
+   screen was painted before the phone was picked up, and a timer that stopped
+   in between is exactly what the reader is about to look at. */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') queueSync(0);
+});
+
 /* Asks the server for a closer figure. A cached answer for the same text is
    used without a request, which is what keeps this affordable — a repeated
    breakfast costs nothing after the first time. */
@@ -1241,6 +1283,9 @@ function warmDeckSummary() {
 
 async function syncNow() {
   if (!state.auth || state.syncing) return;
+  // Stamped here rather than in the heartbeat, so a device being typed into is
+  // never also polled — any sync at all resets the quiet clock.
+  lastSyncTry = Date.now();
   state.syncing = true;
   setNet('syncing', '');
   const sent = collectChanges();
