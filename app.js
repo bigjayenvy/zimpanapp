@@ -4461,10 +4461,66 @@ function chatFacts() {
       note: e.note || undefined
     }));
 
+  /* The figures the app itself puts on screen, worked out here the same way
+     the dials work them out. Without these the assistant was handed nothing
+     but text, and answered a question about calories burned versus consumed
+     with "the log doesn't hold calorie figures on either side" — true of what
+     we were sending it, and plainly false to someone looking at the two dials
+     saying exactly that. A number the app shows and the assistant cannot see
+     is worse than one neither has.
+
+     Per day rather than as a total, because almost every question about a
+     balance is really about a stretch of days, and a total cannot be taken
+     apart again. */
+  const dates = [...new Set(state.entries.filter((e) => inWindow(e.date)).map((e) => e.date))]
+    .sort().reverse().slice(0, CHAT_DAYS);
+  const daily = dates.map((d) => {
+    const rows = state.entries.filter((e) => e.date === d);
+    const burn = burnFor(rows, state.weightKg, 1, [d]);
+    const food = foodReport(rows, state.money.filter((m) => m.date === d), 1);
+    const macros = food.ai || food.local || null;
+    const eaten = Math.round(food.kcal || 0);
+    const sleep = rows.filter(isSleepRow).reduce((t, r) => t + (span(r) || 0), 0);
+    return {
+      date: d,
+      burnedMovingKcal: burn.kcal,
+      workoutMinutes: burn.minutes || undefined,
+      steps: burn.steps || undefined,
+      burnedAtRestKcal: burn.restKcal,
+      eatenKcal: eaten,
+      proteinG: macros ? Math.round(macros.protein) : undefined,
+      carbsG: macros ? Math.round(macros.carbs) : undefined,
+      fatG: macros ? Math.round(macros.fat) : undefined,
+      // Positive means more spent than eaten. Named rather than left as "net",
+      // which reads either way round and would be guessed at.
+      netDeficitKcal: burn.kcal + burn.restKcal - eaten,
+      refinedByAi: food.ai ? true : undefined,
+      sleepMinutes: sleep || undefined
+    };
+  });
+
+  const sum = (k) => daily.reduce((t, d) => t + (d[k] || 0), 0);
+  /* The wellbeing reading behind the report cards, so "how am I doing" can be
+     answered with the app's own four dimensions rather than reinvented. */
+  const readings = dimensionReadings(wellbeing(state.entries.filter((e) => inWindow(e.date)), state.steps), dates.length || 1)
+    .map((r) => ({ dimension: r.label, minutesLogged: r.total, status: r.status, reading: r.note }));
+
   const bal = moneyStatus(moneyAll());
   return {
     today: to,
     window: { from, to, days: CHAT_DAYS },
+    /* Spelled out, because the assistant has no other way to know these are
+       estimates read from typed descriptions rather than anything measured. */
+    energyNote: 'Calories are estimates. Food is read from what was typed; movement is priced by MET table unless refinedByAi is true, in which case a model re-read the description. Rest is about 22 kcal per kg per day.',
+    daily,
+    energyTotals: {
+      daysWithEntries: daily.length,
+      burnedMovingKcal: sum('burnedMovingKcal'),
+      burnedAtRestKcal: sum('burnedAtRestKcal'),
+      eatenKcal: sum('eatenKcal'),
+      netDeficitKcal: sum('netDeficitKcal')
+    },
+    wellbeing: readings,
     currency: currency().code,
     weightKg: state.weightKg || null,
     // Named so the model does not read a capped list as the whole of it.
@@ -4623,7 +4679,7 @@ function chatBody(closeAct) {
   /* Openers rather than an empty box. Nobody's first instinct is to know what
      an assistant over their own diary can be asked, and these are the questions
      the log can actually answer well. */
-  const seeds = ['What did I eat yesterday?', 'Where did my time go this week?', 'What am I spending most on?', 'How has my sleep been?'];
+  const seeds = ['Am I burning more than I eat?', 'Where did my time go this week?', 'What am I spending most on?', 'How has my sleep been?', 'How do I edit a category?'];
 
   return `
   <div class="chat">
@@ -4631,7 +4687,7 @@ function chatBody(closeAct) {
       <span class="chat-mark" aria-hidden="true">${nodeIcon('pulse', 18)}</span>
       <div class="chat-title">
         <strong>Chat with Zimpan</strong>
-        <span>Asks nothing of the world — only of what you have logged.</span>
+        <span>Your log, and how this app works. Nothing beyond that.</span>
       </div>
       ${canSpeak() ? `<button type="button" class="chat-icon${c.speak ? ' is-on' : ''}" data-act="chat-speak"
         aria-pressed="${c.speak}" title="${c.speak ? 'Replies are read aloud' : 'Replies stay silent'}"
@@ -4642,7 +4698,7 @@ function chatBody(closeAct) {
     <div class="chat-log" data-chat-log>
       ${empty ? `
         <div class="chat-empty">
-          <p>Ask about anything you have logged — the last ${CHAT_DAYS} days are what it can see.</p>
+          <p>Ask about anything you have logged — the last ${CHAT_DAYS} days are what it can see — or about how the app works.</p>
           <div class="chat-seeds">
             ${seeds.map((q) => `<button type="button" class="chat-seed" data-act="chat-seed" data-q="${esc(q)}">${esc(q)}</button>`).join('')}
           </div>
@@ -7182,6 +7238,7 @@ function render() {
     mPaintTop();
     mPaintBars();
     paintDeck();
+    paintChatLog();
     return;
   }
 
@@ -7226,6 +7283,7 @@ function render() {
   paintBusy();
   // The tree was just replaced, so the scroll-driven classes have to be put back.
   paintScrollChrome();
+  paintChatLog();
   // The dialog exists to be typed in, so put the caret there straight away.
   const note = root.querySelector('[data-k="note-draft"]');
   if (note && document.activeElement !== note) note.focus();
@@ -11611,6 +11669,13 @@ function deckGo(i) {
   if (!track) return;
   const slides = track.querySelectorAll('.deck-slide');
   const n = Math.max(0, Math.min(slides.length - 1, i));
+  /* Where you asked to be, recorded before the glide rather than after it.
+     The scroll is animated, and paintDeck repaints the track at whatever index
+     it holds — so a summary landing while the deck was still gliding used to
+     cancel the move and put you back on the card you had just left. The dots
+     move with it, which is the honest feedback anyway. */
+  deckIndex = n;
+  deckScroll = 0;
   track.scrollTo({ left: slides[n].offsetLeft, behavior: 'smooth' });
 }
 
@@ -11640,10 +11705,43 @@ function paintDeck() {
   root.querySelectorAll('.deck-bar').forEach((b, i) => b.classList.toggle('is-on', i === deckIndex));
 }
 
+/* ── keeping your place in the chat ──
+
+   .chat-log is an inner scroller and render() replaces the tree beneath it, so
+   its scrollTop went back to zero on every render — and a render arrives on
+   its own while the panel is open, from the sync heartbeat. Mid-answer that
+   threw the reader back to the first line of a long reply.
+
+   Pinning to the end is the other half of it. A render that nobody asked for
+   must not move the reader, so the pin follows wherever they scrolled to. A
+   new turn does re-take it, and should: a turn only ever appears because they
+   just asked something, and the answer to it is the thing they want to see. */
+let chatScroll = 0;
+let chatPinned = true;
+let chatTurns = 0;
+
+function paintChatLog() {
+  const log = root.querySelector('[data-chat-log]');
+  if (!log) { chatScroll = 0; chatPinned = true; chatTurns = 0; return; }
+  const turns = state.chat.messages.length + (state.chat.busy ? 1 : 0);
+  if (turns !== chatTurns) { chatTurns = turns; chatPinned = true; }
+  if (chatPinned) log.scrollTop = log.scrollHeight;
+  else log.scrollTop = chatScroll;
+  chatScroll = log.scrollTop;
+}
+
 /* Bound once, filtered to the deck: the track only exists while the report is
    open, and re-binding on every render would stack listeners. */
 root.addEventListener('scroll', (ev) => {
   const track = ev.target;
+  /* Reading back through the conversation. "At the end" has slack in it
+     because a scroller sitting on a fractional height never reports an exact
+     zero, and an off-by-one pixel would silently drop the pin. */
+  if (track.matches && track.matches('.chat-log')) {
+    chatScroll = track.scrollTop;
+    chatPinned = track.scrollHeight - track.scrollTop - track.clientHeight < 40;
+    return;
+  }
   /* Reading down a card. Recorded here rather than read off the DOM at render
      time, because by then the tree that held it is already gone. */
   if (track.matches && track.matches('.deck-body')) { deckScroll = track.scrollTop; return; }
