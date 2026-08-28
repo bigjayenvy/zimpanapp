@@ -3594,12 +3594,27 @@ function stickyBar(v) {
   </div>`;
 }
 
-// Sits above the bottom bar rather than over it, so it never covers a destination.
+/* Sits above the bottom bar rather than over it, so it never covers a
+   destination. Ask takes the top slot and back-to-top the one below, which is
+   why they share a column rather than each being fixed on their own: the
+   column keeps back-to-top's place reserved while it is hidden, so Ask holds
+   still instead of hopping 54px the first time the page is scrolled.
+
+   Only the full layout reaches this — the phone's takeover carries Ask in its
+   tab bar. On a phone in full view it is the only way in at all, because
+   .appbar-cta is display:none below 720px and the header's button is not
+   there to fall back to. */
 function backToTop() {
   return `
-  <button class="backtotop no-print" data-backtotop data-act="scroll-top" aria-label="Back to top">
-    ${NAV_ICONS.up}
-  </button>`;
+  <div class="fabs no-print">
+    ${state.aiEstimates ? `
+    <button class="fab-ask" data-act="chat-open">
+      ${nodeIcon('pulse', 16)}<span>Ask Zimpan</span>
+    </button>` : ''}
+    <button class="backtotop" data-backtotop data-act="scroll-top" aria-label="Back to top">
+      ${NAV_ICONS.up}
+    </button>
+  </div>`;
 }
 
 function header(v) {

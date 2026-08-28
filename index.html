@@ -858,16 +858,48 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     font-size: 12px; color: var(--color-neutral-700);
   }
 
-  /* — back to top —
+  /* — the floating column: Ask, then back to top —
      Sits above the bottom bar rather than over it, so it never covers a
      destination. Present at every width; the long money page earns it on a
-     desktop too. */
-  .backtotop {
+     desktop too.
+
+     One fixed column rather than two separately fixed buttons, because
+     back-to-top comes and goes with scroll position and Ask must not move when
+     it does. A hidden flex child still occupies its track, so the slot below
+     Ask stays reserved and the pill holds still.
+
+     pointer-events are handed back to the children only: the column is as wide
+     as the pill and as tall as both buttons plus the gap, and none of that
+     empty space has any business swallowing clicks meant for the page. */
+  .fabs {
     position: fixed; right: 16px; bottom: 20px; z-index: 46;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+    pointer-events: none;
+  }
+  .fabs > * { pointer-events: auto; }
+
+  /* Labelled rather than another circle: on a phone in full view this is the
+     only way into the chat, since .appbar-cta is hidden below 720px, and an
+     unlabelled icon is a poor thing to make the only door. Darker than
+     back-to-top so the two read as different actions, and both follow the
+     accent tokens, so the money tracker takes them into green unaided. */
+  .fab-ask {
+    display: inline-flex; align-items: center; gap: 8px;
+    height: 44px; padding: 0 16px; border: 0; border-radius: 999px;
+    background: var(--color-accent-900); color: #fff; cursor: pointer;
+    font-family: var(--font-body); font-size: 13px; font-weight: 600;
+    white-space: nowrap;
+    box-shadow: 0 0 0 2px var(--color-bg), 0 2px 10px color-mix(in srgb, #2b2b2d 32%, transparent);
+  }
+  .fab-ask svg { width: 16px; height: 16px; display: block; }
+  .fab-ask:hover { background: var(--color-accent-700); }
+  .fab-ask:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+
+  .backtotop {
     width: 44px; height: 44px; border-radius: 50%; border: 0;
     background: var(--color-accent-700); color: #fff;
     display: flex; align-items: center; justify-content: center; cursor: pointer;
-    box-shadow: 0 2px 10px color-mix(in srgb, #2b2b2d 32%, transparent);
+    box-shadow: 0 0 0 2px var(--color-bg), 0 2px 10px color-mix(in srgb, #2b2b2d 32%, transparent);
     opacity: 0; visibility: hidden; transform: translateY(6px);
     transition: opacity .18s ease, transform .18s ease, visibility .18s;
   }
@@ -879,7 +911,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   /* Clears the fixed bottom bar. Declared after the base rule rather than up in
      the phone block, which comes earlier in this file and would lose to it. */
   @media (max-width: 720px) {
-    .backtotop { bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
+    .fabs { bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
   }
 
   /* — report toolbar —
