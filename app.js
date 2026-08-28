@@ -410,6 +410,7 @@ function save() {
       timerUpdatedAt: state.timerUpdatedAt,
       setupDone: state.setupDone, mClassic: state.mClassic,
       deductAlways: state.deductAlways,
+      refineAlways: state.refineAlways,
       entryMode: state.entryMode,
       tombstones: state.tombstones, dirty: state.dirty,
       lastSyncAt: state.lastSyncAt, account: state.account,
@@ -473,6 +474,7 @@ const API = {
   estimate: (text) => api('/api/estimate', { method: 'POST', body: { text } }),
   deckSummary: (facts) => api('/api/deck-summary', { method: 'POST', body: { facts } }),
   chat: (history, facts) => api('/api/chat', { method: 'POST', body: { history, facts } }),
+  estimateBurn: (text, weightKg, minutes) => api('/api/estimate-burn', { method: 'POST', body: { text, weightKg, minutes } }),
   donateClick: () => api('/api/donate-click', { method: 'POST', body: {} })
 };
 
@@ -645,6 +647,10 @@ const state = {
   calOpen: null,
   // Whether the once-a-day "what happened yesterday" offer is on screen.
   recapAsk: false,
+  /* The refine question: what is being asked about, whether "every time" is
+     ticked while it is open, and the standing answer once it has been. */
+  refineAsk: null, refineRemember: false, aiPending: null,
+  refineAlways: stored.refineAlways === true || stored.refineAlways === false ? stored.refineAlways : null,
   /* "Chat with Zimpan". The transcript lives here and nowhere else — not on the
      server, not in localStorage — so closing the app ends the conversation.
      `speak` is whether replies are read aloud; it is remembered per browser. */
@@ -2306,8 +2312,11 @@ function entryEnergy(e) {
   const met = METS.find((m) => m.re.test(text));
   if (met) {
     const kg = Number(state.weightKg) || DEFAULT_WEIGHT_KG;
-    const kcal = Math.round(met.met * kg * (mins / 60));
-    return kcal ? { kind: 'burn', kcal, label: `~${kcal.toLocaleString('en-US')} kcal burned` } : null;
+    /* A refined reading replaces the table's, exactly as it does for food: two
+       figures for one workout is not a second opinion. */
+    const ai = burnEstimateFor(e);
+    const kcal = ai ? ai.kcal : Math.round(met.met * kg * (mins / 60));
+    return kcal ? { kind: 'burn', kcal, refined: !!ai, label: `~${kcal.toLocaleString('en-US')} kcal burned` } : null;
   }
 
   // Eaten, not bought: a grocery run has no business wearing a "kcal eaten" chip.
@@ -2342,6 +2351,52 @@ function entryEnergy(e) {
    it insists on one — so a row's figure cannot change depending on which range
    happens to be on screen. Memoised per render because the entry list asks for
    the same day once per row. */
+/* A workout's refined figure, cached in the same map the meals use.
+
+   The key is prefixed so the two cannot collide, and carries the weight and the
+   minutes as well as the text: the same description at a different weight is a
+   different number, and quietly reusing the old one would be wrong in the
+   direction nobody would check. Prefixing rather than a second map means it
+   syncs to the other devices with no new column — the server stores whatever
+   keys it is given. */
+const burnKeyOf = (row) => {
+  const text = [String(row.activity || '').trim(), String(row.note || '').trim()].filter(Boolean).join(': ');
+  if (!text) return null;
+  const kg = Number(state.weightKg) || DEFAULT_WEIGHT_KG;
+  return 'b:' + textKey(`${text}|${kg}|${span(row) || 0}`);
+};
+const burnEstimateFor = (row) => {
+  const k = burnKeyOf(row);
+  const hit = k ? state.aiCache[k] : null;
+  return hit && hit.kcal ? hit : null;
+};
+
+async function refineBurn(id) {
+  const row = state.entries.find((r) => r.id === id);
+  if (!row) return;
+  const key = burnKeyOf(row);
+  if (!key || state.aiCache[key]) { render(); return; }
+  const text = [String(row.activity || '').trim(), String(row.note || '').trim()].filter(Boolean).join(': ');
+
+  state.aiBusy = 'burn';
+  state.aiError = '';
+  render();
+  try {
+    const res = await API.estimateBurn(text, Number(state.weightKg) || DEFAULT_WEIGHT_KG, span(row) || 0);
+    state.aiCache[key] = Object.assign({}, res.estimate, { at: Date.now() });
+    capAiCache();
+    state.dirty.ai = true;
+    writeJson(AI_CACHE_KEY, state.aiCache);
+    queueSync(0);
+    flash(`Estimated · ${res.estimate.kcal.toLocaleString('en-US')} kcal burned`);
+  } catch (err) {
+    state.aiError = err.message || 'Could not get an estimate just now.';
+  } finally {
+    state.aiBusy = null;
+    render();
+  }
+}
+
 function buildDayFood(date) {
   const rows = state.entries.filter((r) => r.date === date);
   return rows.length ? foodReport(rows, [], [date]) : null;
@@ -3776,6 +3831,8 @@ const ICON_PATHS = {
     + '<path d="M15.8 9.4a3.7 3.7 0 0 1 0 5.2"/><path d="M18.4 6.8a7.4 7.4 0 0 1 0 10.4"/>',
   mute: '<path d="M4.4 9.4h3.4L12.6 5.4v13.2L7.8 14.6H4.4Z" stroke-linejoin="round"/>'
     + '<path d="M16.2 10.2 20.6 14.6M20.6 10.2 16.2 14.6"/>',
+  history: '<path d="M4.4 12a7.6 7.6 0 1 0 2.3-5.4"/><path d="M3.6 4.4v4.2h4.2"/>'
+    + '<path d="M12 8.1V12l2.9 1.7"/>',
   shield: '<path d="M12 3.2 19.4 6v6c0 4.4-3 7.3-7.4 8.8C7.6 19.3 4.6 16.4 4.6 12V6Z" stroke-linejoin="round"/>'
     + '<path d="M9.2 12.2 11.3 14.3 15 10.4"/>',
   trash: '<path d="M4.6 6.8h14.8"/><path d="M9.4 6.8V5.2a1.6 1.6 0 0 1 1.6-1.6h2a1.6 1.6 0 0 1 1.6 1.6v1.6"/>'
@@ -4314,22 +4371,34 @@ function maybeAskRecap() {
 
 function recapDialog() {
   if (!state.recapAsk) return '';
-  return `
-    <div style="position:fixed;inset:0;background:color-mix(in srgb, var(--color-neutral-900) 55%, transparent);display:flex;align-items:safe center;justify-content:safe center;padding:20px;z-index:65;overflow:auto;"
-         data-backdrop="recap-no">
-      <div class="blueprint" style="width:420px;max-width:100%;margin:auto;padding:26px 26px 22px;background:var(--color-bg);text-align:center;">
-        <div style="width:54px;height:54px;margin:0 auto 14px;border-radius:50%;display:grid;place-items:center;
-                    background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-accent-700);">${nodeIcon('calendar', 24)}</div>
-        <h4 style="margin:0 0 6px;">Would you like to know what happened yesterday?</h4>
-        <p style="margin:0 0 18px;font-size:13.5px;line-height:1.6;color:var(--color-neutral-700);">
-          Your report cards for ${esc(dayLabel(mShiftIso(iso(new Date()), -1)))}, in the time it takes to read them.
-        </p>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-          <button class="btn btn-primary" data-act="recap-yes" style="min-height:44px;border-radius:999px;">Show me</button>
-          <button class="btn btn-secondary" data-act="recap-no" style="min-height:44px;border-radius:999px;">Not now</button>
-        </div>
-      </div>
-    </div>`;
+  const y = mShiftIso(iso(new Date()), -1);
+
+  /* What is actually there, rather than a promise that something is. "Would you
+     like to know what happened yesterday" is a better question when it can say
+     how much there is to know — and it costs a reader nothing to decline once
+     they can see it is thin. */
+  const rows = state.entries.filter((e) => e.date === y);
+  const cash = state.money.filter((e) => e.date === y);
+  const mins = rows.reduce((a, e) => a + (span(e) || 0), 0);
+  const out = cash.reduce((a, e) => a + (Number(e.out) || 0), 0);
+  const bits = [];
+  if (mins) bits.push(`${dur(mins)} logged`);
+  if (rows.length) bits.push(`${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}`);
+  if (out) bits.push(`${amount(out)} out`);
+
+  return lightbox({
+    icon: 'history',
+    tone: 'var(--color-accent)',
+    kicker: dayLabel(y),
+    title: 'Would you like to know what happened yesterday?',
+    closeAct: 'recap-no',
+    body: `
+      ${bits.length ? `<div class="lb-stats">${bits.map((t) => `<span>${esc(t)}</span>`).join('')}</div>` : ''}
+      <p style="text-align:center;">Your report cards, in the time it takes to read them.</p>`,
+    actions: `
+      <button class="btn btn-secondary" data-act="recap-no">Not now</button>
+      <button class="btn btn-primary" data-act="recap-yes">Show me</button>`
+  });
 }
 
 /* What the assistant is given to answer from.
@@ -5355,19 +5424,16 @@ function foodBlock(food, scope, canRefine) {
     ? `Roughly ${ai.kcal.toLocaleString('en-US')} kcal — around ${ai.protein}g protein, ${ai.carbs}g carbs, ${ai.fat}g fat.`
     : food.nutrition;
 
-  /* Hidden once there is nothing left for it to do. Estimates now happen by
-     themselves as soon as a note is written, so for anyone who has consented
-     the button is a control that has already fired — asked for, and removed.
+  /* The button is gone. Refining is asked for when the note that makes it
+     worth asking is written, which is the moment it means something — a
+     control sitting in a report, days later and out of context, was a worse
+     way to offer the same thing.
 
-     It stays in the two cases where it is still the only way through: before
-     consent, where it is how someone opts in, and when an estimate has not
-     landed, where it is the retry. */
-  const done = !!ai && state.aiConsent;
-  const refine = done || !canRefine || !state.aiEstimates || !food.detail ? '' : `
+     What stays is the reporting: that a figure came from an estimate, what the
+     local reading was underneath it, and that a request failed if one did. */
+  const refine = !state.aiEstimates || !food.detail ? '' : `
             <div style="margin-top: 9px; display: flex; align-items: center; gap: 9px; flex-wrap: wrap;">
-              <button class="drawer-btn btn-refine" data-act="refine-food" data-scope="${esc(scope)}"${busy ? ' disabled' : ''}>
-                ${busy ? '<span class="spinner"></span> Checking…' : (ai ? 'Check again' : 'Refine with AI')}
-              </button>
+              ${busy ? '<span style="font-size: 11px; color: var(--color-neutral-600); display: inline-flex; align-items: center; gap: 7px;"><span class="spinner"></span> Checking with AI…</span>' : ''}
               ${ai ? `<span style="font-size: 11px; color: var(--color-neutral-600);">Local reading was ${food.local.kcal.toLocaleString('en-US')} kcal</span>` : ''}
               ${state.aiError && state.aiBusy === null ? `<span style="font-size: 11px; color: var(--color-text);">${esc(state.aiError)}</span>` : ''}
             </div>`;
@@ -7125,6 +7191,7 @@ function render() {
   ${state.reportOpen ? reportSheet() : ''}
   ${pickDeleteDialog()}
   ${notePromptDialog()}
+  ${refineAskDialog()}
   ${chatDialog()}
   ${chatConsentDialog()}
   ${recapDialog()}
@@ -7517,30 +7584,94 @@ const promptFor = (kind, row, q) => ({
   placeholder: q.placeholder, activity: row.activity
 });
 
-/* Refining without being asked to, once the note that makes it worth asking has
-   been written.
+/* ── being asked, rather than told ──
 
-   Consent is required and never solicited here. Someone who has already agreed
-   to estimates gets them; someone who has not is left alone rather than met
-   with a consent dialog in the middle of logging their lunch — the button in
-   the insights block is still there for them, and is how they would opt in.
+   Refining used to happen silently for anyone who had consented, with a button
+   in the insights block for everyone else. Two ways in for one thing, and the
+   quiet one gave no sign it had run.
 
-   Nothing is spent twice: a day whose text is already in the cache returns
-   without a request, which is the same gate the button has always used. The
-   estimate is asked for the row's own day, because that is the unit the figure
-   is apportioned over. */
-function autoRefine(id) {
-  if (!state.aiConsent || !state.aiEstimates) return;
+   Now it asks, once, when the note that makes it worth asking has been
+   written — and only for the two kinds of entry an estimate can say anything
+   useful about. "Every time" is offered because this is a question that would
+   otherwise arrive after every meal, which is the same reason the money-out
+   question carries one.
+
+   Nothing is spent twice: a day whose text is already in the cache never
+   raises the ask at all. */
+function askRefine(id) {
+  if (!state.aiEstimates) return false;
   const row = state.entries.find((r) => r.id === id);
-  if (!row || !isEatenRow(row)) return;
-  /* Built fresh, never off the per-render memo. updateEntry defers its repaint
-     through scheduleRender, so at this moment the memo still describes the day
-     as it was before the note landed — asking from it spent a request on the
-     old text and filed the answer under the old key, leaving the note that
-     triggered it still unrefined. */
-  const day = buildDayFood(row.date);
-  if (!day || !day.detail || state.aiCache[day.key]) return;
-  askEstimate(day.detail, day.key, 'auto');
+  if (!row) return false;
+  const q = matchFollowUp(row);
+  const kind = q && (q.key === 'food' || q.key === 'workout') ? q.key : null;
+  if (!kind) return false;
+
+  /* Each kind is gated on its own cache. Built fresh for food, never off the
+     per-render memo: updateEntry defers its repaint through scheduleRender, so
+     at this moment the memo still describes the day as it was before the note
+     landed — asking from it spent a request on the old text and filed the
+     answer under the old key. */
+  if (kind === 'food') {
+    const day = buildDayFood(row.date);
+    if (!day || !day.detail || state.aiCache[day.key]) return false;
+  } else {
+    const k = burnKeyOf(row);
+    if (!k || state.aiCache[k]) return false;
+  }
+
+  // A standing answer settles it without a dialog, either way.
+  if (state.refineAlways === false) return false;
+  if (state.refineAlways === true) { runRefine(kind, row); return false; }
+
+  state.refineRemember = false;
+  state.refineAsk = { id, date: row.date, kind, activity: row.activity || '' };
+  return true;
+}
+
+function refineAnswer(yes) {
+  const ask = state.refineAsk;
+  if (!ask) return;
+  if (state.refineRemember) state.refineAlways = yes;
+  state.refineAsk = null;
+  state.refineRemember = false;
+  save();
+  if (!yes) { render(); return; }
+  // Consent is a separate question and still has to be asked first.
+  if (!state.aiConsent) { state.aiAsking = 'auto'; state.aiPending = ask; render(); return; }
+  runRefine(ask.kind, state.entries.find((r) => r.id === ask.id) || { date: ask.date });
+}
+
+// One door to both estimators, so every caller picks the right one by the
+// kind of entry rather than by remembering which function to call.
+function runRefine(kind, row) {
+  if (!row) return;
+  if (kind === 'workout') refineBurn(row.id);
+  else refineDay(row.date);
+}
+
+function refineAskDialog() {
+  const a = state.refineAsk;
+  if (!a) return '';
+  const food = a.kind === 'food';
+  return lightbox({
+    icon: food ? 'plate' : 'flame',
+    tone: food ? 'var(--zg-donate)' : 'var(--zg-strong)',
+    kicker: a.activity ? a.activity : (food ? 'Meal logged' : 'Workout logged'),
+    title: food ? 'Get a closer calorie estimate?' : 'Get a closer estimate of that effort?',
+    closeAct: 'refine-no',
+    body: `
+      <p>${food
+        ? 'The built-in reading prices what you wrote against a table of typical servings. Claude reads the same words and usually gets nearer — brands, portions and dishes it can name.'
+        : 'The built-in reading prices the activity and how long it ran. Claude reads what you wrote about it and usually gets nearer.'}</p>
+      <button class="dq-switch" data-act="refine-remember" role="switch" aria-checked="${state.refineRemember}"
+        style="margin:14px 0 0;">
+        <span class="dq-track"><span class="dq-knob"></span></span>
+        <span>Do this every time — stop asking</span>
+      </button>`,
+    actions: `
+      <button class="btn btn-secondary" data-act="refine-no">Not now</button>
+      <button class="btn btn-primary" data-act="refine-yes">Yes, refine it</button>`
+  });
 }
 
 function closeFollowUp(saveIt) {
@@ -7561,8 +7692,8 @@ function closeFollowUp(saveIt) {
       if (p.kind === 'entries') {
         updateEntry(p.id, { note: text.slice(0, 500) });
         // The note is what an estimate reads, so the moment it lands is the
-        // moment there is something new to ask about.
-        autoRefine(p.id);
+        // moment there is something worth asking about.
+        askRefine(p.id);
       } else {
         /* Raised before the write, because updateMoney renders — asking after
            it would set the state and then nobody would draw it.
@@ -7725,13 +7856,21 @@ const ACTIONS = {
   },
   'ai-accept': () => {
     const scope = state.aiAsking;
+    const pending = state.aiPending;
     state.aiConsent = true;
     state.aiAsking = null;
+    state.aiPending = null;
     writeJson(AI_CONSENT_KEY, true);
     render();
+    // 'auto' means the refine question raised this, and it remembers what it
+    // was about — which entry, and which of the two estimators it needs.
+    if (scope === 'auto') {
+      if (pending) runRefine(pending.kind, state.entries.find((r) => r.id === pending.id) || { date: pending.date });
+      return;
+    }
     if (scope) refineFood(scope);
   },
-  'ai-decline': () => { state.aiAsking = null; render(); },
+  'ai-decline': () => { state.aiAsking = null; state.aiPending = null; render(); },
 
   'donate-close': () => { state.donateOpen = false; render(); },
   'donate-go': () => {
@@ -8023,6 +8162,10 @@ const ACTIONS = {
     if (state.chat.draft.trim()) chatSend();
   },
   'chat-consent-no': () => { state.chatAsking = false; render(); },
+
+  'refine-yes': () => refineAnswer(true),
+  'refine-no': () => refineAnswer(false),
+  'refine-remember': () => { state.refineRemember = !state.refineRemember; render(); },
 
   'recap-yes': () => {
     markRecapSeen();
@@ -9200,12 +9343,11 @@ function calBreakdown(kind, dates, report, scope, closeAct) {
      much more expensive one. */
   const canRefine = food && state.aiEstimates && report && report.detail && dates.length === 1;
   const busy = state.aiBusy === scope;
-  const refine = !canRefine ? '' : `
+  // Same as the desktop: the button is gone, the reporting stays. Refining is
+  // asked for at the moment the note is written, not from a panel days later.
+  const refine = !canRefine && !busy && !ai && !state.aiError ? '' : `
   <div style="margin:14px 0 0;display:flex;flex-direction:column;gap:8px;">
-    <button class="btn btn-secondary" data-act="refine-food" data-scope="${esc(scope)}"${busy ? ' disabled' : ''}
-      style="width:100%;min-height:46px;font-size:14.5px;display:inline-flex;align-items:center;justify-content:center;gap:9px;">
-      ${busy ? '<span class="spinner"></span> Checking…' : (ai ? 'Check again' : 'Refine with AI')}
-    </button>
+    ${busy ? '<span style="font-size:12px;color:#756f88;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:8px;"><span class="spinner"></span> Checking with AI…</span>' : ''}
     ${ai ? `<span style="font-size:11.5px;color:#9995ab;text-align:center;">Local reading was ${localTotal.toLocaleString('en-US')} kcal.</span>` : ''}
     ${state.aiError && !busy ? `<span style="font-size:11.5px;color:#8a2f4a;text-align:center;">${esc(state.aiError)}</span>` : ''}
   </div>`;
@@ -10286,6 +10428,7 @@ function mobileApp() {
        it, so it has to reach every layout that can ask — and it is already
        responsive, so there is nothing to rebuild. -->
   ${aiConsentDialog()}
+  ${refineAskDialog()}
   ${mChatSheet()}
   ${chatConsentDialog()}
   ${recapDialog()}
@@ -11365,6 +11508,7 @@ document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') { ev.preventDefault(); state.pickOpen = null; state.pickQuery = ''; render(); return; }
   }
   // Topmost first: the follow-up dialog sits above the report sheet.
+  if (ev.key === 'Escape' && state.refineAsk) { ACTIONS['refine-no'](); return; }
   if (ev.key === 'Escape' && state.chat.open) { ACTIONS['chat-close'](); return; }
   if (ev.key === 'Escape' && state.calOpen) { ACTIONS['cal-close'](); return; }
   if (ev.key === 'Escape' && state.pickDelete) { ACTIONS['pick-del-cancel'](); return; }

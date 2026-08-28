@@ -956,6 +956,16 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .lb-body p:last-child { margin-bottom: 0; }
   .lb-acts { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
   .lb-acts .btn { flex: 1 1 auto; min-height: 46px; border-radius: 999px; justify-content: center; }
+  /* Figures worth reading before deciding to read more. Chips rather than a
+     sentence: three short facts scan in a glance where a clause does not. */
+  .lb-stats {
+    display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; margin: 0 0 12px;
+  }
+  .lb-stats span {
+    padding: 5px 11px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    background: color-mix(in srgb, var(--color-accent) 11%, transparent);
+    color: var(--color-accent-700);
+  }
   .lb-foot { margin: 12px 0 0; font-size: 11px; line-height: 1.5; color: var(--color-neutral-600); }
 
   @media (max-width: 430px) {

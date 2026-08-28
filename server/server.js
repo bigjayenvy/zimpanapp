@@ -15,7 +15,7 @@ import {
 import { changesSince, applyChanges, Invalid, CURRENCIES } from './sync.js';
 import { verifyGoogleIdToken } from './google.js';
 import { sendResetEmail } from './mail.js';
-import { estimateNutrition, summariseDeck, chatReply, aiConfigured } from './ai.js';
+import { estimateNutrition, estimateBurn, summariseDeck, chatReply, aiConfigured } from './ai.js';
 import {
   overview as adminOverview, users as adminUsers, donationsFor,
   setRole, addDonation, removeDonation, noteDonateClick, touchSeen, isAdminRole, ROLES
@@ -423,6 +423,31 @@ app.post('/api/estimate', requireUser, wrap(async (req, res) => {
     res.json({ estimate: await estimateNutrition(text) });
   } catch (err) {
     // The reason is already in the log; the message here is safe to show.
+    res.status(502).json({ error: err.message });
+  }
+}));
+
+/* The other half of the ledger. Same shape and same limit as the nutrition
+   estimate — it is the same kind of request about the same kind of text, and
+   sharing the ceiling keeps one from starving the other. */
+app.post('/api/estimate-burn', requireUser, wrap(async (req, res) => {
+  if (!aiConfigured()) return res.status(503).json({ error: 'AI estimates are not configured on this server.' });
+
+  const limited = rateLimit({ key: `estimate:${req.user.id}`, limit: 60, windowMs: 60 * 60 * 1000 });
+  if (!limited.ok) return res.status(429).json({ error: `That is a lot of estimates. Try again ${retryLabel(limited.retryAfterMs)}.` });
+
+  const body = req.body || {};
+  const text = String(body.text || '').trim();
+  if (!text) return res.status(400).json({ error: 'Nothing to estimate.' });
+  if (text.length > 1200) return res.status(400).json({ error: 'That is too much text to estimate in one go.' });
+
+  try {
+    const estimate = await estimateBurn(text, body.weightKg, body.minutes);
+    // null means it came back outside what is physically plausible; the local
+    // MET reading is still there and still valid, so this is not an error.
+    if (!estimate) return res.status(422).json({ error: 'That estimate did not look right, so it was not used.' });
+    res.json({ estimate });
+  } catch (err) {
     res.status(502).json({ error: err.message });
   }
 }));

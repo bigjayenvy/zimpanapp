@@ -409,3 +409,92 @@ export async function chatReply(history, facts) {
   if (!text) throw new Error('The assistant came back empty.');
   return { text, truncated: res.stop_reason === 'max_tokens' };
 }
+
+/* ── what an effort actually cost ──
+
+   The MET table in app.js prices an activity by matching a word and multiplying
+   by weight and time. It cannot know that "5k in 24 minutes" is harder than a
+   jog, or what "heavy legs, 4 sets" costs. This is the same fallback the
+   nutrition estimate is, for the other side of the ledger — and it exists
+   because a Refine button that only ever refined food made the workout half of
+   the balance look finished when it was not.
+
+   Given the weight and the minutes, so the model is doing the part it is better
+   at — reading the description — and not guessing the arithmetic around it. */
+const BURN_SYSTEM = `You estimate the energy cost of a described physical activity.
+
+- You are given a description, the person's weight in kilograms, and how many minutes it ran.
+- Reply with the total kilocalories burned over those minutes, and the MET value you used.
+- Use published MET values for the activity described, adjusted for any intensity the text gives ("easy", "intervals", "5k in 24 minutes", "heavy", "4 sets").
+- Sitting still is about 1 MET. Walking is about 3.5. Running is about 9-12. Very few activities exceed 16.
+- If the text does not describe physical activity at all, use 1.5 and say so in the activity field.`;
+
+const BURN_SCHEMA = {
+  type: 'object',
+  properties: {
+    kcal: { type: 'number' },
+    met: { type: 'number' },
+    activity: { type: 'string' }
+  },
+  required: ['kcal', 'met', 'activity'],
+  additionalProperties: false
+};
+
+export async function estimateBurn(text, weightKg, minutes) {
+  if (!aiConfigured()) throw new Error('AI estimates are not configured on this server.');
+  const clean = String(text || '').trim().slice(0, MAX_TEXT);
+  if (!clean) throw new Error('Nothing to estimate.');
+  const kg = Number(weightKg) || 70;
+  const mins = Math.max(1, Math.min(1440, Number(minutes) || 1));
+
+  let res;
+  try {
+    res = await anthropic().beta.messages.create({
+      model: MODEL,
+      max_tokens: 2048,
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      system: BURN_SYSTEM,
+      output_config: Object.assign(
+        { format: { type: 'json_schema', schema: BURN_SCHEMA } },
+        effortLevel() ? { effort: effortLevel() } : {}
+      ),
+      messages: [{ role: 'user', content: `${clean}\n\nweight: ${kg} kg\nminutes: ${mins}` }]
+    }, { timeout: TIMEOUT_MS });
+  } catch (err) {
+    if (err instanceof Anthropic.RateLimitError) {
+      console.error('[zimpan] burn estimate rate limited');
+      throw new Error('The estimate service is busy. Try again shortly.');
+    }
+    if (err instanceof Anthropic.AuthenticationError) {
+      console.error('[zimpan] burn estimate rejected the API key');
+      throw new Error('The estimate service refused our credentials.');
+    }
+    if (err instanceof Anthropic.APIConnectionError) {
+      console.error(`[zimpan] burn estimate could not connect: ${err.message}`);
+      throw new Error('Could not reach the estimate service.');
+    }
+    console.error(`[zimpan] burn estimate failed${err.status ? ` (${err.status})` : ''}: ${err.message}`);
+    throw new Error('The estimate service refused the request.');
+  }
+
+  if (res.stop_reason === 'refusal') throw new Error('The estimate service declined that request.');
+
+  const block = (res.content || []).find((b) => b.type === 'text');
+  let parsed = null;
+  try { parsed = JSON.parse(block.text); } catch { parsed = null; }
+  if (!parsed) throw new Error('The estimate came back in a form we could not read.');
+
+  /* Checked, not trusted. A schema guarantees a number is a number, not that it
+     is possible: 20 METs for an hour is roughly a world record, and a figure
+     someone may act on is worse wrong than absent. The ceiling is the highest
+     honest reading for the time given rather than a flat cap. */
+  const met = num(parsed.met);
+  const kcal = num(parsed.kcal);
+  if (met === null || met < 0.8 || met > 20) return null;
+  if (kcal === null || kcal < 0) return null;
+  const ceiling = 20 * kg * (mins / 60) * 1.15;
+  if (kcal > ceiling) return null;
+
+  return { kcal: Math.round(kcal), met: Math.round(met * 10) / 10, activity: String(parsed.activity || '').slice(0, 120) };
+}
