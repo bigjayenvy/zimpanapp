@@ -5358,7 +5358,7 @@ function balanceGauges(food, burn, scope, stepDate) {
             : ''}<button class="cal-link" data-act="steps-open" data-date="${esc(stepDate)}">${burn.steps ? 'Edit your steps' : 'Add your steps'}</button>.`
             : (burn.steps ? `Includes ${burn.steps.toLocaleString('en-US')} steps across the range.` : ''), 'burn')}
         ${dial(eaten, 'var(--zg-donate)', CAL_ICONS.food, 'Calories consumed (food)',
-          food.ai ? 'Refined by AI from what you wrote.' : '', 'food')}
+          food.ai ? 'Calibrated by AI from what you wrote.' : '', 'food')}
         ${dial(rested, 'var(--color-accent-700)', CAL_ICONS.rest, 'Calories burned (at rest)',
           `Roughly burned at rest based on ${burn.assumedWeight
             ? `a default ${DEFAULT_WEIGHT_KG} kg`
@@ -5508,16 +5508,20 @@ function foodBlock(food, scope, canRefine) {
     ? `Roughly ${ai.kcal.toLocaleString('en-US')} kcal — around ${ai.protein}g protein, ${ai.carbs}g carbs, ${ai.fat}g fat.`
     : food.nutrition;
 
-  /* The button is gone. Refining is asked for when the note that makes it
-     worth asking is written, which is the moment it means something — a
-     control sitting in a report, days later and out of context, was a worse
-     way to offer the same thing.
+  /* Two ways to ask for the same thing, because they answer different moments.
+     The dialog catches you when the note is fresh, which is when it means most.
+     This is for afterwards: a day you skipped, a day you said no to, or one you
+     want read again now that the entry says more than it did.
 
-     What stays is the reporting: that a figure came from an estimate, what the
-     local reading was underneath it, and that a request failed if one did. */
+     Offered on a single day only — across a week the text handed over is every
+     meal of every day run together, a worse question than the local reading
+     already answers and a much more expensive one. */
   const refine = !state.aiEstimates || !food.detail ? '' : `
             <div style="margin-top: 9px; display: flex; align-items: center; gap: 9px; flex-wrap: wrap;">
-              ${busy ? '<span style="font-size: 11px; color: var(--color-neutral-600); display: inline-flex; align-items: center; gap: 7px;"><span class="spinner"></span> Checking with AI…</span>' : ''}
+              ${canRefine ? `<button class="drawer-btn btn-refine" data-act="refine-food" data-scope="${esc(scope)}"${busy ? ' disabled' : ''}>
+                ${busy ? '<span class="spinner"></span> Calibrating…' : (ai ? 'Calibrate again' : 'Calibrate with AI')}
+              </button>` : ''}
+              ${busy && !canRefine ? '<span style="font-size: 11px; color: var(--color-neutral-600); display: inline-flex; align-items: center; gap: 7px;"><span class="spinner"></span> Calibrating with AI…</span>' : ''}
               ${ai ? `<span style="font-size: 11px; color: var(--color-neutral-600);">Local reading was ${food.local.kcal.toLocaleString('en-US')} kcal</span>` : ''}
               ${state.aiError && state.aiBusy === null ? `<span style="font-size: 11px; color: var(--color-text);">${esc(state.aiError)}</span>` : ''}
             </div>`;
@@ -7765,7 +7769,7 @@ function refineAskDialog() {
       </button>`,
     actions: `
       <button class="btn btn-secondary" data-act="refine-no">Not now</button>
-      <button class="btn btn-primary" data-act="refine-yes">Yes, refine it</button>`
+      <button class="btn btn-primary" data-act="refine-yes">Yes, calibrate it</button>`
   });
 }
 
@@ -7849,7 +7853,7 @@ function prefsDialog() {
         [['ask', 'Ask each time'], ['true', 'Take it off'], ['false', 'Keep it aside']],
         'pref-deduct', state.deductAlways === null ? 'ask' : String(state.deductAlways))}
       ${prefsRow(
-        'Refining food and workouts',
+        'Calibrating food and workouts',
         'Whether a logged meal or effort is re-read by Claude for a closer figure.',
         [['ask', 'Ask each time'], ['true', 'Always'], ['false', 'Never']],
         'pref-refine', state.refineAlways === null ? 'ask' : String(state.refineAlways))}
@@ -9605,11 +9609,15 @@ function calBreakdown(kind, dates, report, scope, closeAct) {
      much more expensive one. */
   const canRefine = food && state.aiEstimates && report && report.detail && dates.length === 1;
   const busy = state.aiBusy === scope;
-  // Same as the desktop: the button is gone, the reporting stays. Refining is
-  // asked for at the moment the note is written, not from a panel days later.
+  // The desktop's button, in the phone's shape. The dialog still asks at the
+  // moment the note is written; this is the way back to it afterwards.
   const refine = !canRefine && !busy && !ai && !state.aiError ? '' : `
   <div style="margin:14px 0 0;display:flex;flex-direction:column;gap:8px;">
-    ${busy ? '<span style="font-size:12px;color:#756f88;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:8px;"><span class="spinner"></span> Checking with AI…</span>' : ''}
+    ${canRefine ? `<button class="btn btn-secondary" data-act="refine-food" data-scope="${esc(scope)}"${busy ? ' disabled' : ''}
+      style="width:100%;min-height:46px;font-size:14.5px;display:inline-flex;align-items:center;justify-content:center;gap:9px;">
+      ${busy ? '<span class="spinner"></span> Calibrating…' : (ai ? 'Calibrate again' : 'Calibrate with AI')}
+    </button>` : ''}
+    ${busy && !canRefine ? '<span style="font-size:12px;color:#756f88;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:8px;"><span class="spinner"></span> Calibrating with AI…</span>' : ''}
     ${ai ? `<span style="font-size:11.5px;color:#9995ab;text-align:center;">Local reading was ${localTotal.toLocaleString('en-US')} kcal.</span>` : ''}
     ${state.aiError && !busy ? `<span style="font-size:11.5px;color:#8a2f4a;text-align:center;">${esc(state.aiError)}</span>` : ''}
   </div>`;

@@ -354,7 +354,7 @@ HOW YOU ANSWER
 THE APP, FOR HOW-TO QUESTIONS
 - Two trackers side by side: the Activity Tracker for time, and the Money Tracker for money.
 - Logging time: "Track Real Time" starts a timer — type what you are doing, pick a category, press Start, press Stop when done. "Manual Entry" takes a from and to time for something already finished.
-- After an entry is saved it asks for a note. On an Eat / Drink or a Workout entry it then offers to refine the estimate with AI, which re-reads the description and replaces the table's figure.
+- After an entry is saved it asks for a note. On an Eat / Drink or a Workout entry it then offers to calibrate the estimate with AI, which re-reads the description and replaces the table's figure. The same thing is offered later as a "Calibrate with AI" button under the day's calorie figures.
 - Categories are theirs to shape: "Add a category +" makes one, and the pencil in the category picker renames or removes one.
 - Money entries record money in or money out against a purpose. Marking one off budget keeps it out of the balance while still counting as spent.
 - Steps and weight are entered by hand. Weight drives the resting-burn figure — about 22 kcal per kilogram per day — so an unset weight falls back to 70 kg.
