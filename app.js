@@ -541,6 +541,13 @@ const readJson = (key, fallback) => {
 const writeJson = (key, value) => {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch (err) { /* private mode or full */ }
 };
+/* readJson falls back on anything falsy, so a stored `false` reads back as
+   "never set" anyway. Withdrawn consent is therefore removed rather than
+   written as false: the storage then says the true thing, and there is no
+   value sitting there that only looks like a record. */
+const dropJson = (key) => {
+  try { localStorage.removeItem(key); } catch (err) { /* private mode */ }
+};
 
 // Normalised so spacing and case do not split the cache, and length-suffixed
 // so two different meals cannot collide on a short hash alone.
@@ -650,6 +657,8 @@ const state = {
   /* The refine question: what is being asked about, whether "every time" is
      ticked while it is open, and the standing answer once it has been. */
   refineAsk: null, refineRemember: false, aiPending: null,
+  /* The standing answers, laid out where they can be taken back. */
+  prefsOpen: false,
   refineAlways: stored.refineAlways === true || stored.refineAlways === false ? stored.refineAlways : null,
   /* "Chat with Zimpan". The transcript lives here and nowhere else — not on the
      server, not in localStorage — so closing the app ends the conversation.
@@ -3850,6 +3859,10 @@ const ICON_PATHS = {
     + '<path d="M12 8.1V12l2.9 1.7"/>',
   shield: '<path d="M12 3.2 19.4 6v6c0 4.4-3 7.3-7.4 8.8C7.6 19.3 4.6 16.4 4.6 12V6Z" stroke-linejoin="round"/>'
     + '<path d="M9.2 12.2 11.3 14.3 15 10.4"/>',
+  /* Two rails set to different points: the shape of a default you can move. */
+  sliders: '<path d="M4.4 8.6h8.4M17.2 8.6h2.4"/><path d="M4.4 15.4h2.4M10.8 15.4h8.8"/>'
+    + '<circle cx="15.1" cy="8.6" r="2" fill="currentColor" stroke="none"/>'
+    + '<circle cx="8.9" cy="15.4" r="2" fill="currentColor" stroke="none"/>',
   trash: '<path d="M4.6 6.8h14.8"/><path d="M9.4 6.8V5.2a1.6 1.6 0 0 1 1.6-1.6h2a1.6 1.6 0 0 1 1.6 1.6v1.6"/>'
     + '<path d="M6.6 6.8 7.5 19a1.8 1.8 0 0 0 1.8 1.6h5.4a1.8 1.8 0 0 0 1.8-1.6l.9-12.2" stroke-linejoin="round"/>'
     + '<path d="M10.4 10.4v6.2M13.6 10.4v6.2"/>',
@@ -7255,6 +7268,7 @@ function render() {
   ${body}
   <div class="no-print" style="padding: 26px 28px 10px; display: flex; align-items: center; gap: 10px 18px; flex-wrap: wrap;">
     ${legalLinks('var(--color-neutral-600)')}
+    <button class="btn btn-ghost" data-act="prefs-open" style="font-size:12.5px;padding:6px 0;">Preferences</button>
     ${isPhone() && state.mClassic ? `<button class="btn btn-secondary" data-act="m-mobile" style="font-size: 12.5px; padding: 6px 14px;">Back to the mobile app</button>` : ''}
   </div>
   ${focusPanel(v)}
@@ -7267,6 +7281,7 @@ function render() {
   ${chatDialog()}
   ${chatConsentDialog()}
   ${recapDialog()}
+  ${prefsDialog()}
   ${calBreakdownDialog()}
   ${deductDialog()}
   ${donateSheet()}
@@ -7421,7 +7436,14 @@ async function signOut() {
 function setDeep(path, value) {
   const parts = path.split('.');
   if (parts.length === 1) { state[parts[0]] = value; return; }
-  state[parts[0]] = Object.assign({}, state[parts[0]], { [parts[1]]: value });
+  /* Copied at every level on the way down rather than written through, so
+     anything comparing object identity sees the change. The depth is walked
+     instead of assumed to be two: the flow's typed times sit three deep, and
+     the old version wrote the string over their container. */
+  const at = (obj, i) => (i === parts.length - 1
+    ? Object.assign({}, obj, { [parts[i]]: value })
+    : Object.assign({}, obj, { [parts[i]]: at((obj || {})[parts[i]], i + 1) }));
+  state[parts[0]] = at(state[parts[0]], 1);
 }
 
 /* A row edit commits on `change`, which the browser fires on blur — i.e. in
@@ -7744,6 +7766,114 @@ function refineAskDialog() {
     actions: `
       <button class="btn btn-secondary" data-act="refine-no">Not now</button>
       <button class="btn btn-primary" data-act="refine-yes">Yes, refine it</button>`
+  });
+}
+
+/* ── the answers this app remembers ──
+
+   Three of its questions can be settled once and never asked again: whether a
+   spend comes off the balance, whether food and workouts are refined, and
+   whether anything may be sent to a model at all. Each is a single tap inside
+   a dialog you may never see twice — which is fine right up until you change
+   your mind, and there is nowhere to go and say so.
+
+   So every standing answer is gathered here, shown as what it currently is
+   rather than as a switch whose state you have to infer, and each one can be
+   put back to "ask me". Consent is the one that is revoked rather than
+   toggled: turning it on here would be consent given to a settings screen
+   instead of to the question that explains what is sent. */
+/* ── typing the times instead of dragging them ──
+
+   A bar is quick for "some time this evening" and hopeless for "quarter past
+   nine, exactly". Both handles land on a whole minute, so the precision was
+   always there — there was just no way to say it in numbers.
+
+   type="time" rather than a text field parsed by hand: it is what the full
+   layout's From and To already are, the platform supplies its own keypad and
+   its own idea of 12- or 24-hour, and none of that has to be reinvented here.
+
+   The span is derived the way a drag derives it — forwards from the start,
+   wrapping past midnight, held to the same cap — so a typed entry and a
+   dragged one cannot disagree about what is allowed. */
+function mTimeDialog() {
+  const t = state.m.timeEdit;
+  if (!t) return '';
+  const field = (key, label) => `
+    <label style="flex:1 1 0;min-width:0;display:block;text-align:left;">
+      <span style="display:block;font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-600);margin-bottom:5px;">${esc(label)}</span>
+      <input class="input" type="time" data-k="m-time-${key}" data-sync="m.timeEdit.${key}"
+        value="${esc(t[key])}" style="width:100%;font-size:17px;min-height:46px;">
+    </label>`;
+  return lightbox({
+    icon: 'clock',
+    tone: 'var(--color-accent)',
+    kicker: 'When was that?',
+    title: 'Type the times',
+    closeAct: 'm-time-close',
+    body: `<div style="display:flex;gap:12px;margin-top:4px;">${field('from', 'Started')}${field('to', 'Ended')}</div>`,
+    actions: `
+      <button class="btn btn-secondary" data-act="m-time-close">Cancel</button>
+      <button class="btn btn-primary" data-act="m-time-save">Set them</button>`,
+    foot: `An end before the start counts as the next morning. Anything longer than ${mDur(M_SPAN_MAX)} is trimmed to it.`
+  });
+}
+
+function prefsRow(title, note, opts, act, now) {
+  return `
+    <div class="pref-row">
+      <div class="pref-name">${esc(title)}</div>
+      <p class="pref-note">${esc(note)}</p>
+      <div class="seg pref-seg">
+        ${opts.map(([val, label]) => `
+        <label class="seg-opt"><input type="radio" name="${esc(act)}" data-act="${esc(act)}" data-v="${esc(String(val))}"${
+          String(now) === String(val) ? ' checked' : ''}><span>${esc(label)}</span></label>`).join('')}
+      </div>
+    </div>`;
+}
+
+function prefsDialog() {
+  if (!state.prefsOpen) return '';
+  const consented = state.aiConsent || state.chatConsent;
+  const asking = state.deductAlways === null && state.refineAlways === null && !consented;
+
+  return lightbox({
+    icon: 'sliders',
+    tone: 'var(--color-accent)',
+    kicker: 'Preferences',
+    title: 'What this app stops asking',
+    closeAct: 'prefs-close',
+    body: `
+      ${prefsRow(
+        'Money you spend',
+        'Whether a spend comes off your balance or is kept aside.',
+        [['ask', 'Ask each time'], ['true', 'Take it off'], ['false', 'Keep it aside']],
+        'pref-deduct', state.deductAlways === null ? 'ask' : String(state.deductAlways))}
+      ${prefsRow(
+        'Refining food and workouts',
+        'Whether a logged meal or effort is re-read by Claude for a closer figure.',
+        [['ask', 'Ask each time'], ['true', 'Always'], ['false', 'Never']],
+        'pref-refine', state.refineAlways === null ? 'ask' : String(state.refineAlways))}
+      ${consented ? `
+      <div class="pref-row">
+        <div class="pref-name">What you have allowed to be sent</div>
+        <p class="pref-note">Withdrawing this asks again the next time, with the explanation attached.</p>
+        ${state.aiConsent ? `
+        <button class="pref-revoke" data-act="pref-revoke-ai">
+          <span>Meal and workout estimates</span><span class="pref-x">Withdraw</span>
+        </button>` : ''}
+        ${state.chatConsent ? `
+        <button class="pref-revoke" data-act="pref-revoke-chat">
+          <span>Ask Zimpan</span><span class="pref-x">Withdraw</span>
+        </button>` : ''}
+      </div>` : ''}`,
+    actions: `
+      <button class="btn btn-secondary" data-act="prefs-reset"${asking ? ' disabled' : ''}>${
+        asking ? 'Nothing to reset' : 'Ask me everything again'}</button>
+      <button class="btn btn-primary" data-act="prefs-close">Done</button>`,
+    /* Checked rather than assumed: neither standing answer is in the sync
+       payload, and consent is deliberately per-device. So this says the device,
+       and does not promise a phone what a laptop was told. */
+    foot: 'These are remembered on this device only. Another device asks you separately.'
   });
 }
 
@@ -8239,6 +8369,63 @@ const ACTIONS = {
   'refine-yes': () => refineAnswer(true),
   'refine-no': () => refineAnswer(false),
   'refine-remember': () => { state.refineRemember = !state.refineRemember; render(); },
+
+  /* The standing answers, and the way back out of them. "ask" is the third
+     state both of these have — null rather than false, since false is itself
+     an answer ("never refine") and not the same as having none. */
+  /* Opened from the readout itself, seeded with what the bar currently says —
+     so the dialog starts as an edit of the times on screen, not as a blank. */
+  'm-time-type': () => {
+    const s2 = state.m;
+    state.m.timeEdit = { from: hm(s2.startMin), to: hm((s2.startMin + s2.durMin) % 1440) };
+    state.focusField = 'm-time-from';
+    render();
+  },
+  'm-time-close': () => { state.m.timeEdit = null; render(); },
+  'm-time-save': () => {
+    const t = state.m.timeEdit;
+    if (!t) return;
+    /* A cleared field is not a time. Rather than reading it as midnight — which
+       is what parseHm would do with an empty string — the dialog simply stays
+       open with what is still in it. */
+    if (!t.from || !t.to) return;
+    const start = Math.max(0, Math.min(1439, parseHm(t.from)));
+    const span = ((parseHm(t.to) - start) + 1440) % 1440;
+    state.m.startMin = start;
+    state.m.durMin = Math.max(1, Math.min(M_SPAN_MAX, span));
+    state.m.timeEdit = null;
+    render();
+  },
+
+  'prefs-open': () => { state.prefsOpen = true; render(); },
+  'prefs-close': () => { state.prefsOpen = false; render(); },
+  'pref-deduct': (el) => {
+    const v = el.dataset.v;
+    state.deductAlways = v === 'ask' ? null : v === 'true';
+    save();
+    render();
+  },
+  'pref-refine': (el) => {
+    const v = el.dataset.v;
+    state.refineAlways = v === 'ask' ? null : v === 'true';
+    save();
+    render();
+  },
+  /* Withdrawn, never granted here. Consent belongs to the question that says
+     what leaves the device; a settings toggle would be agreement to a label. */
+  'pref-revoke-ai': () => { state.aiConsent = false; dropJson(AI_CONSENT_KEY); render(); },
+  'pref-revoke-chat': () => { state.chatConsent = false; dropJson(CHAT_CONSENT_KEY); render(); },
+  'prefs-reset': () => {
+    state.deductAlways = null;
+    state.refineAlways = null;
+    state.aiConsent = false;
+    state.chatConsent = false;
+    dropJson(AI_CONSENT_KEY);
+    dropJson(CHAT_CONSENT_KEY);
+    save();
+    flash('Every question is back');
+    render();
+  },
 
   'recap-yes': () => {
     markRecapSeen();
@@ -8908,7 +9095,9 @@ state.m = {
   pickNew: false, pickNewName: '',
   donateOpen: false, donateThanks: false,
   /* Which calorie dial has its breakdown open: 'burn', 'food', or nothing. */
-  calOpen: null
+  calOpen: null,
+  /* The typed times, while that dialog is open: { from, to } as "HH:MM". */
+  timeEdit: null
 };
 
 /* Which screen the phone opens on. Signed out is the sign-in screen; signed in
@@ -9774,7 +9963,7 @@ function mHome() {
 const M_FLOW_COPY = {
   1: ['What are you logging?', 'Pick one — you can add the details next.'],
   2: { time: ['What were you doing?', 'Choose a category, then the activity.'], money: ['How much?', 'Tap the amount. No keyboard needed.'] },
-  3: { time: ['When was that?', 'Drag either end of the bar to set when it started and ended.'], money: ['What was it for?', 'Purpose keeps the weekly split honest.'] },
+  3: { time: ['When was that?', 'Drag either end of the bar, or tap the times to type them.'], money: ['What was it for?', 'Purpose keeps the weekly split honest.'] },
   4: ['Look right?', 'Tap anything to change it.']
 };
 
@@ -10088,7 +10277,8 @@ ${warning ? `
 </div>` : ''}
 <div class="card" style="border-radius:20px;padding:18px;box-shadow:${M_SHADOW_MD};gap:0;">
   <div style="display:flex;justify-content:space-between;align-items:baseline;">
-    <span id="m-range" style="font-family:var(--font-heading);font-weight:700;font-size:26px;color:#16131f;">${esc(mRange(s.startMin, s.durMin))}</span>
+    <button id="m-range" data-act="m-time-type" aria-label="Type the times instead"
+      style="border:0;background:transparent;padding:0;cursor:pointer;text-align:left;font-family:var(--font-heading);font-weight:700;font-size:26px;color:#16131f;border-bottom:1.5px dashed rgba(116,80,228,.45);">${esc(mRange(s.startMin, s.durMin))}</button>
     <span id="m-durlabel" style="font-size:13px;color:#7450e4;font-weight:600;">${esc(mDur(s.durMin))}</span>
   </div>
   <div class="m-track" data-m-track="range" style="height:44px;margin-top:14px;">
@@ -10101,7 +10291,7 @@ ${warning ? `
     <span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span>
   </div>
   <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;">
-    <span style="font-size:12.5px;color:#756f88;">Drag either end.</span>
+    <span style="font-size:12.5px;color:#756f88;">Drag either end, or tap the times.</span>
     <button data-act="m-now"
       style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:12.5px;font-weight:600;color:#7450e4;padding:0;">Start now</button>
   </div>
@@ -10468,6 +10658,7 @@ function mAccountSheet() {
   <div style="font-family:var(--font-heading);font-weight:700;font-size:23px;color:#16131f;">${esc(state.displayName || 'Your account')}</div>
   ${email ? `<p style="margin:4px 0 18px;font-size:13.5px;color:#756f88;">${esc(email)}</p>` : '<div style="height:18px;"></div>'}
   <button class="btn btn-secondary" data-act="m-classic" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">Full view</button>
+  <button class="btn btn-secondary" data-act="prefs-open" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">Preferences</button>
   <!-- The phone app had no route to either of these at all, which is not a
        thing to ship an app to strangers without. -->
   <div style="display:flex;gap:16px;justify-content:center;margin:14px 0 10px;">
@@ -10496,6 +10687,7 @@ function mobileApp() {
   ${s.accountOpen ? mAccountSheet() : ''}
   ${s.donateOpen ? mDonateSheet() : ''}
   ${mCalSheet()}
+  ${mTimeDialog()}
   ${mDeductSheet()}
   <!-- The consent sheet is the desktop's, unchanged. Nothing is sent without
        it, so it has to reach every layout that can ask — and it is already
@@ -10505,6 +10697,7 @@ function mobileApp() {
   ${mChatSheet()}
   ${chatConsentDialog()}
   ${recapDialog()}
+  ${prefsDialog()}
   <!-- Same reasoning, and it was missing: toggleTimer is shared with this
        layout and raises a note prompt when it stops, so the phone could set a
        prompt that nothing here drew — the question was asked and then swallowed,

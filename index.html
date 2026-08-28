@@ -1193,6 +1193,31 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .dq-switch[aria-checked="true"] .dq-track { background: #16a394; }
   .dq-switch[aria-checked="true"] .dq-knob { transform: translateX(17px); }
+  /* — preferences —
+     One row per standing answer. The segmented control is the app's own, given
+     room to breathe and allowed to fill the width: three options at the
+     dialog's measure, and on a narrow phone it scrolls inside itself rather
+     than shrinking "Ask each time" into something unreadable — the same answer
+     .seg already gives everywhere else. */
+  .pref-row { text-align: left; padding: 14px 0; border-top: 1px solid var(--color-divider); }
+  .pref-row:first-child { border-top: 0; padding-top: 4px; }
+  .pref-name { font-weight: 600; font-size: 14px; }
+  .pref-note { margin: 3px 0 10px; font-size: 12.5px; line-height: 1.45; color: var(--color-neutral-700); }
+  .pref-seg { display: flex; width: 100%; }
+  .pref-seg .seg-opt { flex: 1 1 0; justify-content: center; text-align: center; }
+
+  /* Withdrawing reads as leaving, not as a switch: a consent you can flick
+     back on in one tap is not a consent, it is a preference. */
+  .pref-revoke {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    width: 100%; min-height: 44px; margin-top: 8px; padding: 0 14px;
+    border: 1px solid var(--color-divider); border-radius: 12px;
+    background: var(--color-surface); cursor: pointer;
+    font-family: var(--font-body); font-size: 13.5px; color: var(--color-text);
+  }
+  .pref-revoke:hover { border-color: color-mix(in srgb, #8a2f4a 45%, transparent); }
+  .pref-x { flex: none; font-size: 12.5px; font-weight: 600; color: #8a2f4a; }
+
   .dq-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .dq-go { width: 100%; min-height: 46px; border-radius: 999px; font-size: 14.5px; }
 
