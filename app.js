@@ -295,7 +295,7 @@ const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 
    Read from the team rather than from a setting, because it is not a
    preference. The two products have different purposes and an account belongs
    to one of them. */
-const workMode = () => !!(state.team && state.team.team);
+const workMode = () => (state.auth && state.auth.kind === 'work') || !!(state.team && state.team.team);
 
 /* In work mode the pickable categories are the team's projects and nothing
    else, so there is no way to file an hour against something personal.
@@ -490,7 +490,7 @@ const API = {
   google: (credential) => api('/api/auth/google', { method: 'POST', body: { credential } }),
   me: () => api('/api/me'),
   login: (email, password) => api('/api/login', { method: 'POST', body: { email, password } }),
-  register: (email, password) => api('/api/register', { method: 'POST', body: { email, password } }),
+  register: (email, password, kind) => api('/api/register', { method: 'POST', body: { email, password, kind } }),
   logout: () => api('/api/logout', { method: 'POST' }),
   forgot: (email) => api('/api/forgot', { method: 'POST', body: { email } }),
   reset: (token, password) => api('/api/reset', { method: 'POST', body: { token, password } }),
@@ -873,6 +873,10 @@ const state = {
   googleClientId: null,
   // 'login' | 'register' | 'forgot' | 'reset'
   authMode: 'login',
+  /* 'work' when the panel was opened from the team page or an invitation, so
+     the account it creates belongs to that product. Decided at sign-up and
+     never again — a personal account cannot become a team one. */
+  authFor: 'personal',
   authEmail: '', authPassword: '', authError: '', authBusy: false,
   authNotice: '',
   resetToken: '',
@@ -1671,6 +1675,9 @@ async function boot() {
     state.booted = true;
     if (err.status === 401) {
       state.auth = null;
+      // Landed on an invitation link with no session: offer the work sign-up
+      // it needs rather than the ordinary one it must not use.
+      offerInviteSignup();
     } else if (state.account) {
       /* Network down but this browser already belongs to an account: carry on
          from the local copy rather than locking the user out of their own data.
@@ -4215,7 +4222,7 @@ function teamsScreen() {
         ? `<a class="btn btn-primary plan-go" href="${esc(paypal)}" target="_blank" rel="noopener noreferrer">Choose this plan</a>`
         /* No link yet, and a dead button would be worse than an honest one:
            an account is the first step either way, so it goes there. */
-        : `<button class="btn btn-secondary plan-go" data-act="auth-open">Start this plan</button>`}
+        : `<button class="btn btn-secondary plan-go" data-act="auth-open-work">Start this plan</button>`}
     </div>`;
 
   return `
@@ -4232,7 +4239,7 @@ function teamsScreen() {
         <button data-act="legal-privacy">Privacy</button>
       </nav>
       <div class="landing-actions">
-        <button class="landing-login" data-act="auth-open">Log In</button>
+        <button class="landing-login" data-act="auth-open-work">Log In</button>
         <div class="landing-cta-top">
           <button data-act="scroll-pricing" class="btn btn-primary" style="font-size:14px;font-weight:600;padding:10px 24px;border-radius:999px;cursor:pointer;">See pricing</button>
         </div>
@@ -4383,6 +4390,11 @@ function authScreen() {
   if (state.authMode === 'reset') return resetScreen();
   const register = state.authMode === 'register';
   return authShell(`
+
+      ${state.authFor === 'work' ? `
+      <div style="margin:18px 0 0;padding:11px 13px;border-radius:12px;background:color-mix(in srgb, var(--color-accent) 9%, transparent);font-size:12.5px;line-height:1.5;color:var(--color-accent-900);text-align:left;">
+        <strong>Zimpan for Teams</strong> — this makes a work account, kept separate from a personal Zimpan. If you already track your own day here, use a different email.
+      </div>` : ''}
 
       <div style="display:flex;border:1px solid var(--color-divider);border-radius:999px;overflow:hidden;margin:22px 0 20px;">
         <button data-act="auth-mode-login" style="${tabStyle(!register)};flex:1;">Sign in</button>
@@ -7743,7 +7755,7 @@ async function submitAuth() {
   state.authBusy = true; state.authError = ''; render();
   try {
     const res = state.authMode === 'register'
-      ? await API.register(email, password)
+      ? await API.register(email, password, state.authFor === 'work' ? 'work' : 'personal')
       : await API.login(email, password);
     state.authBusy = false;
     state.authPassword = '';
@@ -8231,6 +8243,16 @@ function pendingInviteToken() {
   try { return new URLSearchParams(location.search).get('invite') || ''; } catch (e) { return ''; }
 }
 
+/* Arriving on an invitation link with nobody signed in. The account they are
+   about to make has to be a work one, so the panel opens knowing that. */
+function offerInviteSignup() {
+  if (!pendingInviteToken() || state.auth) return;
+  state.authFor = 'work';
+  state.authOpen = true;
+  state.authMode = 'register';
+  state.authNotice = 'Create your work account to join the team. A personal Zimpan cannot join one.';
+}
+
 async function acceptPendingInvite() {
   const token = pendingInviteToken();
   if (!token || !state.auth) return;
@@ -8416,6 +8438,15 @@ function teamDashboardTab() {
 }
 
 function teamStartBody() {
+  /* The server refuses this too, and its refusal is the one that counts. Said
+     here as well because being told before you type is better than being told
+     after — and because the answer is not "try again", it is "use a different
+     email", which nobody guesses. */
+  if (state.auth && state.auth.kind !== 'work') {
+    return `
+    <p>Zimpan for Teams runs on its own account, kept separate from this one. Your personal log — what you eat, spend and sleep — is not part of a team, and this account cannot be turned into one.</p>
+    <p class="tm-foot">Sign out and create a team account with your work email. This Zimpan stays exactly as it is.</p>`;
+  }
   return `
     <p>A team is a separate space for work hours: projects to log against, people you invite by email, and a reading of where the week went. Nothing personal from this account is part of it.</p>
     <div class="tm-add" style="margin-top:14px;">
@@ -8702,7 +8733,11 @@ const ACTIONS = {
   },
 
   /* ── account ── */
-  'auth-open': () => { state.authOpen = true; setAuthMode('login'); },
+  'auth-open': () => { state.authFor = 'personal'; state.authOpen = true; setAuthMode('login'); },
+  /* The team page's own door. It opens on Create account rather than Sign in,
+     because the whole point is that a team needs an account of its own — and
+     someone who already has one will switch tabs in a second either way. */
+  'auth-open-work': () => { state.authFor = 'work'; state.authOpen = true; setAuthMode('register'); },
   'auth-close': () => { state.authOpen = false; state.authError = ''; state.authNotice = ''; render(); },
   'auth-mode-login': () => { setAuthMode('login'); },
   'auth-mode-register': () => { setAuthMode('register'); },

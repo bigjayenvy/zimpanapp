@@ -198,14 +198,20 @@ app.post('/api/register', wrap(async (req, res) => {
     return res.status(409).json({ error: 'That email is already registered.' });
   }
 
+  /* Which product this account is for, decided here and never again. Anything
+     that is not the word "work" is a personal account, so a malformed or
+     missing field lands on the safe side rather than quietly creating a team
+     login. */
+  const kind = (req.body || {}).kind === 'work' ? 'work' : 'personal';
+
   const t = now();
   const result = await query(
-    'INSERT INTO users (email, password_hash, currency, created_at, updated_at) VALUES (?,?,?,?,?)',
-    [creds.email, hashPassword(creds.password), 'PHP', t, t]);
+    'INSERT INTO users (email, password_hash, currency, kind, created_at, updated_at) VALUES (?,?,?,?,?,?)',
+    [creds.email, hashPassword(creds.password), 'PHP', kind, t, t]);
 
   const { token, expiresAt } = await createSession(result.insertId);
   setSessionCookie(res, token, expiresAt, PROD);
-  res.status(201).json({ user: { email: creds.email, currency: 'PHP' }, fresh: true });
+  res.status(201).json({ user: { email: creds.email, currency: 'PHP', kind }, fresh: true });
 }));
 
 app.post('/api/login', wrap(async (req, res) => {
@@ -216,12 +222,12 @@ app.post('/api/login', wrap(async (req, res) => {
   const reject = () => res.status(401).json({ error: 'Email or password is incorrect.' });
   if (creds.error) return reject();
 
-  const user = await one('SELECT id, email, password_hash, currency, role FROM users WHERE email = ?', [creds.email]);
+  const user = await one('SELECT id, email, password_hash, currency, role, kind FROM users WHERE email = ?', [creds.email]);
   if (!user || !verifyPassword(creds.password, user.password_hash)) return reject();
 
   const { token, expiresAt } = await createSession(user.id);
   setSessionCookie(res, token, expiresAt, PROD);
-  res.json({ user: { email: user.email, currency: user.currency, role: user.role } });
+  res.json({ user: { email: user.email, currency: user.currency, role: user.role, kind: user.kind } });
 }));
 
 app.post('/api/logout', wrap(async (req, res) => {
@@ -239,7 +245,7 @@ app.get('/api/me', wrap(async (req, res) => {
     [user.id, user.id]);
   // The role is what lets the app offer the dashboard link at all; it says
   // nothing an ordinary account could not already work out about itself.
-  res.json({ user: { email: user.email, currency: user.currency, role: user.role }, counts });
+  res.json({ user: { email: user.email, currency: user.currency, role: user.role, kind: user.kind }, counts });
 }));
 
 /* ── password reset ── */

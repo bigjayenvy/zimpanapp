@@ -46,7 +46,7 @@ export async function createSession(userId) {
 export async function userForToken(token) {
   if (!token) return null;
   const row = await one(`
-    SELECT u.id, u.email, u.currency, u.role, u.last_seen_at, s.expires_at
+    SELECT u.id, u.email, u.currency, u.role, u.kind, u.last_seen_at, s.expires_at
       FROM sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = ?`, [tokenHash(token)]);
   if (!row) return null;
@@ -55,7 +55,10 @@ export async function userForToken(token) {
   // need a second query to find out whether they are allowed to answer.
   return {
     id: row.id, email: row.email, currency: row.currency,
-    role: row.role || 'user', lastSeenAt: row.last_seen_at
+    /* Rides along on every authenticated request for the same reason role
+       does: the team routes decide on it, and none of them should need a
+       second query to find out which product the caller belongs to. */
+    role: row.role || 'user', kind: row.kind || 'personal', lastSeenAt: row.last_seen_at
   };
 }
 

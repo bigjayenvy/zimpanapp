@@ -55,6 +55,9 @@ CREATE TABLE IF NOT EXISTS users (
   -- 'user', 'manager' or 'superadmin'. Managers read the admin dashboard,
   -- superadmins also write to it. Everyone else never sees it exists.
   role          VARCHAR(16)  NOT NULL DEFAULT 'user',
+  -- Which product this account belongs to: 'personal' or 'work'. Decided at
+  -- sign-up and never changed.
+  kind          VARCHAR(16)  NOT NULL DEFAULT 'personal',
   -- Touched when a device syncs, which is the closest thing to "opened the
   -- app" the server ever sees. Null for an account that has never synced.
   last_seen_at  BIGINT       NULL,

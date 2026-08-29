@@ -123,6 +123,27 @@ const INVITE_DAYS = 14;
    An entry with no project is personal, and personal is not the team's. */
 const ADMIN_ENTRY_WHERE = 'team_id = ? AND project_id IS NOT NULL AND deleted = 0';
 
+/* ── the wall between the two products ──
+
+   A personal account cannot become a team account. Not "should not" — the two
+   are different products with different subjects, and an account that has been
+   somebody's diary is the wrong vessel for their employer's records. The one
+   moment a kind is decided is sign-up, so joining a team means signing up
+   again with a work address.
+
+   Read from the database rather than from the session, because this is the
+   check the whole separation rests on and a stale session is a bad reason to
+   let an account through. */
+export const WORK_ACCOUNT_NEEDED =
+  'Zimpan for Teams needs its own account. Sign up again with your work email — a personal Zimpan cannot become a team one.';
+
+export async function requireWorkAccount(userId) {
+  const row = await one('SELECT kind FROM users WHERE id = ?', [userId]);
+  if (!row) throw new TeamError('No such account.', 404);
+  if (row.kind !== 'work') throw new TeamError(WORK_ACCOUNT_NEEDED, 409);
+  return true;
+}
+
 /* ── membership ──
    The first call of every route. It answers "who is this, and in whose team",
    and it is the only place a team id enters the request. */
@@ -152,6 +173,7 @@ const countPending = async (teamId) =>
    Whoever creates it owns it. A user already in a team cannot create a second:
    a work login belongs to one workplace. */
 export async function createTeam(userId, name) {
+  await requireWorkAccount(userId);
   const existing = await membershipFor(userId);
   if (existing) throw new TeamError('You are already in a team.', 409);
   const clean = String(name || '').trim().slice(0, 120);
@@ -254,6 +276,7 @@ export async function revokeInvite(userId, email) {
    invitation has to be the address on the account: an invitation forwarded to
    somebody else is not a way in. */
 export async function acceptInvite(userId, userEmail, token) {
+  await requireWorkAccount(userId);
   const existing = await membershipFor(userId);
   if (existing) throw new TeamError('You are already in a team.', 409);
 

@@ -176,6 +176,13 @@ async function alterExisting() {
   if (!has('role')) {
     await pool.query("ALTER TABLE users ADD COLUMN role VARCHAR(16) NOT NULL DEFAULT 'user' AFTER steps_json");
   }
+  /* Which product this account belongs to. 'personal' for every row that
+     already exists, which is what they all are: Zimpan for Teams did not exist
+     when they were made, and an account cannot be moved between the two — the
+     whole point of the column is that it is decided once, at sign-up. */
+  if (!has('kind')) {
+    await pool.query("ALTER TABLE users ADD COLUMN kind VARCHAR(16) NOT NULL DEFAULT 'personal' AFTER role");
+  }
   if (!has('last_seen_at')) {
     await pool.query('ALTER TABLE users ADD COLUMN last_seen_at BIGINT NULL AFTER role');
   }
