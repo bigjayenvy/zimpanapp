@@ -194,8 +194,17 @@ app.post('/api/register', wrap(async (req, res) => {
   const creds = readCredentials(req.body);
   if (creds.error) return res.status(400).json({ error: creds.error });
 
-  if (await one('SELECT 1 AS x FROM users WHERE email = ?', [creds.email])) {
-    return res.status(409).json({ error: 'That email is already registered.' });
+  const taken = await one('SELECT kind FROM users WHERE email = ?', [creds.email]);
+  if (taken) {
+    const asked = (req.body || {}).kind === 'work' ? 'work' : 'personal';
+    const has = taken.kind === 'work' ? 'work' : 'personal';
+    return res.status(409).json({
+      error: has === asked
+        ? 'That email is already registered — sign in instead.'
+        : has === 'personal'
+          ? 'That email already has a personal Zimpan. A team account has to be its own, so use a different email.'
+          : 'That email already belongs to a Zimpan for Teams account. Your personal Zimpan has to be its own, so use a different email.'
+    });
   }
 
   /* Which product this account is for, decided here and never again. Anything
@@ -373,15 +382,21 @@ app.post('/api/auth/google', wrap(async (req, res) => {
     return res.status(401).json({ error: err.message });
   }
 
+  /* Which product the account is for, on the same rule as /api/register: only
+     the exact word makes a work account. It applies to a NEW account only —
+     signing in to one that exists never changes what it is, which is the whole
+     point of the column. */
+  const wantKind = (req.body || {}).kind === 'work' ? 'work' : 'personal';
+
   const t = now();
-  let user = await one('SELECT id, email, currency FROM users WHERE google_sub = ?', [claims.sub]);
+  let user = await one('SELECT id, email, currency, role, kind FROM users WHERE google_sub = ?', [claims.sub]);
   let fresh = false;
 
   // Returning by email rather than by sub means this Google account has not
   // been linked yet. Only link when Google vouches for the address — otherwise
   // an unverified address would be enough to walk into someone's account.
   if (!user && claims.email) {
-    const byEmail = await one('SELECT id, email, currency FROM users WHERE email = ?', [claims.email]);
+    const byEmail = await one('SELECT id, email, currency, role, kind FROM users WHERE email = ?', [claims.email]);
     if (byEmail) {
       if (!claims.emailVerified) {
         return res.status(403).json({ error: 'Google has not verified this email address, so it cannot be linked to the existing account.' });
@@ -397,21 +412,24 @@ app.post('/api/auth/google', wrap(async (req, res) => {
     if (!claims.emailVerified) return res.status(403).json({ error: 'Google has not verified this email address.' });
     try {
       const result = await query(
-        'INSERT INTO users (email, password_hash, google_sub, display_name, currency, created_at, updated_at) VALUES (?,?,?,?,?,?,?)',
-        [claims.email, null, claims.sub, claims.name, 'PHP', t, t]);
-      user = { id: result.insertId, email: claims.email, currency: 'PHP' };
+        'INSERT INTO users (email, password_hash, google_sub, display_name, currency, kind, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)',
+        [claims.email, null, claims.sub, claims.name, 'PHP', wantKind, t, t]);
+      user = { id: result.insertId, email: claims.email, currency: 'PHP', kind: wantKind };
       fresh = true;
     } catch (err) {
       // Two sign-ins racing on the same address: whoever lost just re-reads.
       if (err.code !== 'ER_DUP_ENTRY') throw err;
-      user = await one('SELECT id, email, currency, role FROM users WHERE email = ? OR google_sub = ?', [claims.email, claims.sub]);
+      user = await one('SELECT id, email, currency, role, kind FROM users WHERE email = ? OR google_sub = ?', [claims.email, claims.sub]);
       if (!user) throw err;
     }
   }
 
   const { token, expiresAt } = await createSession(user.id);
   setSessionCookie(res, token, expiresAt, PROD);
-  res.json({ user: { email: user.email, currency: user.currency, role: user.role || 'user' }, fresh });
+  res.json({
+    user: { email: user.email, currency: user.currency, role: user.role || 'user', kind: user.kind || 'personal' },
+    fresh
+  });
 }));
 
 /* ── nutrition estimates ──

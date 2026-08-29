@@ -742,8 +742,32 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     font-size: 16px; line-height: 1.65; color: var(--color-neutral-800);
     margin: 0 0 24px; max-width: 52ch;
   }
-  .hero-ctas { display: flex; flex-wrap: wrap; gap: 12px; }
+  /* Two buttons on the first row, the team one on its own beneath them running
+     the full width of both. A grid rather than a wrapping flex row: wrapping
+     would put it under only the first button whenever the row happened to
+     break, and "the width of the pair" is the whole point of it. */
+  .hero-ctas { display: grid; grid-template-columns: auto auto; gap: 12px; justify-content: start; }
   .hero-cta2 { font-size: 15px; font-weight: 600; padding: 13px 26px; }
+  .hero-cta3 {
+    grid-column: 1 / -1;
+    display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+    width: 100%; padding: 13px 26px; border-radius: 999px; border: 0; cursor: pointer;
+    font-family: var(--font-body); font-size: 15px; font-weight: 600;
+    background: var(--zg-donate); color: #40240a;
+    box-shadow: 0 6px 18px color-mix(in srgb, var(--zg-donate) 42%, transparent);
+  }
+  .hero-cta3 svg { width: 16px; height: 16px; display: block; }
+  .hero-cta3:hover { background: #d8901f; }
+  .hero-cta3:focus-visible { outline: 2px solid #8a5100; outline-offset: 2px; }
+
+  /* On a narrow screen the pair stacks, and the team button keeps its row. */
+  @media (max-width: 520px) {
+    .hero-ctas { grid-template-columns: 1fr; }
+  }
+
+  /* The one gold item in the nav, because it goes somewhere else. */
+  .landing-nav .nav-gold { color: #a86a12; font-weight: 700; }
+  .landing-nav .nav-gold:hover { color: #8a5100; }
 
   .hero-svg { width: 100%; height: auto; display: block; overflow: visible; }
 
@@ -1241,6 +1265,35 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .plan-amount { font-family: var(--font-heading); font-weight: 700; font-size: 30px; color: var(--color-accent-900); }
   .plan-per { font-size: 12.5px; color: var(--color-neutral-600); }
   .plan-go { margin-top: auto; width: 100%; min-height: 44px; border-radius: 999px; justify-content: center; }
+  /* The recommended tier. Lifted, ringed and flagged rather than merely
+     recoloured: on a row of five cards a colour change alone reads as a
+     different kind of thing rather than as the one to choose. The flag sits on
+     the border, which is why the card carries the top padding to clear it. */
+  .plan.is-popular {
+    border-color: var(--color-accent);
+    box-shadow: 0 12px 30px color-mix(in srgb, var(--color-accent) 26%, transparent);
+    padding-top: 26px;
+    transform: translateY(-6px);
+  }
+  .plan-flag, .tm-plan-flag {
+    position: absolute; top: -11px; left: 50%; transform: translateX(-50%);
+    display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+    padding: 4px 12px; border-radius: 999px;
+    background: var(--grad-brand, var(--color-accent)); color: #fff;
+    font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  }
+  .plan-flag svg, .tm-plan-flag svg { width: 12px; height: 12px; display: block; }
+  .plan { position: relative; }
+  .tm-plan { position: relative; }
+  .tm-plan.is-popular { border-color: color-mix(in srgb, var(--color-accent) 55%, transparent); margin-top: 8px; padding-top: 18px; }
+  .tm-plan-flag { left: 14px; transform: none; font-size: 9.5px; padding: 3px 9px; }
+
+  /* Nothing lifts on a phone, where the cards are already stacked and a raised
+     one only breaks the rhythm of the column. */
+  @media (max-width: 560px) {
+    .plan.is-popular { transform: none; }
+  }
+
   .plans-foot { margin: 14px 0 0; text-align: center; font-size: 12.5px; color: var(--color-neutral-600); }
 
   /* — the team sheet —
@@ -1326,6 +1379,18 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .tm-btrack { flex: 1 1 0; height: 10px; border-radius: 999px; background: var(--color-neutral-200); overflow: hidden; }
   .tm-bfill { display: block; height: 100%; border-radius: 999px; }
   .tm-bval { flex: none; font-size: 11.5px; color: var(--color-neutral-700); min-width: 44px; text-align: right; }
+
+  /* An empty tab, wearing its own tab's icon. A panel that says only "none"
+     reads as something broken; this one reads as something not started. */
+  .tm-none { text-align: center; padding: 22px 12px 6px; }
+  .tm-none-mark {
+    display: inline-grid; place-items: center; width: 44px; height: 44px;
+    margin-bottom: 10px; border-radius: 14px;
+    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+    color: var(--color-accent);
+  }
+  .tm-none strong { display: block; font-size: 14.5px; margin-bottom: 5px; }
+  .tm-none p { margin: 0 auto; max-width: 34ch; font-size: 12.5px; line-height: 1.55; color: var(--color-neutral-700); }
 
   /* — billing —
      The plan cards inside the team sheet, which are a different job from the

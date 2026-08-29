@@ -487,7 +487,7 @@ async function request(path, method, body) {
 
 const API = {
   config: () => api('/api/config'),
-  google: (credential) => api('/api/auth/google', { method: 'POST', body: { credential } }),
+  google: (credential, kind) => api('/api/auth/google', { method: 'POST', body: { credential, kind } }),
   me: () => api('/api/me'),
   login: (email, password) => api('/api/login', { method: 'POST', body: { email, password } }),
   register: (email, password, kind) => api('/api/register', { method: 'POST', body: { email, password, kind } }),
@@ -877,6 +877,8 @@ const state = {
      the account it creates belongs to that product. Decided at sign-up and
      never again — a personal account cannot become a team one. */
   authFor: 'personal',
+  /* Set to the account's kind when someone signs in to the other product. */
+  crossKind: '',
   authEmail: '', authPassword: '', authError: '', authBusy: false,
   authNotice: '',
   resetToken: '',
@@ -1611,10 +1613,11 @@ async function onGoogleCredential(response) {
   state.authError = '';
   render();
   try {
-    const res = await API.google(response && response.credential);
+    const res = await API.google(response && response.credential, state.authFor === 'work' ? 'work' : 'personal');
     state.authBusy = false;
     state.authPassword = '';
     state.auth = res.user;
+    noteWrongProduct(res.user);
     await afterSignIn(res.user);
   } catch (err) {
     state.authBusy = false;
@@ -4057,6 +4060,8 @@ const TEAM_PLANS = [
    target="_blank" where PayPal's snippet says "_top": this app is one document
    holding unsaved state, and navigating the whole tab away to PayPal loses
    whatever the person was in the middle of. */
+const TEAM_POPULAR = 'team20';
+
 const paypalForm = (buttonId, label, extraClass) => `
   <form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_blank" rel="noopener noreferrer" style="margin:0;">
     <input type="hidden" name="cmd" value="_s-xclick">
@@ -4171,9 +4176,9 @@ function landingScreen() {
       <nav class="landing-nav">
         <button data-act="scroll-features">Features</button>
         <button data-act="scroll-features">How it works</button>
-        <button data-act="go-teams">For Teams</button>
         <button data-act="legal-privacy">Privacy</button>
         <button data-act="legal-terms">Terms</button>
+        <button class="nav-gold" data-act="go-teams">For Teams</button>
       </nav>
       <div class="landing-actions">
         <button class="landing-login" data-act="auth-open">Log In</button>
@@ -4202,9 +4207,11 @@ function landingScreen() {
         <div class="hero-ctas">
           ${cta(16)}
           <button class="btn btn-secondary hero-cta2" data-act="scroll-features">Explore what it tracks</button>
-          <!-- Third, and quieter than the two above it: most readers here are
-               tracking their own day, and the ones who are not know it. -->
-          <button class="btn btn-ghost hero-cta3" data-act="go-teams">Measure team productivity</button>
+          <!-- Its own row beneath the pair, running the full width of both.
+               Gold rather than violet because it is not a third way to do the
+               same thing — it is the door to the other product, and the brand
+               already uses gold for the thing that is not the app itself. -->
+          <button class="btn hero-cta3" data-act="go-teams">${nodeIcon('shield', 16)}<span>Tracker for Teams</span></button>
         </div>
       </div>
 
@@ -4245,14 +4252,18 @@ function teamsScreen() {
      match: PayPal reports an email and an amount, and a hosted button cannot
      be made to carry anything else. Make the team first and the payer's email
      is the account's email, which is what makes the two findable. */
-  const plan = ([, label, nickname, seats, price]) => `
-    <div class="plan">
+  const plan = ([key, label, nickname, seats, price]) => {
+    const hot = key === TEAM_POPULAR;
+    return `
+    <div class="plan${hot ? ' is-popular' : ''}">
+      ${hot ? `<span class="plan-flag">${nodeIcon('flame', 12)}Most popular</span>` : ''}
       ${nickname === label ? '<div class="plan-kicker">&nbsp;</div>' : `<div class="plan-kicker">${esc(nickname)}</div>`}
       <div class="plan-name">${esc(label)}</div>
       <div class="plan-seats">${seats ? `Up to ${seats} people` : 'As many people as you like'}</div>
       <div class="plan-price"><span class="plan-amount">$${price}</span><span class="plan-per">/month</span></div>
-      <button class="btn btn-secondary plan-go" data-act="auth-open-work">Start this plan</button>
+      <button class="btn ${hot ? 'btn-primary' : 'btn-secondary'} plan-go" data-act="auth-open-work">Start this plan</button>
     </div>`;
+  };
 
   return `
   <div class="landing">
@@ -7664,6 +7675,7 @@ function render() {
   ${recapDialog()}
   ${prefsDialog()}
   ${teamSheet()}
+  ${crossKindDialog()}
   ${calBreakdownDialog()}
   ${deductDialog()}
   ${donateSheet()}
@@ -7723,6 +7735,42 @@ function showPicker() {
 }
 
 /* ── account actions ── */
+
+/* Signed in successfully, but to the other product.
+
+   Signing in is not refused — the account is theirs and it works — but landing
+   in the personal app when you came from the pricing page, or in a work
+   account when you came from the home page, is confusing enough to be worth a
+   sentence. It says which account this is and what the other one would need,
+   which is a different address; there is no switch to offer, because the two
+   cannot be the same account. */
+function noteWrongProduct(user) {
+  const is = (user && user.kind) === 'work' ? 'work' : 'personal';
+  const wanted = state.authFor === 'work' ? 'work' : 'personal';
+  state.crossKind = is === wanted ? '' : is;
+  if (state.crossKind) state.route = 'home';
+}
+
+function crossKindDialog() {
+  if (!state.crossKind) return '';
+  const isWork = state.crossKind === 'work';
+  return lightbox({
+    icon: isWork ? 'shield' : 'heart',
+    tone: isWork ? 'var(--color-accent)' : 'var(--zg-donate)',
+    kicker: isWork ? 'Zimpan for Teams' : 'Your personal Zimpan',
+    title: isWork ? 'This is your team account' : 'This is your personal account',
+    closeAct: 'cross-kind-close',
+    body: `
+      <p>${isWork
+        ? 'You came in from the personal side, but this email belongs to a Zimpan for Teams account — hours against projects, and nothing about what you eat, spend or sleep.'
+        : 'You came in from the team side, but this email belongs to a personal Zimpan — your own time, money, meals and sleep.'}</p>
+      <p>${isWork
+        ? 'A personal Zimpan has to be its own account, so it needs a different email address.'
+        : 'A team account has to be its own, so it needs a different email address. Nothing here is part of a team.'}</p>`,
+    actions: `<button class="btn btn-primary" data-act="cross-kind-close">Carry on</button>`,
+    foot: 'One address, one product. It is what keeps a team out of your own diary.'
+  });
+}
 
 function setAuthMode(mode) {
   state.authMode = mode;
@@ -7789,6 +7837,7 @@ async function submitAuth() {
     state.authBusy = false;
     state.authPassword = '';
     state.auth = res.user;
+    noteWrongProduct(res.user);
     await afterSignIn(res.user);
   } catch (err) {
     state.authBusy = false;
@@ -8376,7 +8425,8 @@ function teamBillingTab() {
 
     <div class="tm-plans">
       ${TEAM_PLANS.map(([key, label, nickname, seats, price, button]) => `
-      <div class="tm-plan${t.plan === key ? ' is-on' : ''}">
+      <div class="tm-plan${t.plan === key ? ' is-on' : ''}${key === TEAM_POPULAR && t.plan !== key ? ' is-popular' : ''}">
+        ${key === TEAM_POPULAR && t.plan !== key ? `<span class="tm-plan-flag">${nodeIcon('flame', 11)}Most popular</span>` : ''}
         <div class="tm-plan-head">
           <span class="tm-plan-name">${esc(label)}${nickname === label ? '' : `<span class="tm-plan-nick">${esc(nickname)}</span>`}</span>
           <span class="tm-plan-price">$${price}<span>/mo</span></span>
@@ -8390,6 +8440,15 @@ function teamBillingTab() {
 
     <p class="tm-foot">Subscriptions are handled by PayPal in USD and open in a new tab. A plan is switched on by hand once the payment is matched to your team, so it can take a little while — nothing stops in the meantime except while a trial is over.</p>`;
 }
+
+/* An empty tab that says what would fill it. The icon is the tab's own, so an
+   empty Projects panel still looks like Projects rather than like a failure. */
+const teamNothing = (icon, title, body) => `
+  <div class="tm-none">
+    <span class="tm-none-mark">${nodeIcon(icon, 20)}</span>
+    <strong>${esc(title)}</strong>
+    <p>${esc(body)}</p>
+  </div>`;
 
 function teamPeopleTab() {
   const t = state.team;
@@ -8456,7 +8515,9 @@ function teamProjectsTab() {
     </div>`).join('');
 
   return `
-    <div class="tm-list">${rows || '<p class="tm-empty">No projects yet.</p>'}</div>
+    <div class="tm-list">${rows || teamNothing('clipboard', 'No projects yet',
+      teamIsAdmin() ? 'Add the first one below. Members log their hours against these, so name them the way your team already talks about the work.'
+        : 'An admin has not set any up yet. Until they do there is nothing to log against.')}</div>
     ${teamIsAdmin() ? `
     <div class="tm-add">
       <input class="input" type="text" data-k="team-project" data-sync="teamProjectName"
@@ -8476,9 +8537,11 @@ function teamHoursTab() {
       ${t.members.map((m) => `<option value="${esc(String(m.userId))}"${String(state.teamMemberId) === String(m.userId) ? ' selected' : ''}>${esc(m.name || m.email)}</option>`).join('')}
     </select>`;
 
-  if (!state.teamMemberId) return `${picker}<p class="tm-empty">Pick someone to see the hours they logged against your projects.</p>`;
+  if (!state.teamMemberId) return picker + teamNothing('clock', 'Pick someone',
+    'You will see the hours they logged against your projects over the last 30 days, and you can correct any of them. Nothing else of theirs is here.');
   if (state.teamBusy === 'hours') return `${picker}<p class="tm-empty">Reading…</p>`;
-  if (!state.teamRows.length) return `${picker}<p class="tm-empty">Nothing logged against a project in this window.</p>`;
+  if (!state.teamRows.length) return picker + teamNothing('clock', 'Nothing in this window',
+    'They have logged no hours against a project in the last 30 days.');
 
   const opts = teamProjects();
   return `${picker}
@@ -8511,6 +8574,8 @@ function teamDashboardTab() {
   return `
     <div class="tm-sub">By project</div>
     ${d.byProject.map((p) => bar(p.name, p.minutes, p.color)).join('') || '<p class="tm-empty">No projects yet.</p>'}
+    ${d.byProject.length && d.byProject.every((p) => !Number(p.minutes))
+      ? '<p class="tm-empty">Nothing logged against them yet — this fills in as the team tracks.</p>' : ''}
     <div class="tm-sub">By person</div>
     ${d.byMember.map((m) => bar(m.name || m.email, m.minutes, null)).join('')}
     <p class="tm-foot">Hours logged against your projects, over the last 30 days.</p>`;
@@ -8535,6 +8600,16 @@ function teamStartBody() {
     </div>
     <p class="tm-foot">You will own it, and start on the trial plan — three people, including you.</p>`;
 }
+
+/* Each tab is a different job, so the dialog says which one you are in rather
+   than wearing the same shield for all five. */
+const TEAM_TAB_FACE = {
+  people: ['shield', 'Who is on it', 'var(--color-accent)'],
+  projects: ['clipboard', 'What they log against', '#0e9f6e'],
+  hours: ['clock', 'What was logged', '#4f46e5'],
+  dashboard: ['insights', 'Where the hours went', '#7856f5'],
+  billing: ['scales', 'What it costs', 'var(--zg-donate)']
+};
 
 function teamSheet() {
   if (!state.teamOpen) return '';
@@ -8563,11 +8638,12 @@ function teamSheet() {
     ${state.teamError ? `<p class="tm-err">${esc(state.teamError)}</p>` : ''}
     ${state.teamNotice ? `<p class="tm-ok">${esc(state.teamNotice)}</p>` : ''}`;
 
+  const face = TEAM_TAB_FACE[state.teamTab] || TEAM_TAB_FACE.people;
   return lightbox({
-    icon: 'shield',
-    tone: 'var(--color-accent)',
-    kicker: has ? esc(state.team.team.name) : 'Teams',
-    title: has ? 'Your team' : 'Start a team',
+    icon: has ? face[0] : 'shield',
+    tone: has ? face[2] : 'var(--color-accent)',
+    kicker: has ? state.team.team.name : 'Zimpan for Teams',
+    title: has ? face[1] : 'Start a team',
     closeAct: 'team-close',
     body,
     actions: `<button class="btn btn-secondary" data-act="team-close">Done</button>`
@@ -8826,6 +8902,7 @@ const ACTIONS = {
      someone who already has one will switch tabs in a second either way. */
   'auth-open-work': () => { state.authFor = 'work'; state.authOpen = true; setAuthMode('register'); },
   'auth-close': () => { state.authOpen = false; state.authError = ''; state.authNotice = ''; render(); },
+  'cross-kind-close': () => { state.crossKind = ''; render(); },
   'auth-mode-login': () => { setAuthMode('login'); },
   'auth-mode-register': () => { setAuthMode('register'); },
   'auth-mode-forgot': () => { setAuthMode('forgot'); },
@@ -11602,6 +11679,7 @@ function mobileApp() {
   ${recapDialog()}
   ${prefsDialog()}
   ${teamSheet()}
+  ${crossKindDialog()}
   <!-- Same reasoning, and it was missing: toggleTimer is shared with this
        layout and raises a note prompt when it stops, so the phone could set a
        prompt that nothing here drew — the question was asked and then swallowed,
