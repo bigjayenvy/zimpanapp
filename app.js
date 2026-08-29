@@ -475,7 +475,25 @@ const API = {
   deckSummary: (facts) => api('/api/deck-summary', { method: 'POST', body: { facts } }),
   chat: (history, facts) => api('/api/chat', { method: 'POST', body: { history, facts } }),
   estimateBurn: (text, weightKg, minutes) => api('/api/estimate-burn', { method: 'POST', body: { text, weightKg, minutes } }),
-  donateClick: () => api('/api/donate-click', { method: 'POST', body: {} })
+  donateClick: () => api('/api/donate-click', { method: 'POST', body: {} }),
+
+  /* Teams. Not one of these sends a team id: the server reads which team you
+     are in from your own membership, so there is nothing here that could name
+     somebody else's. */
+  team: {
+    get: () => api('/api/team'),
+    create: (name) => api('/api/team', { method: 'POST', body: { name } }),
+    invite: (email, role) => api('/api/team/invite', { method: 'POST', body: { email, role } }),
+    revoke: (email) => api('/api/team/invite/revoke', { method: 'POST', body: { email } }),
+    accept: (token) => api('/api/team/accept', { method: 'POST', body: { token } }),
+    role: (userId, role) => api('/api/team/role', { method: 'POST', body: { userId, role } }),
+    remove: (userId) => api('/api/team/remove', { method: 'POST', body: { userId } }),
+    project: (project) => api('/api/team/project', { method: 'POST', body: project }),
+    dropProject: (id) => api('/api/team/project/delete', { method: 'POST', body: { id } }),
+    entries: (userId, from, to) => api(`/api/team/member/${encodeURIComponent(userId)}/entries?from=${encodeURIComponent(from || '')}&to=${encodeURIComponent(to || '')}`),
+    editEntry: (id, patch) => api(`/api/team/entry/${encodeURIComponent(id)}`, { method: 'POST', body: patch }),
+    dashboard: (from, to) => api(`/api/team/dashboard?from=${encodeURIComponent(from || '')}&to=${encodeURIComponent(to || '')}`)
+  }
 };
 
 /* Someone opened the donate link. Not a donation — the checkout reports nothing
@@ -688,6 +706,25 @@ const state = {
   refineAsk: null, refineRemember: false, aiPending: null,
   /* The standing answers, laid out where they can be taken back. */
   prefsOpen: false,
+
+  /* ── team ──
+     null while unknown, { team: null } once the server says this account is in
+     no team, and the whole overview once it is in one. The three are different
+     answers and the screens read them apart. */
+  team: null,
+  teamOpen: false,
+  teamTab: 'people',
+  teamBusy: '',
+  teamError: '',
+  teamNotice: '',
+  teamName: '',
+  teamInviteEmail: '',
+  teamInviteRole: 'member',
+  teamInviteLink: '',
+  teamProjectName: '',
+  teamMemberId: null,
+  teamRows: [],
+  teamDash: null,
   /* 'home' or 'teams', read from the address on boot. */
   route: routeFromPath(),
   refineAlways: stored.refineAlways === true || stored.refineAlways === false ? stored.refineAlways : null,
@@ -873,12 +910,15 @@ function bury(kind, key) {
 }
 
 function serialise(kind, r) {
-  if (kind === 'entries') return { id: r.id, date: r.date, activity: r.activity, category: r.category, from: r.from, to: r.to, note: r.note || '', updatedAt: r.updatedAt || 0 };
+  /* `project` only when there is one. An absent field is a personal entry —
+     which is every row written before teams existed, and the reason the server
+     treats it as the thing an admin cannot see. */
+  if (kind === 'entries') return { id: r.id, date: r.date, activity: r.activity, category: r.category, project: r.project || undefined, from: r.from, to: r.to, note: r.note || '', updatedAt: r.updatedAt || 0 };
   if (kind === 'money') return { id: r.id, date: r.date, activity: r.activity, purpose: r.purpose, in: Number(r.in) || 0, out: Number(r.out) || 0, note: r.note || '', updatedAt: r.updatedAt || 0 };
   return { name: r.name, color: r.color, position: r.position || 0, updatedAt: r.updatedAt || 0 };
 }
 function deserialise(kind, r) {
-  if (kind === 'entries') return { id: r.id, date: r.date, activity: r.activity, category: r.category, from: r.from, to: r.to, note: r.note || '', updatedAt: r.updatedAt };
+  if (kind === 'entries') return { id: r.id, date: r.date, activity: r.activity, category: r.category, project: r.project || undefined, from: r.from, to: r.to, note: r.note || '', updatedAt: r.updatedAt };
   if (kind === 'money') return { id: r.id, date: r.date, activity: r.activity, purpose: r.purpose, in: r.in, out: r.out, note: r.note || '', updatedAt: r.updatedAt };
   return { name: r.name, color: r.color, position: r.position, updatedAt: r.updatedAt };
 }
@@ -1597,6 +1637,12 @@ async function boot() {
     state.booted = true;
     state.auth = me.user;
     await afterSignIn(me.user);
+    /* After sign-in rather than beside it: an invitation can only be accepted
+       once there is an account to attach it to, and the roster that follows
+       should already include whoever just joined. */
+    await loadTeam();
+    if (pendingInviteToken()) await acceptPendingInvite();
+    render();
   } catch (err) {
     state.booted = true;
     if (err.status === 401) {
@@ -7485,6 +7531,7 @@ function render() {
   ${body}
   <div class="no-print" style="padding: 26px 28px 10px; display: flex; align-items: center; gap: 10px 18px; flex-wrap: wrap;">
     ${legalLinks('var(--color-neutral-600)')}
+    <button class="btn btn-ghost" data-act="team-open" style="font-size:12.5px;padding:6px 0;">${state.team && state.team.team ? esc(state.team.team.name) : 'For teams'}</button>
     <button class="btn btn-ghost" data-act="prefs-open" style="font-size:12.5px;padding:6px 0;">Preferences</button>
     ${isPhone() && state.mClassic ? `<button class="btn btn-secondary" data-act="m-mobile" style="font-size: 12.5px; padding: 6px 14px;">Back to the mobile app</button>` : ''}
   </div>
@@ -7499,6 +7546,7 @@ function render() {
   ${chatConsentDialog()}
   ${recapDialog()}
   ${prefsDialog()}
+  ${teamSheet()}
   ${calBreakdownDialog()}
   ${deductDialog()}
   ${donateSheet()}
@@ -7675,7 +7723,12 @@ function scheduleRender() {
 }
 
 function updateEntry(id, patch) {
-  state.entries = state.entries.map((e) => (e.id === id ? touch('entries', Object.assign({}, e, patch)) : e));
+  /* A row moved to another category moves to that category's project, and off
+     a project entirely if the new category is not one — which is how a member
+     takes something back out of the team's sight. */
+  state.entries = state.entries.map((e) => (e.id === id
+    ? touch('entries', reproject(Object.assign({}, e, patch)))
+    : e));
   save(); queueSync(); scheduleRender();
 }
 function updateMoney(id, patch) {
@@ -7748,7 +7801,7 @@ function toggleTimer() {
     from,
     to
   };
-  state.entries = state.entries.concat([touch('entries', entry)]);
+  state.entries = state.entries.concat([touch('entries', withProject(entry))]);
   state.timerStart = null;
   state.timerActivity = '';
   state.timerUpdatedAt = Date.now();
@@ -7780,7 +7833,7 @@ function addEntry() {
   /* To earlier than From means it ran past midnight, the same as the timer —
      and it lands on the morning it ended, not the evening it began. */
   const date = t < f ? nextDay(state.form.date) : state.form.date;
-  const entry = touch('entries', { id: 'm' + Date.now(), date, activity: state.form.activity.trim(), category: state.form.category, from: f, to: t, note: '' });
+  const entry = touch('entries', withProject({ id: 'm' + Date.now(), date, activity: state.form.activity.trim(), category: state.form.category, from: f, to: t, note: '' }));
   state.entries = state.entries.concat([entry]);
   state.selectedDate = state.form.date;
   state.form = Object.assign({}, state.form, { activity: '', from: state.form.to, to: '' });
@@ -7983,6 +8036,343 @@ function refineAskDialog() {
     actions: `
       <button class="btn btn-secondary" data-act="refine-no">Not now</button>
       <button class="btn btn-primary" data-act="refine-yes">Yes, calibrate it</button>`
+  });
+}
+
+/* ═════════════════════════════ teams ═════════════════════════════
+
+   A team login is separate from a personal one, so everything here is about
+   hours and projects and nothing else. The server decides what may be seen and
+   by whom; this half draws what it is given and asks for what it is allowed to
+   ask for. Where a control is hidden by role it is hidden because showing a
+   button that will be refused is a worse answer than not offering it — the
+   refusal still happens server-side either way. */
+
+const teamRole = () => (state.team && state.team.me ? state.team.me.role : null);
+const teamIsAdmin = () => teamRole() === 'super' || teamRole() === 'admin';
+const teamIsSuper = () => teamRole() === 'super';
+const teamProjects = () => (state.team && state.team.projects) || [];
+const projectName = (id) => {
+  const p = teamProjects().find((x) => x.id === id);
+  return p ? p.name : '';
+};
+
+/* Read once the session is known. A failure is not worth a banner: an account
+   with no team is the ordinary case and looks exactly the same from here. */
+async function loadTeam() {
+  if (!state.auth) { state.team = null; return; }
+  try {
+    state.team = await API.team.get();
+    mirrorProjects();
+  } catch (err) {
+    state.team = { team: null };
+  }
+}
+
+/* The team's projects, made into this account's categories.
+
+   A work login's categories are its projects — that is what the account is
+   for — so rather than building a second picker, a second colour scheme and a
+   second set of filters beside the ones that already work, the projects are
+   put where the app already looks for things to log against. Everything
+   downstream — the picker, the timer, the reports, the search — then works on
+   them with no further change.
+
+   One direction only. A project appearing gets a category; a category the
+   member adds themselves is theirs and is not sent back as a project, because
+   projects are the admin's to define. */
+function mirrorProjects() {
+  const live = teamProjects().filter((p) => !p.archived);
+  if (!live.length) return;
+  let added = 0;
+  live.forEach((p, i) => {
+    if (state.categories.some((c) => c.name === p.name)) return;
+    state.categories = state.categories.concat([touch('categories', {
+      name: p.name, color: p.color || PALETTE[i % PALETTE.length], position: state.categories.length + i
+    })]);
+    added += 1;
+  });
+  if (added) { save(); queueSync(0); }
+}
+
+/* Which project an entry belongs to, from the category it was filed under.
+   Nothing when the name is not a project's — a member logging "Lunch" on a
+   work account has logged something personal, and personal is exactly what an
+   admin cannot see. */
+function projectIdFor(categoryName) {
+  const p = teamProjects().find((x) => !x.archived && x.name === categoryName);
+  return p ? p.id : undefined;
+}
+
+/* Stamped at the moment an entry is minted, on both routes into one. */
+function withProject(entry) {
+  const id = projectIdFor(entry.category);
+  return id ? Object.assign({}, entry, { project: id }) : entry;
+}
+
+/* Same, for a row that already exists. Distinct from withProject because this
+   one has to be able to take a project OFF: withProject leaves an entry alone
+   when no project matches, which is right when minting and wrong when the
+   category has just been changed to something that is not a project. */
+function reproject(entry) {
+  const id = projectIdFor(entry.category);
+  const out = Object.assign({}, entry);
+  if (id) out.project = id; else delete out.project;
+  return out;
+}
+
+/* Every team call goes through this: one place that shows it is working, keeps
+   the error where the screen can say it, and reloads the roster afterwards so
+   what is on screen is what the server actually holds rather than what the
+   client hoped it would do. */
+async function teamDo(what, fn, notice) {
+  state.teamBusy = what;
+  state.teamError = '';
+  state.teamNotice = '';
+  render();
+  try {
+    const out = await fn();
+    await loadTeam();
+    if (notice) state.teamNotice = notice;
+    return out;
+  } catch (err) {
+    state.teamError = err.message || 'That did not work.';
+    return null;
+  } finally {
+    state.teamBusy = '';
+    render();
+  }
+}
+
+/* An invitation arrives as ?invite=… on /teams. Held until there is an account
+   to attach it to — accepting needs a signed-in session, and the address on
+   the invitation has to be the address on the account. */
+function pendingInviteToken() {
+  try { return new URLSearchParams(location.search).get('invite') || ''; } catch (e) { return ''; }
+}
+
+async function acceptPendingInvite() {
+  const token = pendingInviteToken();
+  if (!token || !state.auth) return;
+  await teamDo('accept', () => API.team.accept(token), 'You are on the team.');
+  try { history.replaceState({}, '', '/'); } catch (e) { /* file:// */ }
+  state.route = 'home';
+  render();
+}
+
+/* Thirty days: long enough to be a picture of the month, short enough that a
+   busy team's roster does not arrive as a thousand rows. */
+const TEAM_WINDOW_DAYS = 30;
+const teamWindow = () => [mShiftIso(iso(new Date()), -(TEAM_WINDOW_DAYS - 1)), iso(new Date())];
+
+async function loadTeamHours() {
+  if (!state.teamMemberId) return;
+  const [from, to] = teamWindow();
+  state.teamBusy = 'hours';
+  state.teamError = '';
+  render();
+  try {
+    state.teamRows = await API.team.entries(state.teamMemberId, from, to);
+  } catch (err) {
+    state.teamRows = [];
+    state.teamError = err.message || 'Could not read those hours.';
+  } finally {
+    state.teamBusy = '';
+    render();
+  }
+}
+
+async function loadTeamDashboard() {
+  const [from, to] = teamWindow();
+  state.teamError = '';
+  try {
+    state.teamDash = await API.team.dashboard(from, to);
+  } catch (err) {
+    state.teamDash = null;
+    state.teamError = err.message || 'Could not read the dashboard.';
+  }
+  render();
+}
+
+/* One field of one row. The local copy is updated from what the server
+   confirms rather than from what was typed, so a refused edit shows the real
+   value rather than the one that did not take. */
+async function teamEdit(id, patch) {
+  state.teamError = '';
+  try {
+    const out = await API.team.editEntry(id, patch);
+    state.teamRows = state.teamRows.map((r) => (r.id === id ? Object.assign({}, r, out) : r));
+  } catch (err) {
+    state.teamError = err.message || 'That edit was refused.';
+    await loadTeamHours();
+    return;
+  }
+  render();
+}
+
+const TEAM_TABS = [['people', 'People'], ['projects', 'Projects'], ['hours', 'Hours'], ['dashboard', 'Dashboard']];
+
+function teamPeopleTab() {
+  const t = state.team;
+  const cap = t.team.seatCap;
+  const rows = t.members.map((m) => {
+    const isMe = m.userId === t.me.userId;
+    const canManage = teamIsSuper() ? m.role !== 'super' : (teamIsAdmin() && m.role === 'member' && !isMe);
+    return `
+    <div class="tm-row">
+      <div class="tm-who">
+        <span class="tm-name">${esc(m.name || m.email)}${isMe ? ' <span class="tm-you">you</span>' : ''}</span>
+        <span class="tm-mail">${esc(m.email)}</span>
+      </div>
+      <span class="tm-role tm-role-${esc(m.role)}">${esc(m.role === 'super' ? 'Owner' : m.role)}</span>
+      ${teamIsSuper() && m.role !== 'super' ? `
+        <button class="tm-act" data-act="team-role" data-id="${esc(String(m.userId))}"
+          data-v="${m.role === 'admin' ? 'member' : 'admin'}">${m.role === 'admin' ? 'Make member' : 'Make admin'}</button>` : ''}
+      ${canManage ? `<button class="tm-act tm-drop" data-act="team-remove" data-id="${esc(String(m.userId))}">Remove</button>` : ''}
+    </div>`;
+  }).join('');
+
+  /* The server does not send these to a member, and this does not draw them
+     either. Belt and braces on purpose: a list of who has been asked to join
+     is an admin's business, and the client should not be the only thing
+     standing between a member and it — nor the server. */
+  const invites = (teamIsAdmin() ? t.invites : []).map((i) => `
+    <div class="tm-row tm-pending">
+      <div class="tm-who">
+        <span class="tm-name">${esc(i.email)}</span>
+        <span class="tm-mail">Invited · ${esc(i.role)}</span>
+      </div>
+      <button class="tm-act tm-drop" data-act="team-revoke" data-v="${esc(i.email)}">Withdraw</button>
+    </div>`).join('');
+
+  return `
+    <div class="tm-cap">${t.seatsUsed} of ${cap ? cap : 'unlimited'} on the <strong>${esc(t.team.planLabel)}</strong> plan</div>
+    <div class="tm-list">${rows}${invites}</div>
+    ${teamIsAdmin() ? `
+    <div class="tm-add">
+      <input class="input" type="email" data-k="team-invite" data-sync="teamInviteEmail"
+        value="${esc(state.teamInviteEmail)}" placeholder="Their work email" autocomplete="off">
+      ${teamIsSuper() ? `
+      <select class="input tm-as" data-change="team-invite-role">
+        <option value="member"${state.teamInviteRole === 'member' ? ' selected' : ''}>as member</option>
+        <option value="admin"${state.teamInviteRole === 'admin' ? ' selected' : ''}>as admin</option>
+      </select>` : ''}
+      <button class="btn btn-primary" data-act="team-invite"${state.teamBusy === 'invite' ? ' disabled' : ''}>${state.teamBusy === 'invite' ? 'Sending…' : 'Invite'}</button>
+    </div>
+    ${state.teamInviteLink ? `
+    <div class="tm-link">
+      <span>Send them this link:</span>
+      <code>${esc(state.teamInviteLink)}</code>
+    </div>` : ''}` : ''}`;
+}
+
+function teamProjectsTab() {
+  const rows = teamProjects().map((p) => `
+    <div class="tm-row">
+      <span class="tm-dot" style="background:${esc(p.color || 'var(--color-accent)')};"></span>
+      <div class="tm-who"><span class="tm-name">${esc(p.name)}</span></div>
+      ${teamIsAdmin() ? `<button class="tm-act tm-drop" data-act="team-project-drop" data-v="${esc(p.id)}">Remove</button>` : ''}
+    </div>`).join('');
+
+  return `
+    <div class="tm-list">${rows || '<p class="tm-empty">No projects yet.</p>'}</div>
+    ${teamIsAdmin() ? `
+    <div class="tm-add">
+      <input class="input" type="text" data-k="team-project" data-sync="teamProjectName"
+        value="${esc(state.teamProjectName)}" placeholder="New project name" autocomplete="off">
+      <button class="btn btn-primary" data-act="team-project-add"${state.teamBusy === 'project' ? ' disabled' : ''}>Add</button>
+    </div>` : ''}`;
+}
+
+/* An admin reading somebody's hours. Only entries against a project come back
+   — the server will not send any other kind — so this cannot show a meal even
+   if it wanted to. */
+function teamHoursTab() {
+  const t = state.team;
+  const picker = `
+    <select class="input tm-as" data-change="team-member">
+      <option value="">Choose someone…</option>
+      ${t.members.map((m) => `<option value="${esc(String(m.userId))}"${String(state.teamMemberId) === String(m.userId) ? ' selected' : ''}>${esc(m.name || m.email)}</option>`).join('')}
+    </select>`;
+
+  if (!state.teamMemberId) return `${picker}<p class="tm-empty">Pick someone to see the hours they logged against your projects.</p>`;
+  if (state.teamBusy === 'hours') return `${picker}<p class="tm-empty">Reading…</p>`;
+  if (!state.teamRows.length) return `${picker}<p class="tm-empty">Nothing logged against a project in this window.</p>`;
+
+  const opts = teamProjects();
+  return `${picker}
+    <div class="tm-hours">
+      ${state.teamRows.map((r) => `
+      <div class="tm-hrow">
+        <input class="input tm-hact" type="text" value="${esc(r.activity)}" data-change="team-edit-activity" data-id="${esc(r.id)}">
+        <input class="input tm-htime" type="time" value="${esc(hm(r.from))}" data-change="team-edit-from" data-id="${esc(r.id)}">
+        <input class="input tm-htime" type="time" value="${esc(hm(r.to))}" data-change="team-edit-to" data-id="${esc(r.id)}">
+        <select class="input tm-hproj" data-change="team-edit-project" data-id="${esc(r.id)}">
+          ${opts.map((p) => `<option value="${esc(p.id)}"${p.id === r.project ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}
+        </select>
+        <span class="tm-hdate">${esc(dayLabel(r.date))}</span>
+      </div>`).join('')}
+    </div>
+    <p class="tm-foot">Only hours logged against a project are here. What someone eats, spends or sleeps is never shown to an admin.</p>`;
+}
+
+function teamDashboardTab() {
+  const d = state.teamDash;
+  if (!d) return '<p class="tm-empty">Loading…</p>';
+  const top = Math.max(1, ...d.byProject.map((p) => Number(p.minutes)), ...d.byMember.map((m) => Number(m.minutes)));
+  const bar = (label, minutes, color) => `
+    <div class="tm-bar">
+      <span class="tm-blabel">${esc(label)}</span>
+      <span class="tm-btrack"><span class="tm-bfill" style="width:${Math.round((Number(minutes) / top) * 100)}%;background:${esc(color || 'var(--color-accent)')};"></span></span>
+      <span class="tm-bval">${esc(durShort(Number(minutes)))}</span>
+    </div>`;
+
+  return `
+    <div class="tm-sub">By project</div>
+    ${d.byProject.map((p) => bar(p.name, p.minutes, p.color)).join('') || '<p class="tm-empty">No projects yet.</p>'}
+    <div class="tm-sub">By person</div>
+    ${d.byMember.map((m) => bar(m.name || m.email, m.minutes, null)).join('')}
+    <p class="tm-foot">Hours logged against your projects, over the last 30 days.</p>`;
+}
+
+function teamStartBody() {
+  return `
+    <p>A team is a separate space for work hours: projects to log against, people you invite by email, and a reading of where the week went. Nothing personal from this account is part of it.</p>
+    <div class="tm-add" style="margin-top:14px;">
+      <input class="input" type="text" data-k="team-name" data-sync="teamName"
+        value="${esc(state.teamName)}" placeholder="What is the team called?" autocomplete="off">
+      <button class="btn btn-primary" data-act="team-create"${state.teamBusy === 'create' ? ' disabled' : ''}>${state.teamBusy === 'create' ? 'Creating…' : 'Create'}</button>
+    </div>
+    <p class="tm-foot">You will own it, and start on the trial plan — three people, including you.</p>`;
+}
+
+function teamSheet() {
+  if (!state.teamOpen) return '';
+  const has = state.team && state.team.team;
+
+  const body = !has ? teamStartBody() : `
+    <div class="seg tm-tabs">
+      ${TEAM_TABS.filter(([k]) => (k !== 'dashboard' || teamIsSuper()) && (k !== 'hours' || teamIsAdmin()))
+        .map(([k, label]) => `
+        <label class="seg-opt"><input type="radio" name="team-tab" data-act="team-tab" data-v="${k}"${state.teamTab === k ? ' checked' : ''}><span>${label}</span></label>`).join('')}
+    </div>
+    <div class="tm-body">
+      ${state.teamTab === 'projects' ? teamProjectsTab()
+        : state.teamTab === 'hours' && teamIsAdmin() ? teamHoursTab()
+        : state.teamTab === 'dashboard' && teamIsSuper() ? teamDashboardTab()
+        : teamPeopleTab()}
+    </div>
+    ${state.teamError ? `<p class="tm-err">${esc(state.teamError)}</p>` : ''}
+    ${state.teamNotice ? `<p class="tm-ok">${esc(state.teamNotice)}</p>` : ''}`;
+
+  return lightbox({
+    icon: 'shield',
+    tone: 'var(--color-accent)',
+    kicker: has ? esc(state.team.team.name) : 'Teams',
+    title: has ? 'Your team' : 'Start a team',
+    closeAct: 'team-close',
+    body,
+    actions: `<button class="btn btn-secondary" data-act="team-close">Done</button>`
   });
 }
 
@@ -8622,6 +9012,56 @@ const ACTIONS = {
     render();
   },
 
+  /* ── team ── */
+  'team-open': () => {
+    state.teamOpen = true;
+    state.teamError = ''; state.teamNotice = '';
+    render();
+    // Refreshed on open rather than trusted from boot: someone may have been
+    // added or removed since this tab was loaded.
+    loadTeam().then(render);
+  },
+  'team-close': () => {
+    state.teamOpen = false;
+    state.teamInviteLink = '';
+    state.teamError = ''; state.teamNotice = '';
+    render();
+  },
+  'team-tab': (el) => {
+    state.teamTab = el.dataset.v;
+    state.teamError = ''; state.teamNotice = '';
+    render();
+    if (state.teamTab === 'dashboard') loadTeamDashboard();
+  },
+  'team-create': () => {
+    const name = state.teamName.trim();
+    if (!name) { state.teamError = 'A team needs a name.'; render(); return; }
+    teamDo('create', () => API.team.create(name), 'Team created.').then(() => { state.teamName = ''; render(); });
+  },
+  'team-invite': () => {
+    const email = state.teamInviteEmail.trim();
+    if (!email) { state.teamError = 'Who are you inviting?'; render(); return; }
+    teamDo('invite', () => API.team.invite(email, state.teamInviteRole)).then((out) => {
+      if (!out) return;
+      state.teamInviteEmail = '';
+      // Shown as well as emailed: the server may have no mail configured, and
+      // a link an admin can copy beats an invitation nobody receives.
+      state.teamInviteLink = out.link || '';
+      state.teamNotice = `Invited ${out.email}.`;
+      render();
+    });
+  },
+  'team-revoke': (el) => teamDo('revoke', () => API.team.revoke(el.dataset.v), 'Invitation withdrawn.'),
+  'team-role': (el) => teamDo('role', () => API.team.role(Number(el.dataset.id), el.dataset.v), 'Role changed.'),
+  'team-remove': (el) => teamDo('remove', () => API.team.remove(Number(el.dataset.id)), 'Removed from the team.'),
+  'team-project-add': () => {
+    const name = state.teamProjectName.trim();
+    if (!name) { state.teamError = 'A project needs a name.'; render(); return; }
+    teamDo('project', () => API.team.project({ name, position: teamProjects().length }))
+      .then(() => { state.teamProjectName = ''; render(); });
+  },
+  'team-project-drop': (el) => teamDo('project', () => API.team.dropProject(el.dataset.v), 'Project removed.'),
+
   'prefs-open': () => { state.prefsOpen = true; render(); },
   'prefs-close': () => { state.prefsOpen = false; render(); },
   'pref-deduct': (el) => {
@@ -8739,6 +9179,22 @@ const CHANGES = {
   'entry-activity': (el) => updateEntry(el.dataset.id, { activity: el.value }),
   'log-filter': (el) => { state.logFilter = el.value || ''; render(); },
   'entry-category': (el) => updateEntry(el.dataset.id, { category: el.value }),
+  /* ── team ──
+     Each edit goes straight to the server rather than into a local copy: these
+     are somebody else's rows, they do not live in this device's state, and
+     there is nothing here for the sync to carry. */
+  'team-invite-role': (el) => { state.teamInviteRole = el.value; },
+  'team-member': (el) => {
+    state.teamMemberId = el.value || null;
+    state.teamRows = [];
+    if (state.teamMemberId) loadTeamHours();
+    else render();
+  },
+  'team-edit-activity': (el) => teamEdit(el.dataset.id, { activity: el.value }),
+  'team-edit-from': (el) => teamEdit(el.dataset.id, { from: parseHm(el.value) }),
+  'team-edit-to': (el) => teamEdit(el.dataset.id, { to: parseHm(el.value) }),
+  'team-edit-project': (el) => teamEdit(el.dataset.id, { project: el.value }),
+
   'entry-from': (el) => updateEntry(el.dataset.id, { from: parseHm(el.value) }),
   'entry-to': (el) => updateEntry(el.dataset.id, { to: parseHm(el.value) }),
   'money-activity': (el) => updateMoney(el.dataset.id, { activity: el.value }),
@@ -10887,6 +11343,7 @@ function mAccountSheet() {
   <div style="font-family:var(--font-heading);font-weight:700;font-size:23px;color:#16131f;">${esc(state.displayName || 'Your account')}</div>
   ${email ? `<p style="margin:4px 0 18px;font-size:13.5px;color:#756f88;">${esc(email)}</p>` : '<div style="height:18px;"></div>'}
   <button class="btn btn-secondary" data-act="m-classic" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">Full view</button>
+  <button class="btn btn-secondary" data-act="team-open" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">${state.team && state.team.team ? esc(state.team.team.name) : 'Start a team'}</button>
   <button class="btn btn-secondary" data-act="prefs-open" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">Preferences</button>
   <!-- The phone app had no route to either of these at all, which is not a
        thing to ship an app to strangers without. -->
@@ -10927,6 +11384,7 @@ function mobileApp() {
   ${chatConsentDialog()}
   ${recapDialog()}
   ${prefsDialog()}
+  ${teamSheet()}
   <!-- Same reasoning, and it was missing: toggleTimer is shared with this
        layout and raises a note prompt when it stops, so the phone could set a
        prompt that nothing here drew — the question was asked and then swallowed,
@@ -11020,9 +11478,9 @@ function mCommit() {
        rule the rest of the app already reads `to < from` by. */
     const patch = { date: to < from ? nextDay(date) : date, activity: label, category: s.cat, from, to, note };
     if (s.editId) {
-      state.entries = state.entries.map((r) => (r.id === s.editId ? touch('entries', Object.assign({}, r, patch)) : r));
+      state.entries = state.entries.map((r) => (r.id === s.editId ? touch('entries', withProject(Object.assign({}, r, patch))) : r));
     } else {
-      state.entries = state.entries.concat([touch('entries', Object.assign({ id: 'm' + Date.now() }, patch))]);
+      state.entries = state.entries.concat([touch('entries', withProject(Object.assign({ id: 'm' + Date.now() }, patch)))]);
     }
   }
   state.selectedDate = date;

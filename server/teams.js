@@ -36,6 +36,16 @@ export const PLANS = {
 };
 
 export const ROLES = ['super', 'admin', 'member'];
+
+/* What a new team starts with. Named for the shape of a working week rather
+   than for anything clever — "Project 1" is meant to be renamed, and its being
+   obviously a placeholder is the instruction. */
+export const DEFAULT_PROJECTS = [
+  ['Admin Works', '#7856f5'],
+  ['Project 1', '#0e9f6e'],
+  ['Break Time', '#e9a13b'],
+  ['Meetings', '#4f46e5']
+];
 const RANK = { super: 3, admin: 2, member: 1 };
 
 /* ── the pure rules ──
@@ -153,6 +163,18 @@ export async function createTeam(userId, name) {
     [id, clean, 'trial', capFor('trial'), t, t]);
   await query('INSERT INTO team_members (team_id, user_id, role, joined_at, updated_at) VALUES (?, ?, ?, ?, ?)',
     [id, userId, 'super', t, t]);
+
+  /* Something to log against from the first minute. An empty team is a timer
+     with nowhere to put the hour, and the first thing anybody does is start
+     the timer — so the four a working week actually divides into are there,
+     ready to be renamed into whatever this team calls them. */
+  for (let i = 0; i < DEFAULT_PROJECTS.length; i++) {
+    const [name, color] = DEFAULT_PROJECTS[i];
+    await query(
+      'INSERT INTO team_projects (team_id, id, name, color, position, archived, updated_at, deleted) VALUES (?, ?, ?, ?, ?, 0, ?, 0)',
+      [id, newId(), name, color, i, t]);
+  }
+
   return { id, name: clean, plan: 'trial', role: 'super' };
 }
 

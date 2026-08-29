@@ -1243,6 +1243,81 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .plan-go { margin-top: auto; width: 100%; min-height: 44px; border-radius: 999px; justify-content: center; }
   .plans-foot { margin: 14px 0 0; text-align: center; font-size: 12.5px; color: var(--color-neutral-600); }
 
+  /* — the team sheet —
+     One lightbox with tabs rather than a screen of its own: managing a team is
+     something you do occasionally and then leave, and a page you have to
+     navigate back out of is the wrong shape for that. */
+  .tm-tabs { display: flex; width: 100%; margin-bottom: 14px; }
+  .tm-tabs .seg-opt { flex: 1 1 0; justify-content: center; }
+  .tm-body { text-align: left; min-height: 120px; }
+  .tm-cap { font-size: 12.5px; color: var(--color-neutral-700); margin-bottom: 10px; }
+  .tm-list { display: flex; flex-direction: column; }
+  .tm-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 0; border-top: 1px solid var(--color-divider);
+  }
+  .tm-row:first-child { border-top: 0; }
+  .tm-pending { opacity: .72; }
+  .tm-who { display: flex; flex-direction: column; min-width: 0; margin-right: auto; }
+  .tm-name { font-size: 14px; font-weight: 600; }
+  .tm-mail { font-size: 11.5px; color: var(--color-neutral-600); }
+  .tm-you { font-weight: 400; font-size: 11px; color: var(--color-neutral-600); }
+  .tm-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; }
+  .tm-role {
+    flex: none; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
+    padding: 3px 9px; border-radius: 999px; background: var(--color-neutral-200); color: var(--color-neutral-800);
+  }
+  .tm-role-super { background: color-mix(in srgb, var(--color-accent) 18%, transparent); color: var(--color-accent-900); }
+  .tm-act {
+    flex: none; min-height: 32px; padding: 0 11px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--color-divider); background: var(--color-surface);
+    font-family: var(--font-body); font-size: 12px; font-weight: 600; color: var(--color-text);
+  }
+  .tm-act:hover { border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); }
+  .tm-drop { color: #8a2f4a; }
+  .tm-drop:hover { border-color: color-mix(in srgb, #8a2f4a 45%, transparent); }
+  .tm-add { display: flex; gap: 8px; margin-top: 14px; }
+  .tm-add .input { flex: 1 1 0; min-width: 0; min-height: 44px; }
+  .tm-add .btn { flex: none; min-height: 44px; border-radius: 999px; }
+  .tm-as { flex: 0 0 auto; min-height: 44px; }
+  /* The invitation link, shown as well as emailed. Breaks anywhere: a token is
+     one long unbroken word and would otherwise push the dialog sideways. */
+  .tm-link {
+    margin-top: 10px; padding: 10px 12px; border-radius: 12px;
+    background: var(--color-neutral-200); font-size: 11.5px; text-align: left;
+  }
+  .tm-link code { display: block; margin-top: 4px; word-break: break-all; font-size: 11px; }
+  .tm-empty, .tm-foot { font-size: 12.5px; line-height: 1.5; color: var(--color-neutral-600); margin: 12px 0 0; }
+  .tm-err { font-size: 12.5px; color: #8a2f4a; margin: 10px 0 0; }
+  .tm-ok { font-size: 12.5px; color: #16a394; margin: 10px 0 0; }
+  .tm-sub {
+    font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--color-neutral-600); margin: 14px 0 8px;
+  }
+
+  /* Somebody else's hours, editable in place. Scrolls inside itself so a busy
+     month does not make the dialog taller than the screen. */
+  .tm-hours { max-height: 46vh; overflow: auto; margin-top: 12px; }
+  .tm-hrow {
+    display: grid; grid-template-columns: minmax(0, 1fr) 84px 84px minmax(0, 110px) auto;
+    gap: 6px; align-items: center; padding: 6px 0;
+    border-top: 1px solid var(--color-divider);
+  }
+  .tm-hrow .input { min-height: 38px; font-size: 12.5px; padding-inline: 8px; }
+  .tm-hdate { font-size: 11px; color: var(--color-neutral-600); white-space: nowrap; }
+  @media (max-width: 560px) {
+    .tm-hrow { grid-template-columns: minmax(0, 1fr) 72px 72px; }
+    .tm-hproj { grid-column: 1 / -1; }
+    .tm-hdate { grid-column: 1 / -1; }
+  }
+
+  /* — the owner's dashboard — */
+  .tm-bar { display: flex; align-items: center; gap: 10px; padding: 5px 0; }
+  .tm-blabel { flex: 0 0 34%; min-width: 0; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tm-btrack { flex: 1 1 0; height: 10px; border-radius: 999px; background: var(--color-neutral-200); overflow: hidden; }
+  .tm-bfill { display: block; height: 100%; border-radius: 999px; }
+  .tm-bval { flex: none; font-size: 11.5px; color: var(--color-neutral-700); min-width: 44px; text-align: right; }
+
   /* — preferences —
      One row per standing answer. The segmented control is the app's own, given
      room to breathe and allowed to fill the width: three options at the

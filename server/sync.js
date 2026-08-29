@@ -14,6 +14,7 @@
    a sync endpoint that silently discards data is worse than one that errors. */
 
 import { query, one, transaction, now } from './db.js';
+import { membershipFor } from './teams.js';
 
 class Invalid extends Error {}
 const fail = (msg) => { throw new Invalid(msg); };
@@ -65,7 +66,7 @@ export const CURRENCIES = ['PHP', 'AED', 'USD', 'EUR', 'SGD', 'HKD'];
 
 export async function changesSince(userId, since) {
   const [entries, money, categories, purposes, user] = await Promise.all([
-    query(`SELECT id, date, activity, category, from_min, to_min, note, updated_at, deleted
+    query(`SELECT id, date, activity, category, project_id, from_min, to_min, note, updated_at, deleted
              FROM entries WHERE user_id = ? AND updated_at > ?`, [userId, since]),
     query(`SELECT id, date, activity, purpose, amount_in, amount_out, off_budget, note, updated_at, deleted
              FROM money_entries WHERE user_id = ? AND updated_at > ?`, [userId, since]),
@@ -86,6 +87,10 @@ export async function changesSince(userId, since) {
   return {
     entries: entries.map((r) => ({
       id: r.id, date: r.date, activity: r.activity, category: r.category,
+      /* Sent only when there is one, like offBudget below: an absent field
+         means a personal entry, which is what every row written before teams
+         existed was. */
+      project: r.project_id || undefined,
       from: r.from_min, to: r.to_min, note: r.note || '',
       updatedAt: Number(r.updated_at), deleted: !!r.deleted
     })),
@@ -145,10 +150,10 @@ export async function changesSince(userId, since) {
 const guard = (col) => `${col} = IF(VALUES(updated_at) >= updated_at, VALUES(${col}), ${col})`;
 
 const UPSERT_ENTRY = `
-  INSERT INTO entries (user_id, id, date, activity, category, from_min, to_min, note, updated_at, deleted)
-  VALUES (?,?,?,?,?,?,?,?,?,?)
+  INSERT INTO entries (user_id, id, team_id, date, activity, category, project_id, from_min, to_min, note, updated_at, deleted)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
   ON DUPLICATE KEY UPDATE
-    ${['date', 'activity', 'category', 'from_min', 'to_min', 'note', 'deleted'].map(guard).join(',\n    ')},
+    ${['team_id', 'date', 'activity', 'category', 'project_id', 'from_min', 'to_min', 'note', 'deleted'].map(guard).join(',\n    ')},
     updated_at = GREATEST(updated_at, VALUES(updated_at))`;
 
 const UPSERT_MONEY = `
@@ -173,14 +178,35 @@ export async function applyChanges(userId, changes) {
   /* A tombstone only has to identify the row and say when it died — the client
      drops the body on delete, so the remaining columns are placeholders. They
      are never read: anything holding this row removes it on sight. */
+  /* Which team this person is in, and which projects it owns — read from the
+     server, never from the request. A client can say which project an hour
+     belongs to; it cannot say which team it belongs to, and it cannot name a
+     project that is not its team's. Both would be a way to write a row into
+     somebody else's records. */
+  const membership = await membershipFor(userId);
+  const teamId = membership ? membership.teamId : null;
+  const ownProjects = teamId
+    ? new Set((await query('SELECT id FROM team_projects WHERE team_id = ? AND deleted = 0', [teamId])).map((r) => r.id))
+    : new Set();
+
+  const projectOf = (e, at) => {
+    const p = e.project == null ? '' : String(e.project).trim();
+    if (!p) return null;
+    if (!teamId) throw new Invalid(`${at}.project: you are not in a team.`);
+    if (!ownProjects.has(p)) throw new Invalid(`${at}.project: no such project on your team.`);
+    return p;
+  };
+
   const entries = list(c.entries, 'entries').map((e, i) => {
     const at = `entries[${i}]`;
     const id = str(e.id, `${at}.id`, 64);
     const when = stamp(e.updatedAt, `${at}.updatedAt`);
-    if (e.deleted) return [userId, id, '1970-01-01', '', '', 0, 0, null, when, 1];
-    return [userId, id, isoDate(e.date, `${at}.date`),
+    if (e.deleted) return [userId, id, null, '1970-01-01', '', '', null, 0, 0, null, when, 1];
+    const project = projectOf(e, at);
+    return [userId, id, project ? teamId : null, isoDate(e.date, `${at}.date`),
       str(e.activity, `${at}.activity`, 200, { allowEmpty: true }),
       str(e.category, `${at}.category`, 60),
+      project,
       int(e.from, `${at}.from`, 0, 1440), int(e.to, `${at}.to`, 0, 1440),
       str(e.note ?? '', `${at}.note`, 500, { allowEmpty: true }),
       when, 0];
