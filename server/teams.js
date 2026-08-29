@@ -28,12 +28,38 @@ export class TeamError extends Error {
    nobody has paid for is the trial. `cap` 0 is the unlimited plan. */
 export const PLANS = {
   trial: { label: 'Trial', cap: 3, price: 0 },
-  team6: { label: 'Team of 6', cap: 6, price: 9 },
-  team12: { label: 'Team of 12', cap: 12, price: 15 },
-  team20: { label: 'Team of 20', cap: 20, price: 22 },
-  team50: { label: 'Team of 50', cap: 50, price: 30 },
-  unlimited: { label: 'Unlimited', cap: 0, price: 100 }
+  team6: { label: 'Team of 6', nickname: 'Starter', cap: 6, price: 9, paypal: 'L2TA54N2MGAEC' },
+  team12: { label: 'Team of 12', nickname: 'Squad', cap: 12, price: 15, paypal: 'LWSN5Y8ETFSSJ' },
+  team20: { label: 'Team of 20', nickname: 'Business', cap: 20, price: 22, paypal: 'NYRHVDWH6SXN8' },
+  team50: { label: 'Team of 50', nickname: 'Max', cap: 50, price: 30, paypal: 'AZBJMFGCVEK98' },
+  unlimited: { label: 'Unlimited', nickname: 'Unlimited', cap: 0, price: 100, paypal: 'C7ZHCA5ZMUG8G' }
 };
+
+/* ── the trial, and what running out of it means ──
+
+   Fourteen days from the day the team is made. Billing is reconciled by hand,
+   so an expiry that locked people out of their own hours would punish a team
+   for the time it takes somebody to match a PayPal receipt to a team name —
+   and their hours are their work record, not a hostage.
+
+   So an expired trial stops the team from being a team: no inviting, no new
+   projects, no reading anyone else's hours, no dashboard. Everyone keeps
+   logging their own time and reading their own cards, and nothing is deleted.
+   Setting any paid plan makes all of it work again, whenever that happens. */
+export const TRIAL_DAYS = 14;
+
+export const TRIAL_OVER =
+  'Your trial has ended. Subscribe to a plan and your team is back to normal — nothing has been lost, and everyone can still log their own hours.';
+
+/* 'active' once anything has been paid for, whatever the dates say — a plan
+   set by hand is the record of payment, and it outranks the clock. */
+export function teamStatus(team) {
+  if (!team) return 'none';
+  if (team.plan && team.plan !== 'trial') return 'active';
+  const ends = Number(team.trialEndsAt || team.trial_ends_at || 0);
+  if (!ends) return 'trial';
+  return now() < ends ? 'trial' : 'expired';
+}
 
 export const ROLES = ['super', 'admin', 'member'];
 
@@ -150,7 +176,7 @@ export async function requireWorkAccount(userId) {
 export async function membershipFor(userId) {
   if (!userId) return null;
   return one(
-    `SELECT tm.team_id AS teamId, tm.role, t.name, t.plan, t.seat_cap AS seatCap
+    `SELECT tm.team_id AS teamId, tm.role, t.name, t.plan, t.seat_cap AS seatCap, t.trial_ends_at AS trialEndsAt
        FROM team_members tm JOIN teams t ON t.id = tm.team_id
       WHERE tm.user_id = ?`, [userId]);
 }
@@ -159,6 +185,14 @@ async function requireMembership(userId, needed) {
   const m = await membershipFor(userId);
   if (!m) throw new TeamError('You are not in a team.', 403);
   if (needed && !atLeast(m.role, needed)) throw new TeamError('That is not yours to do.', 403);
+  return m;
+}
+
+/* For the things a team does as a team. Reading and logging your own hours
+   never comes through here — that is yours whatever the billing says. */
+async function requireLive(userId, needed) {
+  const m = await requireMembership(userId, needed);
+  if (teamStatus(m) === 'expired') throw new TeamError(TRIAL_OVER, 402);
   return m;
 }
 
@@ -181,8 +215,9 @@ export async function createTeam(userId, name) {
 
   const id = newId();
   const t = now();
-  await query('INSERT INTO teams (id, name, plan, seat_cap, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-    [id, clean, 'trial', capFor('trial'), t, t]);
+  await query(
+    'INSERT INTO teams (id, name, plan, seat_cap, trial_ends_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [id, clean, 'trial', capFor('trial'), t + TRIAL_DAYS * 86400000, t, t]);
   await query('INSERT INTO team_members (team_id, user_id, role, joined_at, updated_at) VALUES (?, ?, ?, ?, ?)',
     [id, userId, 'super', t, t]);
 
@@ -221,8 +256,16 @@ export async function teamOverview(userId) {
     : [];
 
   const plan = PLANS[m.plan] || PLANS.trial;
+  const status = teamStatus(m);
+  const ends = Number(m.trialEndsAt || 0);
   return {
-    team: { id: m.teamId, name: m.name, plan: m.plan, planLabel: plan.label, seatCap: plan.cap },
+    team: {
+      id: m.teamId, name: m.name, plan: m.plan, planLabel: plan.label, seatCap: plan.cap,
+      status,
+      trialEndsAt: ends || null,
+      // Floored at zero rather than going negative, which reads as nonsense.
+      trialDaysLeft: status === 'trial' && ends ? Math.max(0, Math.ceil((ends - now()) / 86400000)) : 0
+    },
     me: { userId, role: m.role },
     members, projects, invites,
     seatsUsed: members.length + invites.length
@@ -233,7 +276,7 @@ export async function teamOverview(userId) {
    The only door into a team. Returns the token so the caller can put it in the
    email; only its hash is stored, so a leaked table is not a set of keys. */
 export async function inviteMember(userId, email, role) {
-  const m = await requireMembership(userId, 'admin');
+  const m = await requireLive(userId, 'admin');
   const want = ROLES.includes(role) ? role : 'member';
   if (!canGrant(m.role, want)) throw new TeamError('That is not yours to grant.', 403);
 
@@ -338,7 +381,7 @@ export async function removeMember(userId, targetUserId) {
 
 /* ── projects ── */
 export async function saveProject(userId, project) {
-  const m = await requireMembership(userId, 'admin');
+  const m = await requireLive(userId, 'admin');
   const name = String((project && project.name) || '').trim().slice(0, 120);
   if (!name) throw new TeamError('A project needs a name.');
   const id = String((project && project.id) || '').trim().slice(0, 64) || newId();
@@ -356,7 +399,7 @@ export async function saveProject(userId, project) {
 }
 
 export async function deleteProject(userId, projectId) {
-  const m = await requireMembership(userId, 'admin');
+  const m = await requireLive(userId, 'admin');
   /* Buried rather than dropped, like every other row this app deletes: the
      hours logged against it are still real, and a project row that vanishes
      turns them into time nobody can account for. */
@@ -369,7 +412,7 @@ export async function deleteProject(userId, projectId) {
 /* ── a member's hours ──
    Both of these read through ADMIN_ENTRY_WHERE and nothing else. */
 export async function memberEntries(userId, targetUserId, from, to) {
-  const m = await requireMembership(userId, 'admin');
+  const m = await requireLive(userId, 'admin');
   const target = await one('SELECT role FROM team_members WHERE team_id = ? AND user_id = ?', [m.teamId, targetUserId]);
   if (!target) throw new TeamError('They are not on this team.', 404);
 
@@ -382,7 +425,7 @@ export async function memberEntries(userId, targetUserId, from, to) {
 }
 
 export async function editMemberEntry(userId, entryId, patch) {
-  const m = await requireMembership(userId, 'admin');
+  const m = await requireLive(userId, 'admin');
   const fields = cleanEntryPatch(patch);
   if (!Object.keys(fields).length) throw new TeamError('Nothing to change.');
 
@@ -409,7 +452,7 @@ export async function editMemberEntry(userId, entryId, patch) {
 /* ── the owner's dashboard ──
    Hours by project and hours by person, over a window. Nothing but hours. */
 export async function teamDashboard(userId, from, to) {
-  const m = await requireMembership(userId, 'super');
+  const m = await requireLive(userId, 'super');
   const range = [m.teamId, String(from || '0000-01-01'), String(to || '9999-12-31')];
 
   const byProject = await query(

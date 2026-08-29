@@ -205,6 +205,9 @@ CREATE TABLE IF NOT EXISTS teams (
   -- caps. `seat_cap` 0 means the unlimited plan.
   plan        VARCHAR(24)   NOT NULL DEFAULT 'trial',
   seat_cap    SMALLINT UNSIGNED NOT NULL DEFAULT 3,
+  -- When the free trial runs out. Null means it never started counting, which
+  -- teamStatus reads as still running rather than as over.
+  trial_ends_at BIGINT      NULL,
   created_at  BIGINT        NOT NULL,
   updated_at  BIGINT        NOT NULL,
   PRIMARY KEY (id)

@@ -4015,6 +4015,9 @@ const LANDING_FEATURES = [
    there is copied on deploy — and name it here. Nothing else has to change. */
 const TEAM_HERO = 'ds/team-hero.svg';
 
+// Matches TRIAL_DAYS in server/teams.js, where it is actually enforced.
+const TEAM_TRIAL_DAYS = 14;
+
 const TEAM_CHECKS = ['Project Time Tracking', 'Per-Member Reports', 'Team Productivity Overview', 'Roles and Access Control'];
 
 const TEAM_FEATURES = [
@@ -4030,13 +4033,37 @@ const TEAM_FEATURES = [
 
 /* Priced per team rather than per seat: a team of six paying for six is the
    sort of arithmetic that punishes hiring. The cap is the promise. */
+/* [key, label, nickname, seats, price, PayPal hosted button id].
+
+   The button ids are not secrets — they are in the markup of every PayPal
+   button on the web, and a hosted button can only ever charge what it was set
+   up to charge. Kept here beside the price they belong to so the two cannot
+   drift; the server holds the same table, and a test compares them. */
 const TEAM_PLANS = [
-  ['Team of 6', 6, 9, null],
-  ['Team of 12', 12, 15, null],
-  ['Team of 20', 20, 22, null],
-  ['Team of 50', 50, 30, null],
-  ['Unlimited', 0, 100, null]
+  ['team6', 'Team of 6', 'Starter', 6, 9, 'L2TA54N2MGAEC'],
+  ['team12', 'Team of 12', 'Squad', 12, 15, 'LWSN5Y8ETFSSJ'],
+  ['team20', 'Team of 20', 'Business', 20, 22, 'NYRHVDWH6SXN8'],
+  ['team50', 'Team of 50', 'Max', 50, 30, 'AZBJMFGCVEK98'],
+  ['unlimited', 'Unlimited', 'Unlimited', 0, 100, 'C7ZHCA5ZMUG8G']
 ];
+
+/* PayPal's own hosted-button form, with their gif swapped for our button.
+
+   A hosted button is encrypted at PayPal's end, so it has to be POSTed as a
+   form — there is no link version that carries the same thing, and extra
+   variables are ignored, which is why the payment cannot carry a team id and
+   why the plan is matched to a team by hand afterwards.
+
+   target="_blank" where PayPal's snippet says "_top": this app is one document
+   holding unsaved state, and navigating the whole tab away to PayPal loses
+   whatever the person was in the middle of. */
+const paypalForm = (buttonId, label, extraClass) => `
+  <form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_blank" rel="noopener noreferrer" style="margin:0;">
+    <input type="hidden" name="cmd" value="_s-xclick">
+    <input type="hidden" name="hosted_button_id" value="${esc(buttonId)}">
+    <input type="hidden" name="currency_code" value="USD">
+    <button type="submit" class="btn btn-primary ${esc(extraClass || '')}">${esc(label)}</button>
+  </form>`;
 
 /* ── hero art ──
    The app's own surfaces, floating over the brand's ribbons. Drawn rather than
@@ -4213,16 +4240,18 @@ function landingScreen() {
 }
 
 function teamsScreen() {
-  const plan = ([name, seats, price, paypal]) => `
+  /* The button starts the account rather than the payment. A subscription that
+     arrives before there is a team to attach it to is a receipt nobody can
+     match: PayPal reports an email and an amount, and a hosted button cannot
+     be made to carry anything else. Make the team first and the payer's email
+     is the account's email, which is what makes the two findable. */
+  const plan = ([, label, nickname, seats, price]) => `
     <div class="plan">
-      <div class="plan-name">${esc(name)}</div>
+      ${nickname === label ? '<div class="plan-kicker">&nbsp;</div>' : `<div class="plan-kicker">${esc(nickname)}</div>`}
+      <div class="plan-name">${esc(label)}</div>
       <div class="plan-seats">${seats ? `Up to ${seats} people` : 'As many people as you like'}</div>
       <div class="plan-price"><span class="plan-amount">$${price}</span><span class="plan-per">/month</span></div>
-      ${paypal
-        ? `<a class="btn btn-primary plan-go" href="${esc(paypal)}" target="_blank" rel="noopener noreferrer">Choose this plan</a>`
-        /* No link yet, and a dead button would be worse than an honest one:
-           an account is the first step either way, so it goes there. */
-        : `<button class="btn btn-secondary plan-go" data-act="auth-open-work">Start this plan</button>`}
+      <button class="btn btn-secondary plan-go" data-act="auth-open-work">Start this plan</button>
     </div>`;
 
   return `
@@ -4322,7 +4351,7 @@ function teamsScreen() {
         <span class="strip-note">One price per team, not per seat</span>
       </div>
       <div class="plans">${TEAM_PLANS.map(plan).join('')}</div>
-      <p class="plans-foot">Billed monthly. The personal Zimpan stays free for everyone on your team.</p>
+      <p class="plans-foot">Start free for ${TEAM_TRIAL_DAYS} days with up to 3 people, then subscribe from inside your team. Billed monthly in USD. The personal Zimpan stays free for everyone.</p>
     </section>
 
     <footer style="padding:22px 28px 34px;display:flex;flex-direction:column;align-items:center;gap:12px;">
@@ -8312,7 +8341,55 @@ async function teamEdit(id, patch) {
   render();
 }
 
-const TEAM_TABS = [['people', 'People'], ['projects', 'Projects'], ['hours', 'Hours'], ['dashboard', 'Dashboard']];
+const TEAM_TABS = [['people', 'People'], ['projects', 'Projects'], ['hours', 'Hours'], ['dashboard', 'Dashboard'], ['billing', 'Billing']];
+
+const teamStatusOf = () => (state.team && state.team.team && state.team.team.status) || 'trial';
+const teamExpired = () => teamStatusOf() === 'expired';
+
+/* ── billing ──
+
+   The owner's tab, because the owner owns the payment. It shows what the team
+   is on, and the five subscribe buttons.
+
+   The team's name and id are shown next to them on purpose: PayPal reports an
+   email and an amount and nothing else, so the only way a receipt is matched
+   to a team is by somebody reading the two side by side. Quoting the id in a
+   note makes that a lookup rather than a guess. */
+function teamBillingTab() {
+  const t = state.team.team;
+  const status = teamStatusOf();
+  const paid = status === 'active';
+
+  const line = paid
+    ? `On the <strong>${esc(t.planLabel)}</strong> plan — up to ${t.seatCap ? t.seatCap : 'any number of'} people.`
+    : status === 'trial'
+      ? `Free trial — <strong>${t.trialDaysLeft} ${t.trialDaysLeft === 1 ? 'day' : 'days'} left</strong>, up to 3 people.`
+      : 'Your trial has ended. Everyone can still log their own hours; inviting, projects and the dashboard come back the moment a plan is on.';
+
+  return `
+    <div class="tm-bill-now tm-bill-${esc(status)}">${line}</div>
+
+    <div class="tm-quote">
+      <span>Quote this when you subscribe, so your payment finds your team:</span>
+      <code>${esc(t.name)} · ${esc(t.id)}</code>
+    </div>
+
+    <div class="tm-plans">
+      ${TEAM_PLANS.map(([key, label, nickname, seats, price, button]) => `
+      <div class="tm-plan${t.plan === key ? ' is-on' : ''}">
+        <div class="tm-plan-head">
+          <span class="tm-plan-name">${esc(label)}${nickname === label ? '' : `<span class="tm-plan-nick">${esc(nickname)}</span>`}</span>
+          <span class="tm-plan-price">$${price}<span>/mo</span></span>
+        </div>
+        <div class="tm-plan-seats">${seats ? `Up to ${seats} people` : 'As many people as you like'}</div>
+        ${t.plan === key
+          ? '<div class="tm-plan-on">Your plan</div>'
+          : paypalForm(button, 'Subscribe', 'tm-plan-go')}
+      </div>`).join('')}
+    </div>
+
+    <p class="tm-foot">Subscriptions are handled by PayPal in USD and open in a new tab. A plan is switched on by hand once the payment is matched to your team, so it can take a little while — nothing stops in the meantime except while a trial is over.</p>`;
+}
 
 function teamPeopleTab() {
   const t = state.team;
@@ -8348,7 +8425,9 @@ function teamPeopleTab() {
     </div>`).join('');
 
   return `
-    <div class="tm-cap">${t.seatsUsed} of ${cap ? cap : 'unlimited'} on the <strong>${esc(t.team.planLabel)}</strong> plan</div>
+    <div class="tm-cap">${t.seatsUsed} of ${cap ? cap : 'unlimited'} on the <strong>${esc(t.team.planLabel)}</strong> plan${
+      t.team.status === 'trial' ? ` · ${t.team.trialDaysLeft} ${t.team.trialDaysLeft === 1 ? 'day' : 'days'} left` : ''}${
+      t.team.status === 'expired' ? ' · ended' : ''}</div>
     <div class="tm-list">${rows}${invites}</div>
     ${teamIsAdmin() ? `
     <div class="tm-add">
@@ -8463,14 +8542,22 @@ function teamSheet() {
 
   const body = !has ? teamStartBody() : `
     <div class="seg tm-tabs">
-      ${TEAM_TABS.filter(([k]) => (k !== 'dashboard' || teamIsSuper()) && (k !== 'hours' || teamIsAdmin()))
+      ${TEAM_TABS.filter(([k]) => (k !== 'dashboard' || teamIsSuper())
+          && (k !== 'hours' || teamIsAdmin())
+          && (k !== 'billing' || teamIsSuper()))
         .map(([k, label]) => `
         <label class="seg-opt"><input type="radio" name="team-tab" data-act="team-tab" data-v="${k}"${state.teamTab === k ? ' checked' : ''}><span>${label}</span></label>`).join('')}
     </div>
+    ${teamExpired() && state.teamTab !== 'billing' ? `
+    <div class="tm-over">
+      <span>Your trial has ended — inviting, projects and the dashboard are paused. Your hours are untouched.</span>
+      ${teamIsSuper() ? '<button class="tm-act" data-act="team-tab" data-v="billing">See plans</button>' : ''}
+    </div>` : ''}
     <div class="tm-body">
       ${state.teamTab === 'projects' ? teamProjectsTab()
         : state.teamTab === 'hours' && teamIsAdmin() ? teamHoursTab()
         : state.teamTab === 'dashboard' && teamIsSuper() ? teamDashboardTab()
+        : state.teamTab === 'billing' && teamIsSuper() ? teamBillingTab()
         : teamPeopleTab()}
     </div>
     ${state.teamError ? `<p class="tm-err">${esc(state.teamError)}</p>` : ''}

@@ -232,6 +232,16 @@ async function alterExisting() {
      team_id rides alongside rather than being looked up through the project,
      so the authorization check is one predicate on the row itself and does not
      depend on a join that could be got wrong. */
+  /* The end of a team's trial. Nullable, and null on any team made before this
+     existed — teamStatus reads a missing date as "still in the trial" rather
+     than as expired, so nobody is cut off by a migration. */
+  const [tt] = await pool.query(
+    'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+    [CONFIG.database, 'teams', 'trial_ends_at']);
+  if (!tt.length) {
+    await pool.query('ALTER TABLE teams ADD COLUMN trial_ends_at BIGINT NULL AFTER seat_cap');
+  }
+
   const [proj] = await pool.query(
     'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME IN (?, ?)',
     [CONFIG.database, 'entries', 'project_id', 'team_id']);
