@@ -1617,7 +1617,7 @@ async function onGoogleCredential(response) {
     state.authBusy = false;
     state.authPassword = '';
     state.auth = res.user;
-    noteWrongProduct(res.user);
+    landAfterSignIn(res.user);
     await afterSignIn(res.user);
   } catch (err) {
     state.authBusy = false;
@@ -7748,7 +7748,30 @@ function noteWrongProduct(user) {
   const is = (user && user.kind) === 'work' ? 'work' : 'personal';
   const wanted = state.authFor === 'work' ? 'work' : 'personal';
   state.crossKind = is === wanted ? '' : is;
-  if (state.crossKind) state.route = 'home';
+}
+
+/* Where a successful sign-in leaves you.
+
+   Two things that were only ever true by accident on the personal page. The
+   panel was never closed on success — it just stopped being drawn, because
+   render() skips the whole signed-out branch once there is a session. And the
+   route was always 'home', so there was nothing to move.
+
+   Neither holds on /teams. That page is drawn ahead of the session gate on
+   purpose, so a product page reads the same signed in or out — which meant
+   signing in there left you on the pricing page with the panel still open,
+   looking for all the world like nothing had happened. Signing in is a request
+   to go and use the thing, so this takes you there, and the address follows so
+   Back does not bounce you into a page you have already left. */
+function landAfterSignIn(user) {
+  noteWrongProduct(user);
+  state.authOpen = false;
+  state.authError = '';
+  state.authNotice = '';
+  if (state.route !== 'home') {
+    state.route = 'home';
+    try { history.replaceState({ route: 'home' }, '', '/'); } catch (e) { /* file:// */ }
+  }
 }
 
 function crossKindDialog() {
@@ -7837,7 +7860,7 @@ async function submitAuth() {
     state.authBusy = false;
     state.authPassword = '';
     state.auth = res.user;
-    noteWrongProduct(res.user);
+    landAfterSignIn(res.user);
     await afterSignIn(res.user);
   } catch (err) {
     state.authBusy = false;
