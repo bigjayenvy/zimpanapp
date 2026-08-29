@@ -283,7 +283,31 @@ function followUpFor(kind, row) {
    because that ordering is the information. localeCompare rather than < so
    accented names land where a reader expects Vervé to be. */
 const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
-const pickCategories = () => state.categories.slice().sort(byName);
+
+/* ── work mode ──
+
+   Zimpan Teams is a different product from Zimpan, not a larger one. An account
+   in a team exists to measure how a working week was spent, so the personal
+   app's whole subject — what a body ate, how it slept, what it spent — is not
+   hidden here, it is absent: no surface offers it, and the only things to log
+   against are the team's projects.
+
+   Read from the team rather than from a setting, because it is not a
+   preference. The two products have different purposes and an account belongs
+   to one of them. */
+const workMode = () => !!(state.team && state.team.team);
+
+/* In work mode the pickable categories are the team's projects and nothing
+   else, so there is no way to file an hour against something personal.
+   Anything else the account happens to hold is left alone rather than deleted
+   — a category is not worth destroying to enforce a menu — it is simply not
+   offered. */
+const pickCategories = () => {
+  const all = state.categories.slice().sort(byName);
+  if (!workMode()) return all;
+  const names = new Set(teamProjects().filter((p) => !p.archived).map((p) => p.name));
+  return all.filter((c) => names.has(c.name));
+};
 const pickPurposes = () => state.purposes.slice().sort(byName);
 
 const catIcon = (name) => iconFor(name, '⏱️');
@@ -2391,6 +2415,10 @@ const DEFAULT_WEIGHT_KG = 70;
    as the effort it was. Returns nothing for the great majority of entries,
    which are neither. */
 function entryEnergy(e) {
+  /* Not this product's subject, and this is where the chip on every card comes
+     from — gating the blocks above left the rows themselves still pricing a
+     meeting in calories. See workMode(). */
+  if (workMode()) return null;
   const mins = span(e);
   if (!mins) return null;
 
@@ -3643,7 +3671,7 @@ function mobileNav(v) {
   return `
   <nav class="bottomnav no-print" aria-label="Main">
     ${item('app-time', 'time', 'Activity', !v.isMoney)}
-    ${item('app-money', 'money', 'Money', v.isMoney)}
+    ${workMode() ? '' : item('app-money', 'money', 'Money', v.isMoney)}
     <a class="bn-donate" href="${DONATE_URL}" data-donate target="_blank" rel="noopener noreferrer">
       <span class="bn-icon">${NAV_ICONS.donate}</span><span class="bn-label">Donate</span>
     </a>
@@ -3664,7 +3692,7 @@ function stickyBar(v) {
       padding: 7px 15px; border-radius: 999px; cursor: pointer; white-space: nowrap;">${esc(label)}</button>`;
 
   const controls = v.isMoney
-    ? `${pill('app-time', 'Activity Tracker', false)}${pill('app-money', 'Money Tracker', true)}`
+    ? `${pill('app-time', 'Activity Tracker', false)}${workMode() ? '' : pill('app-money', 'Money Tracker', true)}`
     : `${pill('entry-mode-timer', 'Track Real Time', state.entryMode === 'timer', ' data-jump="entry"')}
        ${pill('entry-mode-manual', 'Manual Entry', state.entryMode === 'manual', ' data-jump="entry"')}`;
 
@@ -3709,7 +3737,7 @@ function header(v) {
     ${wordmark(26, 20)}
     <div class="appbar-tabs" style="display: flex; border: 1px solid var(--color-divider); border-radius: 999px; overflow: hidden;">
       <button data-act="app-time" style="${tabStyle(!v.isMoney)}">Activity Tracker</button>
-      <button data-act="app-money" style="${tabStyle(v.isMoney)}">Money Tracker</button>
+      ${workMode() ? '' : `<button data-act="app-money" style="${tabStyle(v.isMoney)}">Money Tracker</button>`}
     </div>
     <div class="appbar-meta">
       <span data-geo>${esc(v.geoLabel)}</span><span style="opacity:.4">/</span><span data-now>${esc(v.nowLabel)}</span>
@@ -4762,7 +4790,22 @@ function chatFacts() {
   const readings = dimensionReadings(wellbeing(state.entries.filter((e) => inWindow(e.date)), state.steps), dates.length || 1)
     .map((r) => ({ dimension: r.label, minutesLogged: r.total, status: r.status, reading: r.note }));
 
+  /* A work account has no money, meals or sleep to describe, and sending an
+     empty shape of each would only invite the assistant to talk about things
+     this product does not do. The whole personal half is left out rather than
+     sent as zeroes. */
+  const work = workMode();
   const bal = moneyStatus(moneyAll());
+  if (work) {
+    return {
+      today: to,
+      window: { from, to, days: CHAT_DAYS },
+      product: 'Zimpan for Teams — work hours against projects. This account has no money, meal or sleep tracking; say so if asked about them.',
+      projects: teamProjects().map((p) => p.name),
+      truncated: { entries: state.entries.filter((e) => inWindow(e.date)).length > CHAT_ROWS },
+      entries
+    };
+  }
   return {
     today: to,
     window: { from, to, days: CHAT_DAYS },
@@ -5522,6 +5565,9 @@ function pillarSheet(v) {
    drawn twice on the page, so the weight editor needs to know which copy was
    asked for and the fields inside it need keys that do not collide. */
 function balanceGauges(food, burn, scope, stepDate) {
+  // Not this product's subject. See workMode().
+  if (workMode()) return '';
+
   /* A thirty-day total on a dial scaled for one day reads as wildly over-eaten
      every time, so a multi-day range is averaged and says so. Every figure is
      divided by the same span, which leaves the balance between them — the
@@ -5740,6 +5786,8 @@ function insightsCard(v) {
    every day run together, which is a worse question than the local reading
    already answers, and a much more expensive one. */
 function foodBlock(food, scope, canRefine) {
+  // Not this product's subject. See workMode().
+  if (workMode()) return '';
   if (!food) return '';
   const ai = food.ai;
   const busy = state.aiBusy === scope;
@@ -6159,6 +6207,9 @@ function cashBlock(v) {
    four pillars: sleep is not an activity, and a fifth card in a grid built for
    four would say it was. */
 function sleepBlock(sleep, scope) {
+  // Not this product's subject. See workMode().
+  if (workMode()) return '';
+
   if (!sleep) return '';
   return `
           <div style="margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--color-divider);">
@@ -6293,7 +6344,11 @@ function entryModeBar() {
         <div style="display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;">
           ${pill('timer', 'Track Real Time')}
           ${pill('manual', 'Manual Entry')}
-          <button data-act="open-new-cat" style="border:0;background:transparent;padding:6px 4px;font:inherit;font-size:13px;color:var(--color-accent-700);cursor:pointer;">Add a category +</button>
+          ${workMode()
+            ? (teamIsAdmin()
+              ? `<button data-act="team-open" style="border:0;background:transparent;padding:6px 4px;font:inherit;font-size:13px;color:var(--color-accent-700);cursor:pointer;">Manage projects +</button>`
+              : '')
+            : `<button data-act="open-new-cat" style="border:0;background:transparent;padding:6px 4px;font:inherit;font-size:13px;color:var(--color-accent-700);cursor:pointer;">Add a category +</button>`}
         </div>
         ${state.newCatOpen ? `
           <div class="blueprint" style="margin-top: 12px; padding: 14px 18px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
@@ -7461,6 +7516,27 @@ function render() {
      signed in, signed out, or still waiting to find out which. The sign-in
      panel still opens over it, because every button on it eventually needs an
      account. */
+  /* Nothing on screen can reach the money tracker in work mode, but a state
+     saved before the account joined a team could arrive already on it. Put
+     back rather than drawn. */
+  if (workMode() && state.app === 'money') state.app = 'time';
+  if (workMode() && state.m.kind === 'money') state.m.kind = 'time';
+  /* And the same for a category held from before. Filtering the picker stops
+     a personal category being chosen; it does nothing about one already
+     selected — the timer and the form each keep their own, and either could
+     have been sitting on "Chores" since before the account joined a team.
+     Left alone, the very next hour logged would go somewhere personal, which
+     is the one thing this mode exists to prevent. */
+  if (workMode()) {
+    const live = pickCategories();
+    if (live.length) {
+      const ok = (n) => live.some((c) => c.name === n);
+      if (!ok(state.timerCategory)) state.timerCategory = live[0].name;
+      if (!ok(state.form.category)) state.form = Object.assign({}, state.form, { category: live[0].name });
+      if (state.m.cat && !ok(state.m.cat)) state.m.cat = null;
+    }
+  }
+
   if (state.route === 'teams') {
     const teamPanel = state.authOpen || state.authMode === 'reset';
     root.innerHTML = teamsScreen() + (teamPanel ? authScreen() : '') + legalSheet();
@@ -7736,6 +7812,10 @@ function updateMoney(id, patch) {
   save(); queueSync(); scheduleRender();
 }
 function addCategoryIfNeeded(name) {
+  /* A member cannot mint a category to file something personal under, and an
+     admin's new one is a project, made in the team sheet where the rest of the
+     team will see it. */
+  if (workMode()) return;
   if (!name || state.categories.some((c) => c.name === name)) return;
   state.categories = state.categories.concat([touch('categories', {
     name, color: PALETTE[state.categories.length % PALETTE.length], position: state.categories.length
@@ -8561,7 +8641,13 @@ const ACTIONS = {
   // Categories and purposes are separate vocabularies, so a focus never carries
   // across the two trackers.
   'app-time': () => { state.app = 'time'; state.logFilter = ''; clearFocus(); render(); },
-  'app-money': () => { state.app = 'money'; state.logFilter = ''; clearFocus(); render(); },
+  'app-money': () => {
+    // There is no money tracker in a team account, so there is nothing to
+    // switch to. Refused here as well as hidden: a hidden button is a drawing
+    // decision, and this is what the product is.
+    if (workMode()) return;
+    state.app = 'money'; state.logFilter = ''; clearFocus(); render();
+  },
 
   'range-day': () => { state.range = 'day'; render(); },
   'range-week': () => { state.range = 'week'; render(); },
@@ -9384,8 +9470,14 @@ const mKicker = (isoDate) => new Date(isoDate + 'T00:00:00')
 /* ── the account's own vocabulary ──
    The grids are drawn from `categories` and `purposes`, in the order the
    account keeps them, not from the authored lists above. */
-const mVocab = (money) => (money ? state.purposes : state.categories).slice()
-  .sort((a, b) => (a.position || 0) - (b.position || 0) || byName(a, b));
+const mVocab = (money) => {
+  const all = (money ? state.purposes : state.categories).slice()
+    .sort((a, b) => (a.position || 0) - (b.position || 0) || byName(a, b));
+  if (money || !workMode()) return all;
+  // Same rule as pickCategories, for the phone's own picker.
+  const names = new Set(teamProjects().filter((p) => !p.archived).map((p) => p.name));
+  return all.filter((c) => names.has(c.name));
+};
 
 const mAuthored = (name, money) => (money ? M_PURPOSES : M_CATS).find((c) => c.name === name);
 
@@ -10395,6 +10487,9 @@ function mFood() {
 }
 
 function mCalCard(dates) {
+  // Not this product's subject. See workMode().
+  if (workMode()) return '';
+
   const days = Math.max(1, dates.length);
   const rows = mTimeRows(dates);
   const burn = burnFor(rows, state.weightKg, days, dates);
@@ -10778,8 +10873,8 @@ function mFlowKind() {
   const chip = mDayChip;
   return `
 <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:24px;">
-  ${card('time', nodeIcon('clock', 22), 'Activity', 'Something you did', '#f2eefe', '#5f3ac9')}
-  ${card('money', esc(mGlyph()), 'Money', 'Something you spent or earned', '#eceefe', '#3f4bc4')}
+  ${card('time', nodeIcon('clock', 22), workMode() ? 'Work' : 'Activity', workMode() ? 'Time against a project' : 'Something you did', '#f2eefe', '#5f3ac9')}
+  ${workMode() ? '' : card('money', esc(mGlyph()), 'Money', 'Something you spent or earned', '#eceefe', '#3f4bc4')}
 </div>
 ${mLabel('When')}
 <div style="display:flex;flex-wrap:wrap;gap:8px;">
@@ -11792,7 +11887,10 @@ const M_ACTIONS = {
     mSet({ step, typing: false, skip: (state.m.skip || []).filter((n) => n !== step) });
   },
 
-  'm-kind': (el) => mSet({ kind: el.dataset.kind, cat: null, activity: null, activityText: '', typing: false }),
+  'm-kind': (el) => {
+    if (workMode() && el.dataset.kind === 'money') return;
+    mSet({ kind: el.dataset.kind, cat: null, activity: null, activityText: '', typing: false });
+  },
   'm-day': (el) => mSet({ day: el.dataset.day }),
   'm-cal-step': (el) => {
     const next = mShiftMonth(mCalCursor(), Number(el.dataset.d));
