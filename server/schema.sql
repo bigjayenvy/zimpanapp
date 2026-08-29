@@ -185,3 +185,82 @@ CREATE TABLE IF NOT EXISTS donations (
   CONSTRAINT fk_donations_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT fk_donations_admin FOREIGN KEY (recorded_by) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+/* ── teams ──
+
+   A team account is a separate login from a personal one, so nothing personal
+   exists in this half of the schema to leak: no meals, no sleep, no money. What
+   a team holds is hours against projects, and who is allowed to touch them.
+
+   The membership row is the whole authorization story. Every team route reads
+   it first and takes the team id from it rather than from the request, so a
+   caller cannot name someone else's team and be believed. */
+CREATE TABLE IF NOT EXISTS teams (
+  id          VARCHAR(64)   NOT NULL,
+  name        VARCHAR(120)  NOT NULL,
+  -- Set by hand once payment clears; see team_plan in server/teams.js for the
+  -- caps. `seat_cap` 0 means the unlimited plan.
+  plan        VARCHAR(24)   NOT NULL DEFAULT 'trial',
+  seat_cap    SMALLINT UNSIGNED NOT NULL DEFAULT 3,
+  created_at  BIGINT        NOT NULL,
+  updated_at  BIGINT        NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+/* One row per person per team. `role` is 'super', 'admin' or 'member'.
+
+   A user belongs to at most one team — the UNIQUE key on user_id says so —
+   because a work login is a work login. Lifting that later means dropping the
+   key and nothing else. */
+CREATE TABLE IF NOT EXISTS team_members (
+  team_id    VARCHAR(64)  NOT NULL,
+  user_id    INT UNSIGNED NOT NULL,
+  role       VARCHAR(16)  NOT NULL DEFAULT 'member',
+  joined_at  BIGINT       NOT NULL,
+  updated_at BIGINT       NOT NULL,
+  PRIMARY KEY (team_id, user_id),
+  UNIQUE KEY uq_team_members_user (user_id),
+  KEY idx_team_members_team (team_id, role),
+  CONSTRAINT fk_tm_team FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
+  CONSTRAINT fk_tm_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+/* An invitation is an email plus a token, and it is the only way into a team.
+
+   The email is stored lowercased and is unique per team, so inviting the same
+   person twice replaces the invitation rather than making a second one that
+   both work. */
+CREATE TABLE IF NOT EXISTS team_invites (
+  id          VARCHAR(64)  NOT NULL,
+  team_id     VARCHAR(64)  NOT NULL,
+  email       VARCHAR(190) NOT NULL,
+  role        VARCHAR(16)  NOT NULL DEFAULT 'member',
+  token_hash  CHAR(64)     NOT NULL,
+  invited_by  INT UNSIGNED NULL,
+  created_at  BIGINT       NOT NULL,
+  expires_at  BIGINT       NOT NULL,
+  accepted_at BIGINT       NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_team_invite_email (team_id, email),
+  KEY idx_team_invite_token (token_hash),
+  CONSTRAINT fk_ti_team FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+/* What hours are logged against. The team's answer to a category.
+
+   Client-minted ids and an updated_at stamp, exactly like entries, so projects
+   ride the same last-write-wins sync as everything else and a member who is
+   offline still has something to log against. */
+CREATE TABLE IF NOT EXISTS team_projects (
+  team_id    VARCHAR(64)  NOT NULL,
+  id         VARCHAR(64)  NOT NULL,
+  name       VARCHAR(120) NOT NULL,
+  color      CHAR(7)      NULL,
+  position   SMALLINT     NOT NULL DEFAULT 0,
+  archived   TINYINT(1)   NOT NULL DEFAULT 0,
+  updated_at BIGINT       NOT NULL,
+  deleted    TINYINT(1)   NOT NULL DEFAULT 0,
+  PRIMARY KEY (team_id, id),
+  KEY idx_projects_updated (team_id, updated_at),
+  CONSTRAINT fk_tp_team FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

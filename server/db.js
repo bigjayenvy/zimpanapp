@@ -214,4 +214,26 @@ async function alterExisting() {
       [CONFIG.database, table, 'note']);
     if (!c.length) await pool.query(`ALTER TABLE ${table} ADD COLUMN note VARCHAR(500) NULL AFTER activity`);
   }
+
+  /* What makes a time entry a team entry: the project it was logged against.
+
+     Nullable, and null on every row that already exists, which is the whole
+     migration — a personal entry is one with no project, and that is also
+     exactly the rule an admin is held to. An entry an admin may read is an
+     entry with a project on it, so the column is the permission.
+
+     team_id rides alongside rather than being looked up through the project,
+     so the authorization check is one predicate on the row itself and does not
+     depend on a join that could be got wrong. */
+  const [proj] = await pool.query(
+    'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME IN (?, ?)',
+    [CONFIG.database, 'entries', 'project_id', 'team_id']);
+  const hasEntryCol = (n) => proj.some((c) => c.name === n);
+  if (!hasEntryCol('team_id')) {
+    await pool.query('ALTER TABLE entries ADD COLUMN team_id VARCHAR(64) NULL AFTER user_id');
+  }
+  if (!hasEntryCol('project_id')) {
+    await pool.query('ALTER TABLE entries ADD COLUMN project_id VARCHAR(64) NULL AFTER category');
+    await pool.query('ALTER TABLE entries ADD KEY idx_entries_team (team_id, date)');
+  }
 }

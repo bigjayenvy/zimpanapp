@@ -20,6 +20,11 @@ import {
   overview as adminOverview, users as adminUsers, donationsFor,
   setRole, addDonation, removeDonation, noteDonateClick, touchSeen, isAdminRole, ROLES
 } from './admin.js';
+import {
+  TeamError, membershipFor, createTeam, teamOverview, inviteMember, revokeInvite,
+  acceptInvite, setMemberRole, removeMember, saveProject, deleteProject,
+  memberEntries, editMemberEntry, teamDashboard, setTeamPlan, PLANS
+} from './teams.js';
 
 const ROOT = join(HERE, '..');
 const PORT = Number(process.env.PORT) || 3000;
@@ -100,7 +105,7 @@ async function prepareDatabase() {
 /* The endpoints that hold up without MySQL. Everything else under /api/ needs
    it, so the guard below is a deny-list of one line rather than a decoration on
    every route — a new route is protected by default. */
-const DB_FREE = new Set(['/api/config', '/api/currencies', '/api/health', '/api/ready']);
+const DB_FREE = new Set(['/api/config', '/api/currencies', '/api/health', '/api/ready', '/api/team/plans']);
 
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/') || DB_FREE.has(req.path) || dbReady) return next();
@@ -578,6 +583,75 @@ app.get('/api/config', (req, res) => res.json({
 }));
 
 app.get('/api/currencies', (req, res) => res.json({ currencies: CURRENCIES }));
+
+/* ── teams ──
+
+   Every one of these takes the team from the caller's own membership row
+   inside teams.js; not one of them reads a team id from the request, so there
+   is no shape of request that reaches another team. The handlers here do the
+   HTTP and nothing else — a TeamError carries the status it deserves. */
+const team = (fn) => wrap(async (req, res) => {
+  try {
+    res.json(await fn(req));
+  } catch (err) {
+    if (err instanceof TeamError) return res.status(err.status).json({ error: err.message });
+    throw err;
+  }
+});
+
+app.get('/api/team', requireUser, team(async (req) => {
+  const m = await membershipFor(req.user.id);
+  // Not being in a team is an answer, not a failure: the client draws the
+  // "start a team" screen from it.
+  if (!m) return { team: null };
+  return teamOverview(req.user.id);
+}));
+
+app.post('/api/team', requireUser, team((req) => createTeam(req.user.id, (req.body || {}).name)));
+
+app.post('/api/team/invite', requireUser, team(async (req) => {
+  const b = req.body || {};
+  const invite = await inviteMember(req.user.id, b.email, b.role);
+  /* The token goes out by email and comes back in the response too: the
+     server may have no mail configured, and an admin who can read the link
+     off their own screen is better than an invitation nobody receives. */
+  const link = `${req.protocol}://${req.get('Host')}/teams?invite=${encodeURIComponent(invite.token)}`;
+  return { email: invite.email, role: invite.role, expiresAt: invite.expiresAt, link };
+}));
+
+app.post('/api/team/invite/revoke', requireUser, team((req) => revokeInvite(req.user.id, (req.body || {}).email)));
+
+app.post('/api/team/accept', requireUser, team((req) =>
+  acceptInvite(req.user.id, req.user.email, (req.body || {}).token)));
+
+app.post('/api/team/role', requireUser, team((req) => {
+  const b = req.body || {};
+  return setMemberRole(req.user.id, b.userId, b.role);
+}));
+
+app.post('/api/team/remove', requireUser, team((req) => removeMember(req.user.id, (req.body || {}).userId)));
+
+app.post('/api/team/project', requireUser, team((req) => saveProject(req.user.id, req.body || {})));
+app.post('/api/team/project/delete', requireUser, team((req) => deleteProject(req.user.id, (req.body || {}).id)));
+
+app.get('/api/team/member/:userId/entries', requireUser, team((req) =>
+  memberEntries(req.user.id, req.params.userId, req.query.from, req.query.to)));
+
+app.post('/api/team/entry/:id', requireUser, team((req) =>
+  editMemberEntry(req.user.id, req.params.id, req.body || {})));
+
+app.get('/api/team/dashboard', requireUser, team((req) =>
+  teamDashboard(req.user.id, req.query.from, req.query.to)));
+
+/* The manual half of billing. Site admins only — a team's own owner reaching
+   this would be one request away from the unlimited plan. */
+app.post('/api/admin/team-plan', requireUser, team(async (req) => {
+  if (!isAdminRole(req.user.role)) throw new TeamError('Not yours to do.', 403);
+  const b = req.body || {};
+  return setTeamPlan(b.teamId, b.plan);
+}));
+
+app.get('/api/team/plans', (req, res) => res.json({ plans: PLANS }));
 
 /* ── static ── */
 
