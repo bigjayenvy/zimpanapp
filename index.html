@@ -1311,6 +1311,15 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     padding-inline: 4px; font-size: 11.5px;
   }
   .tm-tabs .seg-opt span { overflow: hidden; text-overflow: ellipsis; }
+
+  /* Five tabs will not fit a phone at a readable size, and "Dashbo…" is not a
+     word. .seg is already its own scroller, so below this width the labels
+     stop shrinking and the strip scrolls instead — the same answer the range
+     picker gives to the same problem. */
+  @media (max-width: 560px) {
+    .tm-tabs .seg-opt { flex: none; padding-inline: 12px; font-size: 12.5px; }
+    .tm-tabs .seg-opt span { overflow: visible; }
+  }
   .tm-body { text-align: left; min-height: 120px; }
   .tm-cap { font-size: 12.5px; color: var(--color-neutral-700); margin-bottom: 10px; }
   .tm-list { display: flex; flex-direction: column; }
@@ -1342,6 +1351,15 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .tm-add .input { flex: 1 1 0; min-width: 0; min-height: 44px; }
   .tm-add .btn { flex: none; min-height: 44px; border-radius: 999px; }
   .tm-as { flex: 0 0 auto; min-height: 44px; }
+
+  /* On a phone the invite row was three controls fighting over 340px: an email
+     field too narrow to read the address back, a role select clipped mid-word,
+     and the button squeezed against both. One per line instead — the form is
+     three answers, not a toolbar, and there is no reason to treat it as one. */
+  @media (max-width: 560px) {
+    .tm-add { flex-direction: column; gap: 10px; }
+    .tm-add .input, .tm-add .btn, .tm-as { width: 100%; flex: none; }
+  }
   /* The invitation link, shown as well as emailed. Breaks anywhere: a token is
      one long unbroken word and would otherwise push the dialog sideways. */
   .tm-link {
@@ -1368,9 +1386,14 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .tm-hrow .input { min-height: 38px; font-size: 12.5px; padding-inline: 8px; }
   .tm-hdate { font-size: 11px; color: var(--color-neutral-600); white-space: nowrap; }
   @media (max-width: 560px) {
-    .tm-hrow { grid-template-columns: minmax(0, 1fr) 72px 72px; }
+    /* The activity on its own line, the two times sharing the next, and the
+       project under both. Five columns on a phone made every one of them too
+       narrow to read what was in it. */
+    .tm-hrow { grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px 0; }
+    .tm-hact { grid-column: 1 / -1; }
     .tm-hproj { grid-column: 1 / -1; }
     .tm-hdate { grid-column: 1 / -1; }
+    .tm-hrow .input { min-height: 42px; font-size: 13.5px; }
   }
 
   /* — the owner's dashboard — */

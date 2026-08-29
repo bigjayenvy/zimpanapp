@@ -6318,6 +6318,8 @@ function todayCard(v) {
    solely to scale the burn estimate; leaving it blank costs accuracy, not
    function. */
 function weightCard(v) {
+  // Same as the phone's: it only ever scaled the calorie burn. See workMode().
+  if (workMode()) return '';
   return `
       <div class="blueprint" style="padding: 16px 22px 18px;">
         <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
@@ -7571,6 +7573,16 @@ function render() {
   /* Nothing on screen can reach the money tracker in work mode, but a state
      saved before the account joined a team could arrive already on it. Put
      back rather than drawn. */
+  /* A work account that has not built its team yet has exactly one thing to
+     do, and nothing behind the sheet means anything until it is done. Raised
+     once a session: dismissing it leaves the app alone, and the way back in is
+     where it always is. */
+  if (workMode() && state.team && !state.team.team && !teamOfferSeen) {
+    teamOfferSeen = true;
+    state.teamOpen = true;
+    state.teamTab = 'people';
+  }
+
   if (workMode() && state.app === 'money') state.app = 'time';
   if (workMode() && state.m.kind === 'money') state.m.kind = 'time';
   /* And the same for a category held from before. Filtering the picker stops
@@ -10101,6 +10113,17 @@ state.m = {
    this particular device remembers. */
 function mBoot() {
   if (state.setupDone || hasLocalData()) { state.setupDone = true; state.m.screen = 'home'; return; }
+  /* Setup asks a personal account what it wants to watch and which categories
+     to start with. A work account has neither question: it tracks hours, and
+     the categories are the team's projects. Skipped rather than answered with
+     defaults nobody chose — and the thing it actually needs, a team, is what
+     it is asked for instead. */
+  if (workMode()) {
+    state.setupDone = true;
+    state.m.screen = 'home';
+    save();
+    return;
+  }
   state.m.screen = 'setup';
   state.m.setupStep = 1;
   // AED is what the picker opens on; `state.currency` is only ever PHP here,
@@ -10438,6 +10461,11 @@ function mBodyCard(day) {
           style="width:100%;min-height:42px;padding:0 12px;border-radius:12px;cursor:pointer;text-align:left;font-family:var(--font-body);font-size:15px;font-weight:600;
                  background:#fff;border:1px solid rgba(47,28,102,.12);color:${shown ? '#16131f' : '#756f88'};">${esc(shown ? shown + (suffix || '') : placeholder)}</button>`}
   </div>`;
+
+  /* Steps and weight exist to scale the calorie burn, and there is no calorie
+     burn in a work account — asking for them would be collecting a body
+     measurement that nothing on the screen uses. See workMode(). */
+  if (workMode()) return '';
 
   return `
 <div class="card" style="border-radius:16px;padding:14px;gap:12px;flex-direction:row;box-shadow:${M_SHADOW_SM};margin-bottom:22px;">
@@ -12864,6 +12892,8 @@ let deckIndex = 0;
    scrolls inside its own .deck-body, so the page-level restore in render()
    never touched it. */
 let deckScroll = 0;
+// Raised once a session; see the offer in render().
+let teamOfferSeen = false;
 
 function deckGo(i) {
   const track = root.querySelector('[data-deck-track]');
