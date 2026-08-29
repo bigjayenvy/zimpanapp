@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 620" role="img"
+     aria-label="Placeholder for the team lifestyle photograph">
+  <!--
+    A stand-in until the real photograph lands, drawn rather than left as a
+    broken asset: a 404 in the hero reads as a bug to every visitor and to the
+    server log, where a placeholder reads as work in progress.
+
+    To replace it: drop the photograph into ds/ and point TEAM_HERO at it in
+    app.js. Anything in ds/ is copied on deploy, so no other change is needed.
+    Roughly 3:2 and at least 1200px wide keeps it sharp on a laptop.
+  -->
+  <defs>
+    <linearGradient id="th-sky" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ede9fe"/>
+      <stop offset="55%" stop-color="#ddd6fe"/>
+      <stop offset="100%" stop-color="#c7d2fe"/>
+    </linearGradient>
+    <linearGradient id="th-band" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a78bfa"/>
+      <stop offset="60%" stop-color="#7856f5"/>
+      <stop offset="100%" stop-color="#4f46e5"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="900" height="620" rx="26" fill="url(#th-sky)"/>
+  <path d="M0 470c150-40 250 30 400 0s330-90 500-40v190H0Z" fill="url(#th-band)" opacity=".22"/>
+  <path d="M0 530c170-50 280 20 430-10s300-70 470-30v130H0Z" fill="url(#th-band)" opacity=".16"/>
+
+  <!-- Four figures at a table: the subject of the photograph that replaces this. -->
+  <g fill="none" stroke="#5b3fd1" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity=".62">
+    <circle cx="240" cy="238" r="34"/>
+    <path d="M182 344c0-32 26-58 58-58s58 26 58 58"/>
+    <circle cx="390" cy="214" r="38"/>
+    <path d="M326 330c0-35 29-64 64-64s64 29 64 64"/>
+    <circle cx="546" cy="238" r="34"/>
+    <path d="M488 344c0-32 26-58 58-58s58 26 58 58"/>
+    <circle cx="686" cy="252" r="30"/>
+    <path d="M634 348c0-29 23-52 52-52s52 23 52 52"/>
+    <path d="M150 392h604"/>
+  </g>
+
+  <g fill="#5b3fd1" opacity=".62">
+    <circle cx="240" cy="238" r="6"/><circle cx="390" cy="214" r="6"/>
+    <circle cx="546" cy="238" r="6"/><circle cx="686" cy="252" r="6"/>
+  </g>
+
+  <rect x="44" y="44" width="812" height="532" rx="20" fill="none"
+        stroke="#5b3fd1" stroke-width="2.5" stroke-dasharray="12 10" opacity=".45"/>
+  <text x="450" y="466" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif"
+        font-size="30" font-weight="700" fill="#3b2a7a" opacity=".78">Your team photograph here</text>
+  <text x="450" y="502" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, sans-serif"
+        font-size="16" fill="#4c3a94" opacity=".7">Drop the image into ds/ and point TEAM_HERO at it</text>
+</svg>

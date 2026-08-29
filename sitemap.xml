@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  ZIMPAN is a single-page app: one document, one URL. Privacy and Terms are
-  lightboxes over that page rather than routes of their own, so there is nothing
-  else to list — a sitemap naming URLs that do not exist is worse than a short
-  one. Bump <lastmod> when the page's content meaningfully changes.
+  ZIMPAN is a single-page app, and two of its pages are worth finding: the
+  personal one at / and the team one at /teams. Both are served from the same
+  document; app.js reads the path and draws the right page. Privacy and Terms
+  are lightboxes rather than routes of their own, so they are still not listed
+  — a sitemap naming URLs that do not exist is worse than a short one. Bump
+  <lastmod> when a page's content meaningfully changes.
 -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
@@ -11,5 +13,11 @@
     <lastmod>2026-08-17</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://zimpan.com/teams</loc>
+    <lastmod>2026-08-29</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
   </url>
 </urlset>

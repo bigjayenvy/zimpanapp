@@ -535,6 +535,35 @@ const DECK_CACHE_MAX = 12;
    counts genuinely different ones. */
 const AI_CACHE_MAX = 200;
 
+/* ── which page the address is asking for ──
+
+   /teams is its own page rather than a section of the landing: it is pitched at
+   a different reader, and a reader who is sent a link to it should arrive on
+   it. One document still serves both — the server hands index.html to either
+   path — so this is the only place the two are told apart. */
+const routeFromPath = () => (
+  typeof location !== 'undefined' && /^\/teams\/?$/.test(location.pathname) ? 'teams' : 'home'
+);
+
+function goRoute(route) {
+  if (state.route === route) { scrollToAnchor(null); return; }
+  state.route = route;
+  try { history.pushState({ route }, '', route === 'teams' ? '/teams' : '/'); } catch (e) { /* file:// */ }
+  window.scrollTo(0, 0);
+  render();
+}
+
+if (typeof window !== 'undefined') {
+  // Back and forward have to move between the two, or the address lies.
+  window.addEventListener('popstate', () => {
+    const next = routeFromPath();
+    if (next === state.route) return;
+    state.route = next;
+    window.scrollTo(0, 0);
+    render();
+  });
+}
+
 const readJson = (key, fallback) => {
   try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch (err) { return fallback; }
 };
@@ -659,6 +688,8 @@ const state = {
   refineAsk: null, refineRemember: false, aiPending: null,
   /* The standing answers, laid out where they can be taken back. */
   prefsOpen: false,
+  /* 'home' or 'teams', read from the address on boot. */
+  route: routeFromPath(),
   refineAlways: stored.refineAlways === true || stored.refineAlways === false ? stored.refineAlways : null,
   /* "Chat with Zimpan". The transcript lives here and nowhere else — not on the
      server, not in localStorage — so closing the app ends the conversation.
@@ -3792,7 +3823,10 @@ const FEATURE_ICONS = {
   time: icon('<circle cx="12" cy="12" r="8.5"/><path d="M12 7.4V12l3.2 1.9"/>'),
   money: icon('<ellipse cx="12" cy="6.6" rx="6.8" ry="2.9"/><path d="M5.2 6.6v10.8c0 1.6 3 2.9 6.8 2.9s6.8-1.3 6.8-2.9V6.6"/><path d="M5.2 12c0 1.6 3 2.9 6.8 2.9s6.8-1.3 6.8-2.9"/>'),
   insights: icon('<circle cx="6" cy="7.2" r="2.1"/><circle cx="18" cy="6.2" r="2.1"/><circle cx="12" cy="17.4" r="2.1"/><path d="M7.5 8.8 10.8 15.6M16.6 8 13.3 15.5M8.1 6.9 15.9 6.4"/>'),
-  sleep: icon('<path d="M20 14.6A8.3 8.3 0 0 1 9.4 4 8.6 8.6 0 1 0 20 14.6Z"/><path d="M16.6 3.4v3.2M15 5h3.2"/>')
+  sleep: icon('<path d="M20 14.6A8.3 8.3 0 0 1 9.4 4 8.6 8.6 0 1 0 20 14.6Z"/><path d="M16.6 3.4v3.2M15 5h3.2"/>'),
+  // The two the team page needs and the personal one never had.
+  clipboard: icon('<rect x="5.2" y="4.6" width="13.6" height="15.4" rx="2.4"/><path d="M9.2 4.6V3.4h5.6v1.2"/><path d="M8.6 10.4h6.8M8.6 14h4.6"/>'),
+  shield: icon('<path d="M12 3.4 19 6v5.6c0 4-2.9 7.4-7 9-4.1-1.6-7-5-7-9V6Z"/><path d="m8.8 11.8 2.3 2.3 4.1-4.6"/>')
 };
 
 const CHECK_ICON = icon('<circle cx="12" cy="12" r="9"/><path d="m8.4 12.4 2.5 2.5 4.7-5.3"/>');
@@ -3883,6 +3917,44 @@ const LANDING_FEATURES = [
   ['money', 'Money', 'Track Every Penny', 'Log income and expenses, switch between four currencies, and watch your spending trends.'],
   ['insights', 'Insights', 'Gain Deep Insights', 'Analyze movement, rest, focus and diet patterns with automatic reports.'],
   ['sleep', 'Sleep', 'Improve Your Sleep', 'Log sleep duration and quality to build better rest habits.']
+];
+
+/* ── the team page ──
+
+   The same skeleton as the landing above, with corporate copy in place of the
+   personal one. A second page rather than a section of the first, because the
+   two are pitched at different readers: one is talking to a person about their
+   own day, the other to whoever signs off on a team's hours.
+
+   Money is deliberately absent from every list here. The personal app tracks
+   what you spend; a manager reading their team's hours has no business being
+   handed anyone's grocery bill, so the team story is hours and projects only. */
+
+/* Replace with the photograph when it lands: put the file in ds/ — everything
+   there is copied on deploy — and name it here. Nothing else has to change. */
+const TEAM_HERO = 'ds/team-hero.svg';
+
+const TEAM_CHECKS = ['Project Time Tracking', 'Per-Member Reports', 'Team Productivity Overview', 'Roles and Access Control'];
+
+const TEAM_FEATURES = [
+  ['time', 'Projects', 'Time Against Real Projects',
+    'Members log to the projects you define, by timer or by hand, so an hour always belongs somewhere.'],
+  ['insights', 'People', 'See Where the Week Went',
+    'Every member gets their own reading, and every project shows the hours it actually took.'],
+  ['clipboard', 'Reports', 'Report Cards, Per Person',
+    'The same weekly cards the app already writes, scoped to a member or to the whole team.'],
+  ['shield', 'Control', 'Roles That Mean Something',
+    'A super admin owns the team, admins manage people and projects, members log their own time.']
+];
+
+/* Priced per team rather than per seat: a team of six paying for six is the
+   sort of arithmetic that punishes hiring. The cap is the promise. */
+const TEAM_PLANS = [
+  ['Team of 6', 6, 9, null],
+  ['Team of 12', 12, 15, null],
+  ['Team of 20', 20, 22, null],
+  ['Team of 50', 50, 30, null],
+  ['Unlimited', 0, 100, null]
 ];
 
 /* ── hero art ──
@@ -3991,6 +4063,7 @@ function landingScreen() {
       <nav class="landing-nav">
         <button data-act="scroll-features">Features</button>
         <button data-act="scroll-features">How it works</button>
+        <button data-act="go-teams">For Teams</button>
         <button data-act="legal-privacy">Privacy</button>
         <button data-act="legal-terms">Terms</button>
       </nav>
@@ -4021,6 +4094,9 @@ function landingScreen() {
         <div class="hero-ctas">
           ${cta(16)}
           <button class="btn btn-secondary hero-cta2" data-act="scroll-features">Explore what it tracks</button>
+          <!-- Third, and quieter than the two above it: most readers here are
+               tracking their own day, and the ones who are not know it. -->
+          <button class="btn btn-ghost hero-cta3" data-act="go-teams">Measure team productivity</button>
         </div>
       </div>
 
@@ -4049,6 +4125,128 @@ function landingScreen() {
     <footer style="padding:22px 28px 34px;display:flex;flex-direction:column;align-items:center;gap:12px;">
       <div style="font-size:13px;color:var(--color-neutral-800);text-align:center;">
         <strong>Free forever</strong> · No credit card required · Your data stays yours
+      </div>
+      ${legalLinks('var(--color-neutral-600)')}
+    </footer>
+  </div>`;
+}
+
+function teamsScreen() {
+  const plan = ([name, seats, price, paypal]) => `
+    <div class="plan">
+      <div class="plan-name">${esc(name)}</div>
+      <div class="plan-seats">${seats ? `Up to ${seats} people` : 'As many people as you like'}</div>
+      <div class="plan-price"><span class="plan-amount">$${price}</span><span class="plan-per">/month</span></div>
+      ${paypal
+        ? `<a class="btn btn-primary plan-go" href="${esc(paypal)}" target="_blank" rel="noopener noreferrer">Choose this plan</a>`
+        /* No link yet, and a dead button would be worse than an honest one:
+           an account is the first step either way, so it goes there. */
+        : `<button class="btn btn-secondary plan-go" data-act="auth-open">Start this plan</button>`}
+    </div>`;
+
+  return `
+  <div class="landing">
+    <header class="landing-bar">
+      <a class="landing-brand" href="/" data-act="go-home">
+        ${LOGO_BADGE(34)}
+        <span class="landing-name">ZIMPAN<span style="color:var(--color-accent);">.</span></span>
+      </a>
+      <nav class="landing-nav">
+        <button data-act="scroll-features">How it works</button>
+        <button data-act="scroll-pricing">Pricing</button>
+        <button data-act="go-home">For individuals</button>
+        <button data-act="legal-privacy">Privacy</button>
+      </nav>
+      <div class="landing-actions">
+        <button class="landing-login" data-act="auth-open">Log In</button>
+        <div class="landing-cta-top">
+          <button data-act="scroll-pricing" class="btn btn-primary" style="font-size:14px;font-weight:600;padding:10px 24px;border-radius:999px;cursor:pointer;">See pricing</button>
+        </div>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div class="hero-copy">
+        <span class="hero-eyebrow">For teams · From $9 a month</span>
+        <h1 class="hero-h1">Measure Your Team&rsquo;s Productivity</h1>
+        <p class="hero-lede">
+          Zimpan for Teams turns the hours your people actually work into something
+          you can read: which project took them, who they belonged to, and where the
+          week really went.
+        </p>
+
+        <ul class="hero-checks">
+          ${TEAM_CHECKS.map((t) => `
+            <li><span class="hero-check">${CHECK_ICON}</span>${esc(t)}</li>`).join('')}
+        </ul>
+
+        <div class="hero-ctas">
+          <button data-act="scroll-pricing" class="btn btn-primary" style="font-size:16px;font-weight:600;padding:13px 30px;border-radius:999px;cursor:pointer;">See pricing</button>
+          <button class="btn btn-secondary hero-cta2" data-act="scroll-features">How it works</button>
+        </div>
+      </div>
+
+      <div class="hero-art">
+        <figure class="team-shot">
+          <img src="${esc(TEAM_HERO)}" alt="A team at work together" width="900" height="620">
+        </figure>
+      </div>
+    </section>
+
+    <section class="strip" data-anchor="features">
+      <div class="strip-head">
+        <span class="strip-kicker">What a team gets</span>
+        <span class="strip-rule"></span>
+        <span class="strip-note">Hours and projects, nothing personal</span>
+      </div>
+      <div class="landing-points">
+        ${TEAM_FEATURES.map(([key, eyebrow, title, body]) => `
+          <div class="feature-card">
+            <span class="feature-badge">${FEATURE_ICONS[key]}</span>
+            <div style="min-width:0;">
+              <div style="font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-neutral-600);margin-bottom:2px;">${esc(eyebrow)}</div>
+              <div style="font-family:var(--font-heading);font-weight:700;font-size:19px;line-height:1.2;margin-bottom:6px;">${esc(title)}</div>
+              <div style="font-size:13.5px;line-height:1.6;color:var(--color-neutral-800);">${esc(body)}</div>
+            </div>
+          </div>`).join('')}
+      </div>
+    </section>
+
+    <section class="strip" data-anchor="roles">
+      <div class="strip-head">
+        <span class="strip-kicker">Who can do what</span>
+        <span class="strip-rule"></span>
+        <span class="strip-note">Three roles</span>
+      </div>
+      <div class="role-grid">
+        <div class="role-card">
+          <div class="role-name">Super admin</div>
+          <p>Owns the team and the billing. Grants and removes admin access, and sees the dashboard across every project and every person.</p>
+        </div>
+        <div class="role-card">
+          <div class="role-name">Admin</div>
+          <p>Invites members by email and manages their access. Can edit a member&rsquo;s time, activity and the project it was logged against.</p>
+        </div>
+        <div class="role-card">
+          <div class="role-name">Member</div>
+          <p>Logs their own time against the team&rsquo;s projects, and reads their own report cards. Their personal tracking stays their own.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="strip" data-anchor="pricing">
+      <div class="strip-head">
+        <span class="strip-kicker">Pricing</span>
+        <span class="strip-rule"></span>
+        <span class="strip-note">One price per team, not per seat</span>
+      </div>
+      <div class="plans">${TEAM_PLANS.map(plan).join('')}</div>
+      <p class="plans-foot">Billed monthly. The personal Zimpan stays free for everyone on your team.</p>
+    </section>
+
+    <footer style="padding:22px 28px 34px;display:flex;flex-direction:column;align-items:center;gap:12px;">
+      <div style="font-size:13px;color:var(--color-neutral-800);text-align:center;">
+        Hours and projects only · <strong>No personal spending, food or sleep is ever shown to an admin</strong>
       </div>
       ${legalLinks('var(--color-neutral-600)')}
     </footer>
@@ -7211,6 +7409,21 @@ function render() {
   // browser already has an account and can work offline), then the migration
   // question, then the app itself.
   if (!state.booted && !state.account) { root.innerHTML = splashScreen(); return; }
+
+  /* Ahead of the session gate on purpose. /teams is a page about a product,
+     not a view of anyone's data — it should read the same whether you are
+     signed in, signed out, or still waiting to find out which. The sign-in
+     panel still opens over it, because every button on it eventually needs an
+     account. */
+  if (state.route === 'teams') {
+    const teamPanel = state.authOpen || state.authMode === 'reset';
+    root.innerHTML = teamsScreen() + (teamPanel ? authScreen() : '') + legalSheet();
+    if (scrollY && window.scrollY !== scrollY) window.scrollTo(0, scrollY);
+    restoreFocus(f);
+    if (teamPanel) mountGoogleButton();
+    return;
+  }
+
   if (state.booted && !state.auth) {
     // A reset link has to open its panel directly; there is no landing page
     // journey that leads to it.
@@ -8031,6 +8244,14 @@ const ACTIONS = {
   'sign-out': signOut,
   'scroll-top': () => window.scrollTo({ top: 0, behavior: 'smooth' }),
   'scroll-features': () => scrollToAnchor('features'),
+  'scroll-pricing': () => scrollToAnchor('pricing'),
+
+  /* Two real URLs rather than a tab, because /teams is a page people are meant
+     to link to, land on from a search, and come back to. pushState keeps the
+     single document — nothing is fetched — while the address bar and the back
+     button both tell the truth. */
+  'go-teams': () => goRoute('teams'),
+  'go-home': () => goRoute('home'),
 
   'legal-privacy': () => { state.legalOpen = 'privacy'; render(); },
   'legal-terms': () => { state.legalOpen = 'terms'; render(); },

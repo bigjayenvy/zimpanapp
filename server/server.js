@@ -584,6 +584,11 @@ app.get('/api/currencies', (req, res) => res.json({ currencies: CURRENCIES }));
 const sendRoot = (file) => (req, res) => res.sendFile(join(ROOT, file));
 app.get('/', sendRoot('index.html'));
 app.get('/index.html', sendRoot('index.html'));
+/* The team page is the same document — app.js reads the path and draws the
+   other page — so it is another name for index.html rather than a file of its
+   own. Named explicitly, like everything else here: this is an allowlist, and
+   a route that is not in it is the 404 below however real the page is. */
+app.get('/teams', sendRoot('index.html'));
 app.get('/app.js', sendRoot('app.js'));
 
 /* Named explicitly, like everything else here: this is an allowlist, not a
