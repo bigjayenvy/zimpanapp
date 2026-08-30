@@ -14,8 +14,6 @@
    The key lives only in the environment. It is never returned, logged, or sent
    to the browser — the client is told whether the feature is on, nothing more. */
 
-import Anthropic from '@anthropic-ai/sdk';
-
 // Overridable because model names change faster than this file will.
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-opus-5';
 
@@ -34,12 +32,59 @@ const effortLevel = () => {
 const TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) || 25000;
 const MAX_TEXT = 1200;
 
-export const aiConfigured = () => !!(process.env.ANTHROPIC_API_KEY || '').trim();
+const keyed = () => !!(process.env.ANTHROPIC_API_KEY || '').trim();
 
-/* Built once, lazily — constructing it at import time would throw on a server
-   with no key, which is the configuration the app is meant to run fine under. */
+/* Whether the SDK could actually be loaded. null until something has tried.
+   Kept separate from the key so the two reasons the feature can be off stay
+   distinguishable in the log. */
+let sdkOk = null;
+
+/* On when there is a key AND the package to use it with. The second half is not
+   theoretical: the site has been down with a 502 because the SDK could not be
+   resolved, and answering /api/config with aiEstimates:true on a server that
+   cannot make a single call only moves the failure to the button. */
+export const aiConfigured = () => keyed() && sdkOk !== false;
+
+/* Both the package and the client are loaded lazily.
+
+   The client, because constructing it at import time would throw on a server
+   with no key — the configuration the app is meant to run fine under.
+
+   The package, because a static `import` makes the SDK a hard requirement of
+   the entire server: server.js imports this file, so a package that cannot be
+   resolved — a Node upgrade that repoints the virtualenv, a deploy that copied
+   package.json without running an install — stops the process from starting at
+   all, and Passenger answers every request with a 502. The landing page, the
+   sign-in form and the admin dashboard have nothing to do with estimating a
+   meal and must not go down with it. Loaded on first use instead, so a missing
+   package turns the AI features off exactly the way a missing key does. */
 let client = null;
-const anthropic = () => (client = client || new Anthropic({ maxRetries: 1 }));
+async function anthropic() {
+  if (client) return client;
+  let Anthropic;
+  try {
+    ({ default: Anthropic } = await import('@anthropic-ai/sdk'));
+  } catch (err) {
+    sdkOk = false;
+    console.error(`[zimpan] AI features are off — the Anthropic SDK could not be loaded: ${err.message}`);
+    throw new Error('AI features are unavailable on this server.');
+  }
+  sdkOk = true;
+  client = new Anthropic({ maxRetries: 1 });
+  return client;
+}
+
+/* Asked once at boot rather than by the first person to press a button, so
+   /api/config tells the browser the truth from the start and the reason is in
+   the log at the moment it could have been acted on. Never throws: this is a
+   report on an optional feature, not a condition for serving the site. */
+export async function warmAI() {
+  if (!keyed()) {
+    console.log('[zimpan] AI features are off — no ANTHROPIC_API_KEY');
+    return false;
+  }
+  try { await anthropic(); return true; } catch { return false; }
+}
 
 /* Deliberately narrow. The model is not asked for advice, only for arithmetic
    it is better at than a regex — naming the foods it found is what lets a
@@ -106,7 +151,7 @@ export async function estimateNutrition(text) {
 
   let res;
   try {
-    res = await anthropic().beta.messages.create({
+    res = await (await anthropic()).beta.messages.create({
       model: MODEL,
       max_tokens: 8192,
       /* Refusal is vanishingly unlikely for a list of food, but a declined
@@ -250,7 +295,7 @@ export async function summariseDeck(facts) {
 
   let res;
   try {
-    res = await anthropic().beta.messages.create({
+    res = await (await anthropic()).beta.messages.create({
       model: MODEL,
       max_tokens: 8192,
       betas: ['server-side-fallback-2026-07-01'],
@@ -392,7 +437,7 @@ export async function chatReply(history, facts) {
 
   let res;
   try {
-    res = await anthropic().beta.messages.create({
+    res = await (await anthropic()).beta.messages.create({
       model: MODEL,
       max_tokens: 1024,
       betas: ['server-side-fallback-2026-07-01'],
@@ -473,7 +518,7 @@ export async function estimateBurn(text, weightKg, minutes) {
 
   let res;
   try {
-    res = await anthropic().beta.messages.create({
+    res = await (await anthropic()).beta.messages.create({
       model: MODEL,
       max_tokens: 2048,
       betas: ['server-side-fallback-2026-07-01'],

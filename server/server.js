@@ -15,7 +15,7 @@ import {
 import { changesSince, applyChanges, Invalid, CURRENCIES } from './sync.js';
 import { verifyGoogleIdToken } from './google.js';
 import { sendResetEmail } from './mail.js';
-import { estimateNutrition, estimateBurn, summariseDeck, chatReply, aiConfigured } from './ai.js';
+import { estimateNutrition, estimateBurn, summariseDeck, chatReply, aiConfigured, warmAI } from './ai.js';
 import {
   overview as adminOverview, users as adminUsers, donationsFor,
   setRole, addDonation, removeDonation, deleteAccount, noteDonateClick, touchSeen, isAdminRole, ROLES
@@ -777,3 +777,9 @@ process.on('uncaughtException', (err) => {
 });
 
 prepareDatabase();
+
+/* Settles whether the AI features are really available before anyone asks.
+   Separate from prepareDatabase() and never awaited: the site serves with or
+   without it, and holding the boot on an optional feature is how an optional
+   feature becomes a required one. */
+warmAI();
