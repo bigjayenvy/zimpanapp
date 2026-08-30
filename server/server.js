@@ -18,7 +18,7 @@ import { sendResetEmail } from './mail.js';
 import { estimateNutrition, estimateBurn, summariseDeck, chatReply, aiConfigured } from './ai.js';
 import {
   overview as adminOverview, users as adminUsers, donationsFor,
-  setRole, addDonation, removeDonation, noteDonateClick, touchSeen, isAdminRole, ROLES
+  setRole, addDonation, removeDonation, deleteAccount, noteDonateClick, touchSeen, isAdminRole, ROLES
 } from './admin.js';
 import {
   TeamError, membershipFor, createTeam, teamOverview, inviteMember, revokeInvite,
@@ -569,6 +569,16 @@ app.post('/api/admin/role', requireSuper, wrap(async (req, res) => {
   if (!ROLES.includes(role)) return res.status(400).json({ error: 'Unknown role.' });
   try {
     res.json({ ok: true, ...(await setRole(req.user.id, email, role)) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}));
+
+/* Irreversible, so it is a superadmin route and it takes the address as well
+   as the id — see deleteAccount for why both. */
+app.delete('/api/admin/users/:id', requireSuper, wrap(async (req, res) => {
+  try {
+    res.json(await deleteAccount(req.user.id, req.params.id, (req.body || {}).email));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

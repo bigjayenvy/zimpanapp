@@ -105,24 +105,35 @@ export async function users({ q = '', sort = 'recent', limit = 50, offset = 0 })
   const take = Math.min(200, Math.max(1, Math.floor(Number(limit)) || 50));
   const skip = Math.max(0, Math.floor(Number(offset)) || 0);
   const like = `%${q}%`;
-  const where = q ? 'WHERE u.email LIKE ?' : '';
-  const params = q ? [like] : [];
+  /* Searching by team name as well as by address: an admin looking into a
+     subscription has the team's name off a PayPal note far more often than
+     they have the email of whoever owns it. */
+  const where = q ? 'WHERE (u.email LIKE ? OR t.name LIKE ?)' : '';
+  const params = q ? [like, like] : [];
 
   const rows = await query(`
-    SELECT u.id, u.email, u.role, u.created_at, u.last_seen_at,
+    SELECT u.id, u.email, u.role, u.kind, u.created_at, u.last_seen_at,
            u.donate_clicks, u.donated_click_at,
            u.google_sub IS NOT NULL AS google,
            u.password_hash IS NOT NULL AS has_password,
+           tm.role AS team_role, t.id AS team_id, t.name AS team_name, t.plan AS team_plan,
            (SELECT COUNT(*) FROM entries e WHERE e.user_id = u.id AND e.deleted = 0)        AS entries,
            (SELECT COUNT(DISTINCT e.date) FROM entries e WHERE e.user_id = u.id AND e.deleted = 0) AS days,
            (SELECT COUNT(*) FROM money_entries m WHERE m.user_id = u.id AND m.deleted = 0)  AS money,
            (SELECT COUNT(*) FROM donations d WHERE d.user_id = u.id)                        AS donations,
            (SELECT COALESCE(SUM(d.amount), 0) FROM donations d WHERE d.user_id = u.id)      AS donated
-      FROM users u ${where}
+      FROM users u
+      LEFT JOIN team_members tm ON tm.user_id = u.id
+      LEFT JOIN teams t ON t.id = tm.team_id
+      ${where}
      ORDER BY ${order}
      LIMIT ${take} OFFSET ${skip}`, params);
 
-  const count = await one(`SELECT COUNT(*) AS n FROM users u ${where}`, params);
+  const count = await one(`
+    SELECT COUNT(*) AS n FROM users u
+    LEFT JOIN team_members tm ON tm.user_id = u.id
+    LEFT JOIN teams t ON t.id = tm.team_id
+    ${where}`, params);
   return { rows, total: Number(count.n) };
 }
 
@@ -153,6 +164,65 @@ export async function setRole(actorId, targetEmail, role) {
 
   await query('UPDATE users SET role = ?, updated_at = ? WHERE id = ?', [role, now(), target.id]);
   return { email: target.email, role };
+}
+
+/* ── deleting an account ──
+
+   The only irreversible thing in this file, so it is the most guarded. Every
+   row a person owns is removed with them: entries, money, categories,
+   purposes, sessions, donations and team membership all cascade from the users
+   row, so there is nothing left behind and nothing to sweep up later.
+
+   Four refusals, each for something that cannot be undone by clicking again:
+
+   - Yourself. Deleting the account you are signed in as ends the session that
+     was doing it, mid-request.
+   - Any superadmin. Nothing in the system creates one except the seed for the
+     configured address, so removing one can mean editing the database by hand
+     to get back in. Demote it first and the intent is at least deliberate.
+   - The owner of a team that still has other people in it. Their membership
+     would cascade away and leave a team nobody owns, with members still
+     logging into it. Move ownership or clear the team first.
+   - A mismatched confirmation. The caller has to send the address as well as
+     the id, and they have to agree. An id alone is one wrong row in a table;
+     an address is a thing you have to have read.
+
+   A team whose last member is being deleted goes with them, since a team with
+   nobody in it is not something anyone can reach or repair. */
+export async function deleteAccount(actorId, targetId, confirmEmail) {
+  const id = Number(targetId);
+  if (!Number.isInteger(id) || id <= 0) throw new Error('No such account.');
+  if (id === Number(actorId)) throw new Error('You cannot delete the account you are signed in as.');
+
+  const target = await one('SELECT id, email, role FROM users WHERE id = ?', [id]);
+  if (!target) throw new Error('No such account.');
+
+  const typed = String(confirmEmail || '').trim().toLowerCase();
+  if (!typed || typed !== String(target.email).toLowerCase()) {
+    throw new Error('Type the account’s email address to confirm.');
+  }
+  if (target.role === 'superadmin') {
+    throw new Error('That is a superadmin. Change the role to user first, so deleting it is a decision of its own.');
+  }
+
+  const member = await one('SELECT team_id AS teamId, role FROM team_members WHERE user_id = ?', [id]);
+  let teamRemoved = null;
+  if (member) {
+    const left = await one('SELECT COUNT(*) AS n FROM team_members WHERE team_id = ?', [member.teamId]);
+    const others = Number(left.n) - 1;
+    if (member.role === 'super' && others > 0) {
+      throw new Error(`They own a team with ${others} other ${others === 1 ? 'person' : 'people'} in it. Move ownership or remove the others first.`);
+    }
+    if (others === 0) teamRemoved = member.teamId;
+  }
+
+  /* The users row first: everything of theirs hangs off it by ON DELETE
+     CASCADE, so one statement takes the lot. The team, if it is being emptied,
+     goes after — its own projects and invitations cascade from it. */
+  await query('DELETE FROM users WHERE id = ?', [id]);
+  if (teamRemoved) await query('DELETE FROM teams WHERE id = ?', [teamRemoved]);
+
+  return { email: target.email, teamRemoved: !!teamRemoved };
 }
 
 export async function addDonation(actorId, { email, amount, currency, receivedAt, note }) {

@@ -22,9 +22,19 @@ const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 async function api(path, opts = {}) {
+  const write = (opts.method || 'GET') !== 'GET';
+  /* X-Zimpan-Client is what the server's CSRF guard looks for on every write:
+     a cross-origin caller cannot set a custom header without passing a
+     preflight, and no origins are allowed. This file never sent it, so every
+     write from this dashboard — changing a role, recording a gift, removing
+     one — was coming back 403 before it reached its route. */
+  const headers = {};
+  if (opts.body) headers['Content-Type'] = 'application/json';
+  if (write) headers['X-Zimpan-Client'] = '1';
+
   const res = await fetch(path, {
     method: opts.method || 'GET',
-    headers: opts.body ? { 'Content-Type': 'application/json' } : undefined,
+    headers: Object.keys(headers).length ? headers : undefined,
     body: opts.body ? JSON.stringify(opts.body) : undefined,
     credentials: 'same-origin'
   });
@@ -49,8 +59,9 @@ const state = {
   sort: 'recent',
   page: 0,
   busy: false,
-  modal: null,         // { kind: 'role' | 'donation', email }
-  msg: null            // { tone: 'good' | 'bad', text }
+  modal: null,         // { kind: 'role' | 'donation' | 'delete', email }
+  msg: null,           // { tone: 'good' | 'bad', text }
+  gone: ''             // what the last deletion took, said once above the table
 };
 
 const PAGE = 50;
@@ -227,8 +238,19 @@ function usersBlock() {
           <td>
             <div class="ad-mail">${esc(u.email)}</div>
             <div style="font-size: 11px; color: var(--color-neutral-600); margin-top: 2px;">
-              joined ${esc(day(u.created_at))}${Number(u.google) ? ' · Google' : ''}${u.role !== 'user' ? '' : ''}
+              joined ${esc(day(u.created_at))}${Number(u.google) ? ' · Google' : ''}
             </div>
+          </td>
+          <td>
+            ${u.kind === 'work'
+              ? `<span class="ad-pill work">work</span>`
+              : '<span style="font-size:11px;color:var(--color-neutral-500);">personal</span>'}
+            ${u.team_name ? `
+            <div class="ad-team">
+              <span class="ad-team-name">${esc(u.team_name)}</span>
+              <span class="ad-team-role">${esc(u.team_role === 'super' ? 'owner' : u.team_role)}${
+                u.team_plan && u.team_plan !== 'trial' ? ` · ${esc(u.team_plan)}` : ' · trial'}</span>
+            </div>` : ''}
           </td>
           <td>${u.role === 'user' ? '' : `<span class="ad-pill role">${esc(u.role)}</span>`}</td>
           <td><span class="ad-pill ${tone}">${esc(when)}</span></td>
@@ -244,6 +266,8 @@ function usersBlock() {
             <div class="ad-actions">
               <button class="ad-mini" data-act="role" data-email="${esc(u.email)}">Role</button>
               <button class="ad-mini" data-act="donation" data-email="${esc(u.email)}">Add gift</button>
+              ${u.role === 'superadmin' ? '' :
+                `<button class="ad-mini danger" data-act="delete" data-id="${esc(String(u.id))}" data-email="${esc(u.email)}">Delete</button>`}
             </div>` : '<span style="font-size: 11px; color: var(--color-neutral-500);">view only</span>'}
           </td>
         </tr>`;
@@ -258,18 +282,19 @@ function usersBlock() {
           ${SORTS.map(([k, l]) => `<option value="${k}"${k === state.sort ? ' selected' : ''}>${esc(l)}</option>`).join('')}
         </select>
         <span class="ad-count">${shown ? `showing ${num(shown)} of ${num(state.total)}` : ''}</span>
+        ${state.gone ? `<span class="ad-gone">${esc(state.gone)}</span>` : ''}
       </div>
 
       <div class="ad-scroll">
         <table class="ad-table">
           <thead>
             <tr>
-              <th>Account</th><th>Role</th><th>Last active</th>
+              <th>Account</th><th>Product</th><th>Role</th><th>Last active</th>
               <th class="ad-num">Entries</th><th class="ad-num">Days</th><th class="ad-num">Money</th>
               <th class="ad-num">Donate clicks</th><th class="ad-num">Given</th><th></th>
             </tr>
           </thead>
-          <tbody>${rows || `<tr><td colspan="9" class="ad-empty">${state.q ? 'No account matches that.' : 'No accounts yet.'}</td></tr>`}</tbody>
+          <tbody>${rows || `<tr><td colspan="10" class="ad-empty">${state.q ? 'No account matches that.' : 'No accounts yet.'}</td></tr>`}</tbody>
         </table>
       </div>
 
@@ -309,6 +334,36 @@ function modalBlock() {
         </div>
       </div>`;
   }
+  if (m.kind === 'delete') {
+    const u = m.row || {};
+    const counts = [
+      Number(u.entries) ? `${num(u.entries)} time entries` : '',
+      Number(u.money) ? `${num(u.money)} money entries` : '',
+      Number(u.donations) ? `${num(u.donations)} recorded gifts` : ''
+    ].filter(Boolean);
+    return `
+      <div class="ad-back" data-backdrop>
+        <div class="ad-modal" role="dialog" aria-modal="true">
+          <h3>Delete this account</h3>
+          <p class="ad-sub">${esc(m.email)}</p>
+          <p class="ad-warn">
+            This cannot be undone. Everything they logged goes with the account${
+              counts.length ? ` — ${esc(counts.join(', '))}` : ''}.${
+              u.team_name ? ` They are ${esc(u.team_role === 'super' ? 'the owner' : 'a member')} of <strong>${esc(u.team_name)}</strong>; if that leaves the team empty it goes too.` : ''}
+          </p>
+          <div class="field">
+            <label for="ad-confirm">Type <strong>${esc(m.email)}</strong> to confirm</label>
+            <input class="input" id="ad-confirm" type="email" autocomplete="off" spellcheck="false" placeholder="${esc(m.email)}">
+          </div>
+          ${state.msg ? `<p class="ad-msg ${state.msg.tone}">${esc(state.msg.text)}</p>` : ''}
+          <footer>
+            <button class="btn btn-ghost" data-act="close-modal">Cancel</button>
+            <button class="btn ad-danger" data-act="confirm-delete"${state.busy ? ' disabled' : ''}>${state.busy ? 'Deleting…' : 'Delete for good'}</button>
+          </footer>
+        </div>
+      </div>`;
+  }
+
   const today = new Date().toISOString().slice(0, 10);
   return `
       <div class="ad-back" data-backdrop>
@@ -451,6 +506,7 @@ const ACTIONS = {
   more: () => { state.page += 1; loadUsers(true); },
 
   role: (el) => {
+    state.gone = '';
     const row = state.rows.find((u) => u.email === el.dataset.email);
     state.modal = { kind: 'role', email: el.dataset.email, role: row ? row.role : 'user' };
     state.msg = null;
@@ -463,7 +519,44 @@ const ACTIONS = {
     render();
   },
 
-  'close-modal': () => { state.modal = null; state.msg = null; render(); },
+  delete: (el) => {
+    const row = state.rows.find((u) => String(u.id) === String(el.dataset.id));
+    state.modal = { kind: 'delete', id: el.dataset.id, email: el.dataset.email, row: row || null };
+    state.msg = null;
+    render();
+  },
+
+  'confirm-delete': async () => {
+    /* Read before the busy render replaces the field, the same as the other
+       two dialogs. The typed address goes to the server, which checks it
+       against the account the id names — this side matching it would only be
+       checking its own homework. */
+    const typed = ((document.getElementById('ad-confirm') || {}).value || '').trim();
+    const { id, email } = state.modal;
+    state.busy = true; state.msg = null; render();
+    try {
+      const out = await api(`/api/admin/users/${encodeURIComponent(id)}`, {
+        method: 'DELETE', body: { email: typed }
+      });
+      state.modal = null;
+      state.msg = null;
+      state.gone = `${out.email} is gone${out.teamRemoved ? ', and their empty team with it' : ''}.`;
+      /* Both reloaded rather than the row spliced out: the totals at the top
+         counted that account, and a team may have gone with it. */
+      try {
+        const fresh = await api('/api/admin/overview');
+        state.overview = fresh.overview;
+      } catch (e) { /* the table below is still worth showing */ }
+      await loadUsers(false);
+    } catch (err) {
+      state.msg = { tone: 'bad', text: err.message };
+    } finally {
+      state.busy = false;
+      render();
+    }
+  },
+
+  'close-modal': () => { state.modal = null; state.msg = null; state.gone = ''; render(); },
 
   'save-role': async () => {
     // Read before the busy render, for the same reason as the gift dialog.
