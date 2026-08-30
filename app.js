@@ -4281,7 +4281,7 @@ function teamsScreen() {
       <div class="landing-actions">
         <button class="landing-login" data-act="auth-open-work">Log In</button>
         <div class="landing-cta-top">
-          <button data-act="scroll-pricing" class="btn btn-primary" style="font-size:14px;font-weight:600;padding:10px 24px;border-radius:999px;cursor:pointer;">See pricing</button>
+          <button data-act="auth-open-work" class="btn btn-primary" style="font-size:14px;font-weight:600;padding:10px 24px;border-radius:999px;cursor:pointer;">Create Teams Account</button>
         </div>
       </div>
     </header>
