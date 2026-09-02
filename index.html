@@ -1026,6 +1026,35 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      narrow-screen rule below turns every other action row upside down so the
      primary sits on top, and a stack whose order is the point must not be
      caught by it. */
+  /* — the FAQ's collapsible entries —
+     <details> with no JavaScript behind it, so nothing has to survive the next
+     re-render. The default triangle is replaced by a marker that rotates: the
+     native one sits outside the padded row and lines up with nothing. */
+  .faq-item {
+    border-bottom: 1px solid var(--color-divider);
+  }
+  .faq-item summary {
+    list-style: none; cursor: pointer;
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 11px 0; font-size: 14px; font-weight: 600;
+    color: var(--color-text);
+  }
+  .faq-item summary::-webkit-details-marker { display: none; }
+  .faq-item summary::before {
+    content: '+'; flex: none; width: 14px;
+    font-weight: 400; font-size: 16px; line-height: 1.1;
+    color: var(--color-accent-700);
+  }
+  .faq-item[open] summary::before { content: '−'; }
+  .faq-item summary:hover { color: var(--color-accent-700); }
+  .faq-item summary:focus-visible {
+    outline: 2px solid var(--color-accent-600); outline-offset: 2px; border-radius: 4px;
+  }
+  .faq-answer {
+    padding: 0 0 14px 24px;
+    font-size: 13.5px; line-height: 1.65; color: var(--color-neutral-800);
+  }
+
   .lb-acts.lb-stack { flex-direction: column; }
   .lb-acts.lb-stack .btn { width: 100%; flex: 0 0 auto; }
   /* Figures worth reading before deciding to read more. Chips rather than a

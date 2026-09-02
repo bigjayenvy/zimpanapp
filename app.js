@@ -3875,6 +3875,70 @@ const LEGAL = {
       ['Changes', 'If this policy changes materially we will say so in the app rather than quietly editing this page.']
     ]
   },
+  /* Grouped and collapsed rather than a flat run like the two legal documents.
+
+     Those are read start to finish, once, by someone checking what they have
+     agreed to. This is read by someone with one question, and twenty-five
+     answers left open is a wall to scroll past rather than a page to search.
+     <details> does the collapsing with no JavaScript and no state to keep, so
+     nothing here has to survive a re-render.
+
+     Every answer is what the app actually does. Where it names a limit or a
+     rule, that rule is in the code — the overnight timer, the calorie source,
+     who can see a team's hours. An FAQ that describes an app you wish you had
+     written is worse than none. */
+  faq: {
+    title: 'Frequently Asked Questions',
+    groups: [
+      ['Getting started', [
+        ['What is ZIMPAN?', 'A tracker for your time and your money, and for what the two do to you. You log what you did and what you spent; it reads the pattern back to you — where the hours went, what you ate, how you slept, and whether the shape of the week is one you would choose again.'],
+        ['Do I need an account?', 'No. Everything works in your browser without one. An account is what carries your log between your phone and your laptop, and what keeps it if you lose the device.'],
+        ['Is it really free?', 'The personal tracker is free, with no ads and no paid tier, and nothing you log is ever sold. Zimpan for Teams is the paid product. Donations are voluntary and buy no extra features.'],
+        ['Does it work offline?', 'Yes. Your log lives in the browser first and syncs when there is a connection. You can log on a plane and it will be there when you land.'],
+        ['What happens if I sign out?', 'The local copy on that device is cleared. Anything already synced is safe and comes back when you sign in again — so let a pending sync finish before you go.']
+      ]],
+      ['Tracking time', [
+        ['How do I log time?', 'Two ways. Start the timer and stop it when you are done, or write the entry afterwards and set the times by dragging the bar or typing them.'],
+        ['What if I forget to stop the timer?', 'Stop it whenever you notice and trim the times — an entry is just a start and an end, and both can be edited afterwards.'],
+        ['What about something that runs past midnight?', 'It is counted against the morning it ended, so a sleep from 11PM to 7AM lands on the day you woke up rather than being split in two or lost between them.'],
+        ['Can I edit or delete an entry?', 'Any of it — the activity, the category, the times, the note. Deleting is immediate and syncs to your other devices.'],
+        ['What are categories?', 'Your own labels for kinds of activity. Rename them, recolour them, add your own; the readings follow whatever you call things rather than a fixed list.'],
+        ['What does "unaccounted for" mean?', 'The minutes of a day with nothing logged against them. It is not a scolding — it is the part of the day the report genuinely cannot see, said out loud so you do not read a half-logged day as a quiet one.']
+      ]],
+      ['Money', [
+        ['How do I log money?', 'The money tracker takes an amount, a purpose and a date. Whether a spend comes off your running balance is a question it asks once and then remembers.'],
+        ['Why does food I paid for not count as calories?', 'Calories are read from the activity tracker only. Paying for a meal is not the same as eating it — you may have bought it for someone else, or eaten half. Log what you ate as an activity and it counts.'],
+        ['What currency does it use?', 'New accounts start in US dollars and you can change it whenever you like. Changing it relabels the figures; it does not convert them.']
+      ]],
+      ['Calories, sleep and the readings', [
+        ['Where do the calorie figures come from?', 'What you wrote. Food is read from the note on each meal against a table of typical servings; burn is priced from the activity, how long it ran, and your weight. Steps ride with the burn figure. All of it is an estimate, and an entry with nothing written down cannot be priced — that is what "not read" means.'],
+        ['What is "Calibrate with AI"?', 'An optional second reading of a single day\'s meals by a language model, which is better than a lookup table at knowing what a named dish or a branded item actually contains. It runs only when you ask for it, and the local reading stays visible underneath so you can see the two disagree.'],
+        ['How is sleep counted?', 'The longest sleep entry on a date is that night; anything shorter the same day is a nap and is counted separately, so three naps cannot add up to a good night.'],
+        ['What are the four readings?', 'Body, mind, emotions and spirit — a rough sense of what your logged hours fed, with partial credit, because an hour of chores is not an hour of exercise. They describe your entries, not you.'],
+        ['Is any of this medical advice?', 'No. Every reading is generated automatically from what you logged, using general rules, and no professional has reviewed it for you. Before acting on any of it — especially with a health condition, medication, or money that matters — ask someone qualified.']
+      ]],
+      ['Reports and windows', [
+        ['What are Report Cards?', 'A run of cards summarising a window: where the time went, your top three, the busiest day against the quietest, and a closing card on what a stretch like that tends to do. Swipe or click through them; they print.'],
+        ['What do the windows mean?', 'Day and Week are the last 1 and 7 days ending on the day you are looking at. This Month is this calendar month so far, Last Month is the whole of the previous one, and 3, 6 and 12 Months are the last 91, 182 and 365 days. All Time reaches back to the first thing you ever logged.'],
+        ['Can I get my data out?', 'Yes — the report tools export it, and you should keep your own copy of anything you would be upset to lose.']
+      ]],
+      ['Ask Zimpan', [
+        ['What is Ask Zimpan?', 'A chat that can see your log and answer questions about it — what you spent on what, how last week compared, how the app works.'],
+        ['Can it get things wrong?', 'Yes. It is an AI assistant and it can be mistaken, so check anything that matters against the figures themselves. If a question is outside what it can see, it will say so rather than guess.']
+      ]],
+      ['Zimpan for Teams', [
+        ['What is Zimpan for Teams?', 'A separate product for measuring a team\'s productivity: hours logged against projects, a roster you invite by email, and a reading of where the week went. It tracks work only — no money, no food, no sleep, nothing personal.'],
+        ['Can I use my personal account for it?', 'No. A team account is its own login with its own email, decided at sign-up and never moved between the two. That separation is what keeps your personal log out of your employer\'s sight.'],
+        ['Who can see my hours?', 'Your team\'s admins and its owner, and only the hours you logged against the team\'s projects. Notes on your entries are never shown to them.'],
+        ['Who can edit them?', 'Admins and the owner can correct a member\'s hours; members log their own. Only the owner manages billing.'],
+        ['What does it cost?', 'From $9 a month for six people up to $100 for unlimited, and every team starts on a 14-day trial for three people with no card needed.']
+      ]],
+      ['Your data', [
+        ['Where does my data live?', 'In your own browser, and — if you have an account — in a database on our hosting. Nothing is sold, and nothing you log is shared with anyone.'],
+        ['How do I delete my account?', 'Email us and we will delete the account and everything in it. Deletion is irreversible, so export anything you want to keep first.']
+      ]]
+    ]
+  },
   terms: {
     title: 'Terms of Use',
     body: [
@@ -3896,19 +3960,30 @@ function legalSheet() {
     <div class="report-wrap" data-legal-backdrop style="position: fixed; inset: 0; background: color-mix(in srgb, var(--color-neutral-900) 55%, transparent); display: flex; align-items: flex-start; justify-content: center; overflow: auto; z-index: 55;">
       <div style="width: 680px; max-width: 100%;">
         <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 14px;">
-          <span style="color: var(--color-bg); font-size: 13px; margin-right: auto;">Last updated ${esc(LEGAL_UPDATED)}</span>
+          <span style="color: var(--color-bg); font-size: 13px; margin-right: auto;">${doc.groups ? '' : `Last updated ${esc(LEGAL_UPDATED)}`}</span>
           <button class="btn btn-secondary" data-act="legal-close" style="background: var(--color-bg);">Close</button>
         </div>
         <div class="report-sheet" style="background: var(--color-bg); box-shadow: var(--shadow-lg);">
           <h4 style="margin: 0 0 6px; font-size: 22px;">${esc(doc.title)}</h4>
           <div style="font-size: 12.5px; color: var(--color-neutral-600); margin-bottom: 22px;">ZIMPAN · zimpan.com</div>
-          ${doc.body.map(([heading, text]) => `
+          ${doc.body ? doc.body.map(([heading, text]) => `
             <div style="margin-bottom: 18px;">
               <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 5px;">${esc(heading)}</div>
               <div style="font-size: 13.5px; line-height: 1.65; color: var(--color-neutral-800);">${esc(text)}</div>
-            </div>`).join('')}
+            </div>`).join('') : ''}
+          ${doc.groups ? doc.groups.map(([section, items]) => `
+            <div style="margin-bottom: 22px;">
+              <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 8px;">${esc(section)}</div>
+              ${items.map(([q, a]) => `
+              <details class="faq-item">
+                <summary>${esc(q)}</summary>
+                <div class="faq-answer">${esc(a)}</div>
+              </details>`).join('')}
+            </div>`).join('') : ''}
           <div style="margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--color-divider); font-size: 12px; color: var(--color-neutral-600);">
-            Questions about either document? Get in touch and we will answer.
+            ${doc.groups
+              ? 'Something not answered here? Get in touch and we will answer it — and add it to this list.'
+              : 'Questions about either document? Get in touch and we will answer.'}
           </div>
         </div>
       </div>
@@ -3949,6 +4024,7 @@ const legalLinks = (color) => `
   <div style="display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; font-size: 12px;">
     <button data-act="legal-privacy" style="border:0;background:transparent;padding:0;font:inherit;font-size:12px;color:${color};cursor:pointer;text-decoration:underline;text-underline-offset:2px;">Privacy Policy</button>
     <button data-act="legal-terms" style="border:0;background:transparent;padding:0;font:inherit;font-size:12px;color:${color};cursor:pointer;text-decoration:underline;text-underline-offset:2px;">Terms of Use</button>
+    <button data-act="legal-faq" style="border:0;background:transparent;padding:0;font:inherit;font-size:12px;color:${color};cursor:pointer;text-decoration:underline;text-underline-offset:2px;">FAQs</button>
   </div>`;
 
 /* ── account screens ── */
@@ -9180,6 +9256,7 @@ const ACTIONS = {
 
   'legal-privacy': () => { state.legalOpen = 'privacy'; render(); },
   'legal-terms': () => { state.legalOpen = 'terms'; render(); },
+  'legal-faq': () => { state.legalOpen = 'faq'; render(); },
   'legal-close': () => { state.legalOpen = null; render(); },
   /* First press arms, second press sends. adoptLocalData() stamps every row on
      the device and marks it dirty, so the next sync carries the lot. */
@@ -11930,6 +12007,7 @@ function mAccountSheet() {
   <div style="display:flex;gap:16px;justify-content:center;margin:14px 0 10px;">
     <button data-act="legal-privacy" style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;color:#756f88;padding:6px;">Privacy</button>
     <button data-act="legal-terms" style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;color:#756f88;padding:6px;">Terms of Use</button>
+    <button data-act="legal-faq" style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;color:#756f88;padding:6px;">FAQs</button>
   </div>
   <button class="btn" data-act="m-sign-out"
     style="width:100%;min-height:48px;font-size:15px;color:#8a2f4a;background:#fff;border:1px solid rgba(138,47,74,.3);margin-bottom:8px;">Sign out</button>
