@@ -15,7 +15,7 @@ import {
 } from './auth.js';
 import { changesSince, applyChanges, Invalid, CURRENCIES } from './sync.js';
 import { verifyGoogleIdToken } from './google.js';
-import { sendResetEmail } from './mail.js';
+import { sendResetEmail, sendInviteEmail, mailerConfigured } from './mail.js';
 import {
   BlogError, listPosts, readPost, publishedSlugs,
   adminList, adminRead, createPost, updatePost, deletePost
@@ -28,7 +28,7 @@ import {
 import {
   TeamError, membershipFor, createTeam, teamOverview, inviteMember, revokeInvite,
   acceptInvite, setMemberRole, removeMember, saveProject, deleteProject,
-  memberEntries, editMemberEntry, teamDashboard, teamNow, setTeamPlan, PLANS
+  memberEntries, editMemberEntry, teamDashboard, teamNow, setTeamPlan, resendInvite, PLANS
 } from './teams.js';
 
 const ROOT = join(HERE, '..');
@@ -663,15 +663,39 @@ app.get('/api/team', requireUser, team(async (req) => {
 
 app.post('/api/team', requireUser, team((req) => createTeam(req.user.id, (req.body || {}).name)));
 
+/* An invitation is created, then emailed, then reported on — in that order,
+   and the middle step cannot undo the first.
+
+   This route used to stop after the first step. It built the link, handed it
+   back, and the comment above it said the token "goes out by email" — which it
+   never did, for anybody, because nothing here sent one. The link on the
+   admin's screen was the only way an invitation ever reached a person.
+
+   Delivery is reported rather than assumed: the client says "emailed to them"
+   or "we could not email them — send this link" depending on what actually
+   happened, and the link comes back either way so a failure is recoverable
+   without a second round trip. */
+const inviteReply = async (req, invite) => {
+  const link = `${req.protocol}://${req.get('Host')}/teams?invite=${encodeURIComponent(invite.token)}`;
+  const sent = await sendInviteEmail(invite.email, link, {
+    team: invite.team, from: invite.from, days: invite.days
+  });
+  return {
+    email: invite.email, role: invite.role, expiresAt: invite.expiresAt, link,
+    delivered: !!sent.delivered,
+    // Named for the admin, not for the log: "not configured" is something they
+    // can act on, an SMTP error string is not.
+    mailReason: sent.delivered ? '' : (mailerConfigured() ? 'The mail server refused it.' : 'Email is not set up on this server.')
+  };
+};
+
 app.post('/api/team/invite', requireUser, team(async (req) => {
   const b = req.body || {};
-  const invite = await inviteMember(req.user.id, b.email, b.role);
-  /* The token goes out by email and comes back in the response too: the
-     server may have no mail configured, and an admin who can read the link
-     off their own screen is better than an invitation nobody receives. */
-  const link = `${req.protocol}://${req.get('Host')}/teams?invite=${encodeURIComponent(invite.token)}`;
-  return { email: invite.email, role: invite.role, expiresAt: invite.expiresAt, link };
+  return inviteReply(req, await inviteMember(req.user.id, b.email, b.role));
 }));
+
+app.post('/api/team/invite/resend', requireUser, team(async (req) =>
+  inviteReply(req, await resendInvite(req.user.id, (req.body || {}).email))));
 
 app.post('/api/team/invite/revoke', requireUser, team((req) => revokeInvite(req.user.id, (req.body || {}).email)));
 

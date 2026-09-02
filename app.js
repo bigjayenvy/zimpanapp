@@ -515,6 +515,7 @@ const API = {
     create: (name) => api('/api/team', { method: 'POST', body: { name } }),
     invite: (email, role) => api('/api/team/invite', { method: 'POST', body: { email, role } }),
     revoke: (email) => api('/api/team/invite/revoke', { method: 'POST', body: { email } }),
+    resend: (email) => api('/api/team/invite/resend', { method: 'POST', body: { email } }),
     accept: (token) => api('/api/team/accept', { method: 'POST', body: { token } }),
     role: (userId, role) => api('/api/team/role', { method: 'POST', body: { userId, role } }),
     remove: (userId) => api('/api/team/remove', { method: 'POST', body: { userId } }),
@@ -780,6 +781,8 @@ const state = {
   teamInviteEmail: '',
   teamInviteRole: 'member',
   teamInviteLink: '',
+  // Whether the last invitation was actually emailed. See noteInvite().
+  teamMailed: false,
   teamProjectName: '',
   teamMemberId: null,
   teamRows: [],
@@ -8883,6 +8886,22 @@ async function loadTeamHours() {
    replacing a live roster with an error message would be worse than a figure
    that is thirty seconds stale, and the timestamp under it already says how
    old the reading is. */
+/* What to say after an invitation goes out, or fails to.
+
+   The link is shown whether or not the email went. When it did, it is the
+   fallback for a spam folder; when it did not, it is the only way in. Showing
+   it always is simpler than deciding, and an admin who can see the link is
+   never stuck. */
+function noteInvite(out, again) {
+  state.teamInviteLink = out.link || '';
+  state.teamMailed = !!out.delivered;
+  state.teamNotice = out.delivered
+    ? `${again ? 'Sent again' : 'Invited'} — ${out.email} has the email.`
+    : `Invitation ${again ? 'renewed' : 'created'} for ${out.email}, but the email did not go: ${
+      out.mailReason || 'the server could not send it'} Send them the link below.`;
+  render();
+}
+
 async function loadTeamLive(quiet) {
   if (!teamIsAdmin() || !(state.team && state.team.team)) return;
   if (!quiet) { state.teamError = ''; state.teamLive = null; }
@@ -9113,6 +9132,8 @@ function teamPeopleTab() {
         <span class="tm-name">${esc(i.email)}</span>
         <span class="tm-mail">Invited · ${esc(i.role)}</span>
       </div>
+      <button class="tm-act" data-act="team-resend" data-v="${esc(i.email)}"${
+        state.teamBusy === 'resend' ? ' disabled' : ''}>${state.teamBusy === 'resend' ? 'Sending…' : 'Resend'}</button>
       <button class="tm-act tm-drop" data-act="team-revoke" data-v="${esc(i.email)}">Withdraw</button>
     </div>`).join('');
 
@@ -9144,8 +9165,10 @@ function teamPeopleTab() {
       <button class="btn btn-primary" data-act="team-invite"${state.teamBusy === 'invite' ? ' disabled' : ''}>${state.teamBusy === 'invite' ? 'Sending…' : 'Invite'}</button>
     </div>
     ${state.teamInviteLink ? `
-    <div class="tm-link">
-      <span>Send them this link:</span>
+    <div class="tm-link${state.teamMailed ? '' : ' tm-link-warn'}">
+      <span>${state.teamMailed
+        ? 'Emailed to them. If it does not arrive, this is the same link:'
+        : 'Send them this link — it is the only way in until email works:'}</span>
       <code>${esc(state.teamInviteLink)}</code>
     </div>` : ''}` : ''}`;
 }
@@ -9992,17 +10015,26 @@ const ACTIONS = {
     if (!name) { state.teamError = 'A team needs a name.'; render(); return; }
     teamDo('create', () => API.team.create(name), 'Team created.').then(() => { state.teamName = ''; render(); });
   },
+  /* Both of these end the same way, so they say it in one place: whether the
+     email actually went, and the link either way.
+
+     The notice used to read "Invited them." whatever happened, which is how an
+     admin ends up believing an email was sent when none was. */
   'team-invite': () => {
     const email = state.teamInviteEmail.trim();
     if (!email) { state.teamError = 'Who are you inviting?'; render(); return; }
     teamDo('invite', () => API.team.invite(email, state.teamInviteRole)).then((out) => {
       if (!out) return;
       state.teamInviteEmail = '';
-      // Shown as well as emailed: the server may have no mail configured, and
-      // a link an admin can copy beats an invitation nobody receives.
-      state.teamInviteLink = out.link || '';
-      state.teamNotice = `Invited ${out.email}.`;
-      render();
+      noteInvite(out);
+    });
+  },
+
+  'team-resend': (el) => {
+    const email = el.dataset.v;
+    teamDo('resend', () => API.team.resend(email)).then((out) => {
+      if (!out) return;
+      noteInvite(out, true);
     });
   },
   'team-live-open': (el) => {

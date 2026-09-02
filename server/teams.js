@@ -306,7 +306,52 @@ export async function inviteMember(userId, email, role) {
        accepted_at = NULL`,
     [id, m.teamId, addr, want, hashToken(token), userId, t, t + INVITE_DAYS * 86400000]);
 
-  return { email: addr, role: want, token, expiresAt: t + INVITE_DAYS * 86400000 };
+  /* The team's name and the inviter's address go back with the token, because
+     the letter needs them and the route has neither: membershipFor is the only
+     thing that knows which team this is, and it is called in here. */
+  const asker = await one('SELECT email FROM users WHERE id = ?', [userId]);
+  return {
+    email: addr, role: want, token,
+    expiresAt: t + INVITE_DAYS * 86400000,
+    team: m.name, from: asker ? asker.email : '', days: INVITE_DAYS
+  };
+}
+
+/* ── sending it again ──
+
+   The first send can fail for reasons nobody sees: no SMTP configured, a
+   mailbox that bounced, a spam filter. Without this the only remedy is to
+   revoke and re-invite, which is two steps that both look like mistakes.
+
+   A fresh token every time, replacing the old one. Re-sending the same link
+   would be friendlier to somebody who kept the first email, but it would also
+   mean an invitation that leaked once stays valid forever — and the person who
+   needs a resend is by definition the one who never got the first.
+
+   No seat check: the seat is already held by the pending row, and refusing to
+   resend an invitation the team is already paying for would be absurd. */
+export async function resendInvite(userId, email) {
+  const m = await requireLive(userId, 'admin');
+  const addr = normaliseEmail(email);
+  const inv = await one(
+    'SELECT id, role, accepted_at AS acceptedAt FROM team_invites WHERE team_id = ? AND email = ?',
+    [m.teamId, addr]);
+  if (!inv) throw new TeamError('There is no invitation for that address.', 404);
+  if (inv.acceptedAt) throw new TeamError('They have already joined.', 409);
+
+  const token = crypto.randomBytes(32).toString('base64url');
+  const t = now();
+  await query(
+    `UPDATE team_invites SET token_hash = ?, created_at = ?, expires_at = ?, invited_by = ?
+      WHERE team_id = ? AND email = ?`,
+    [hashToken(token), t, t + INVITE_DAYS * 86400000, userId, m.teamId, addr]);
+
+  const asker = await one('SELECT email FROM users WHERE id = ?', [userId]);
+  return {
+    email: addr, role: inv.role, token,
+    expiresAt: t + INVITE_DAYS * 86400000,
+    team: m.name, from: asker ? asker.email : '', days: INVITE_DAYS
+  };
 }
 
 export async function revokeInvite(userId, email) {
