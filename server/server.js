@@ -28,6 +28,13 @@ import {
 
 const ROOT = join(HERE, '..');
 const PORT = Number(process.env.PORT) || 3000;
+
+/* What a brand new account is created with. Only ever read on the INSERT: an
+   account that already exists keeps whatever is in its row, because the
+   amounts logged under it were entered in that currency and relabelling them
+   would rewrite what every past entry meant. Mirrors DEFAULT_CURRENCY in
+   app.js — the two are the same decision made on both sides of the wire. */
+const DEFAULT_CURRENCY = 'USD';
 const PROD = process.env.NODE_ENV === 'production';
 
 const app = express();
@@ -216,11 +223,11 @@ app.post('/api/register', wrap(async (req, res) => {
   const t = now();
   const result = await query(
     'INSERT INTO users (email, password_hash, currency, kind, created_at, updated_at) VALUES (?,?,?,?,?,?)',
-    [creds.email, hashPassword(creds.password), 'PHP', kind, t, t]);
+    [creds.email, hashPassword(creds.password), DEFAULT_CURRENCY, kind, t, t]);
 
   const { token, expiresAt } = await createSession(result.insertId);
   setSessionCookie(res, token, expiresAt, PROD);
-  res.status(201).json({ user: { email: creds.email, currency: 'PHP', kind }, fresh: true });
+  res.status(201).json({ user: { email: creds.email, currency: DEFAULT_CURRENCY, kind }, fresh: true });
 }));
 
 app.post('/api/login', wrap(async (req, res) => {
@@ -413,8 +420,8 @@ app.post('/api/auth/google', wrap(async (req, res) => {
     try {
       const result = await query(
         'INSERT INTO users (email, password_hash, google_sub, display_name, currency, kind, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)',
-        [claims.email, null, claims.sub, claims.name, 'PHP', wantKind, t, t]);
-      user = { id: result.insertId, email: claims.email, currency: 'PHP', kind: wantKind };
+        [claims.email, null, claims.sub, claims.name, DEFAULT_CURRENCY, wantKind, t, t]);
+      user = { id: result.insertId, email: claims.email, currency: DEFAULT_CURRENCY, kind: wantKind };
       fresh = true;
     } catch (err) {
       // Two sign-ins racing on the same address: whoever lost just re-reads.

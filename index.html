@@ -753,7 +753,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     display: inline-flex; align-items: center; justify-content: center; gap: 9px;
     width: 100%; padding: 13px 26px; border-radius: 999px; border: 0; cursor: pointer;
     font-family: var(--font-body); font-size: 15px; font-weight: 600;
-    background: var(--zg-donate); color: #40240a;
+    background: var(--zg-donate); color: #fff;
     box-shadow: 0 6px 18px color-mix(in srgb, var(--zg-donate) 42%, transparent);
   }
   .hero-cta3 svg { width: 16px; height: 16px; display: block; }
@@ -766,8 +766,8 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
 
   /* The one gold item in the nav, because it goes somewhere else. */
-  .landing-nav .nav-gold { color: #a86a12; font-weight: 700; }
-  .landing-nav .nav-gold:hover { color: #8a5100; }
+  .landing-nav .nav-gold { color: #885bf6; font-weight: 700; }
+  .landing-nav .nav-gold:hover { color: #6d43d4; }
 
   .hero-svg { width: 100%; height: auto; display: block; overflow: visible; }
 
@@ -872,11 +872,21 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
 
   /* — app bar — */
+  /* Sticky from the top on a laptop. Everything worth reaching from the bar —
+     Ask Zimpan, the report, sign out — was a scroll back up the page, and the
+     page is long. Opaque rather than translucent: the cards behind it carry
+     their own borders, and a blurred edge over them reads as a rendering
+     fault. z-index sits under the dialogs (60) and the floating column. */
   .appbar {
     display: flex; align-items: center; gap: 20px;
     padding: 14px 28px; border-bottom: 1px solid var(--color-divider);
     flex-wrap: wrap;
+    position: sticky; top: 0; z-index: 30;
+    background: var(--color-surface, #fff);
   }
+  /* The phone has its own bars top and bottom; a third one pinned up here
+     would eat a fifth of the screen. */
+  @media (max-width: 720px) { .appbar { position: static; } }
   .appbar-meta {
     display: flex; align-items: center; gap: 8px; margin-right: auto;
     font-size: 12px; color: var(--color-neutral-700);
@@ -1731,15 +1741,25 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .cal-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 8px; align-items: start; }
   .cal-dial { position: relative; text-align: center; min-width: 0; }
-  .cal-dial svg { width: 100%; max-width: 132px; height: auto; display: block; margin: 0 auto; }
+  /* The glyph is placed against the arc, not against .cal-dial.
+
+     .cal-dial is as tall as whatever caption sits under it, and the captions
+     differ in length from one dial to the next — so a percentage of it put the
+     icon in a different place on each, and on the longest one ("Calories
+     burned from workout and movement") it landed on top of the number. This
+     box is the arc alone: a fixed 110x62 viewBox that cannot move. */
+  .cal-arc { position: relative; width: 100%; max-width: 132px; margin: 0 auto; }
+  .cal-dial svg { width: 100%; height: auto; display: block; }
   .cal-glyph {
-    position: absolute; left: 50%; top: 34%; transform: translate(-50%, -50%);
+    position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%);
     display: flex;
   }
   .cal-glyph svg { width: 21px; height: 21px; }
+  /* Was -14px, which pulled the number up into the arc and left the glyph
+     nowhere to sit. The arc's own viewBox has room below its ends. */
   .cal-value {
     font-family: var(--font-heading); font-size: 25px; line-height: 1;
-    margin-top: -14px;
+    margin-top: -8px;
   }
   .cal-cap {
     font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase;

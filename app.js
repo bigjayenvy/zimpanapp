@@ -114,6 +114,12 @@ function durShort(mins) {
 }
 /* Currency is a display choice, not a conversion — picking a different one
    relabels the amounts you logged, it does not convert them. */
+/* What an account starts on before anyone picks. Changing it moves only new
+   accounts: an existing one carries its own choice, and a stored PHP is still
+   PHP — the amounts under it were entered as pesos and re-labelling them
+   dollars would rewrite what every past entry meant. */
+const DEFAULT_CURRENCY = 'USD';
+
 const CURRENCIES = [
   // PHP stays first: currency() falls back to this row, and that fallback is
   // what an account with no stored preference has always resolved to.
@@ -682,7 +688,7 @@ const state = {
   money: stored.money,
   categories: stored.categories,
   purposes: stored.purposes,
-  currency: CURRENCIES.some((c) => c.code === stored.currency) ? stored.currency : 'PHP',
+  currency: CURRENCIES.some((c) => c.code === stored.currency) ? stored.currency : DEFAULT_CURRENCY,
   /* Steps walked, keyed by date. Travels with everything else now, merged a
      day at a time on the stamps in `stepsAt` below. */
   steps: (stored.steps && typeof stored.steps === 'object') ? stored.steps : {},
@@ -5680,12 +5686,14 @@ function balanceGauges(food, burn, scope, stepDate) {
     const dash = (Math.abs(value) / top) * ARC;
     return `
           <div class="cal-dial">
-            <svg viewBox="0 0 110 62" aria-hidden="true" focusable="false">
-              <path d="M13 55 A 42 42 0 0 1 97 55" fill="none" stroke="var(--track)" stroke-width="9" stroke-linecap="round"></path>
-              <path d="M13 55 A 42 42 0 0 1 97 55" fill="none" stroke="${tone}" stroke-width="9" stroke-linecap="round"
-                    stroke-dasharray="${dash.toFixed(2)} ${ARC.toFixed(2)}"></path>
-            </svg>
-            <span class="cal-glyph" style="color: ${tone};">${glyph}</span>
+            <div class="cal-arc">
+              <svg viewBox="0 0 110 62" aria-hidden="true" focusable="false">
+                <path d="M13 55 A 42 42 0 0 1 97 55" fill="none" stroke="var(--track)" stroke-width="9" stroke-linecap="round"></path>
+                <path d="M13 55 A 42 42 0 0 1 97 55" fill="none" stroke="${tone}" stroke-width="9" stroke-linecap="round"
+                      stroke-dasharray="${dash.toFixed(2)} ${ARC.toFixed(2)}"></path>
+              </svg>
+              <span class="cal-glyph" style="color: ${tone};">${glyph}</span>
+            </div>
             <div class="cal-value">~${Math.abs(value).toLocaleString('en-US')}</div>
             <div class="cal-cap">${esc(cap)}</div>
             ${sub ? `<div class="cal-sub">${sub}</div>` : ''}
@@ -7685,8 +7693,7 @@ function render() {
      do, and nothing behind the sheet means anything until it is done. Raised
      once a session: dismissing it leaves the app alone, and the way back in is
      where it always is. */
-  if (workMode() && state.team && !state.team.team && !teamOfferSeen) {
-    teamOfferSeen = true;
+  if (workMode() && state.team && !state.team.team) {
     state.teamOpen = true;
     state.teamTab = 'people';
   }
@@ -8790,18 +8797,28 @@ function teamSheet() {
     ${state.teamNotice ? `<p class="tm-ok">${esc(state.teamNotice)}</p>` : ''}`;
 
   const face = TEAM_TAB_FACE[state.teamTab] || TEAM_TAB_FACE.people;
+  /* Until the team exists there is nothing behind this sheet worth reaching:
+     no projects to log against, no roster, no report with anything in it. It
+     was dismissable and raised once a session, so it was possible to close it
+     and be left in an app that could not be used and would not explain why.
+     Now it stays until the team is made — no ✕, no backdrop, no Done. Signing
+     out is still offered, because "I picked the wrong product" has to have an
+     answer that is not clearing site data. */
+  const locked = !has;
   return lightbox({
     icon: has ? face[0] : 'shield',
     tone: has ? face[2] : 'var(--color-accent)',
     kicker: has ? state.team.team.name : 'Zimpan for Teams',
     title: has ? face[1] : 'Start a team',
-    closeAct: 'team-close',
+    closeAct: locked ? '' : 'team-close',
     body,
     actsClass: has && teamIsSuper() ? 'lb-stack' : '',
-    actions: `<button class="btn btn-secondary" data-act="team-close">Done</button>${
-      has && teamIsSuper() ? `
+    actions: locked
+      ? `<button class="btn btn-ghost" data-act="sign-out" style="font-size:13px;">Sign out</button>`
+      : `<button class="btn btn-secondary" data-act="team-close">Done</button>${
+        has && teamIsSuper() ? `
       <button class="btn btn-primary" data-act="team-tab" data-v="${state.teamTab === 'billing' ? 'people' : 'billing'}">${
-        state.teamTab === 'billing' ? 'Back to the team' : 'Billing'}</button>` : ''}`
+          state.teamTab === 'billing' ? 'Back to the team' : 'Billing'}</button>` : ''}`
   });
 }
 
@@ -9462,6 +9479,8 @@ const ACTIONS = {
     loadTeam().then(render);
   },
   'team-close': () => {
+    // Nothing behind it means anything yet. See teamSheet().
+    if (workMode() && state.team && !state.team.team) return;
     state.teamOpen = false;
     state.teamInviteLink = '';
     state.teamError = ''; state.teamNotice = '';
@@ -10217,7 +10236,7 @@ state.m = {
   // detail
   selected: null, selectedKind: null,
   // setup
-  setupName: '', nameTyping: false, setupCurrency: 'AED',
+  setupName: '', nameTyping: false, setupCurrency: 'USD',
   setupCats: ['Work', 'Health', 'Food', 'Rest'], customCats: [],
   catTyping: false, catText: '', weight: '', sleep: '',
   // the rest
@@ -10253,7 +10272,7 @@ function mBoot() {
   state.m.setupStep = 1;
   // AED is what the picker opens on; `state.currency` is only ever PHP here,
   // which is the storage fallback rather than anybody's answer.
-  state.m.setupCurrency = 'AED';
+  state.m.setupCurrency = DEFAULT_CURRENCY;
 }
 
 /* ── 1. sign in ──
@@ -10844,7 +10863,12 @@ function calBreakdownDialog() {
   const v = compute();
   const today = o.scope === 'today';
   const dates = today ? [todayIso] : ((v.pastBurn && v.pastBurn.dates) || []);
-  const report = today ? v.todayFood : v.pastFood;
+  /* Only the food dial has a report behind it. Passing it whatever was asked
+     for meant the burn dialog read the food estimate: its header showed the
+     day's eating as the figure that had been burned, "What it read" listed the
+     meals, and the real burn survived only as the "local reading" underneath.
+     The phone's frame has always passed null here. */
+  const report = o.kind === 'food' ? (today ? v.todayFood : v.pastFood) : null;
   return `
     <div style="position:fixed;inset:0;background:color-mix(in srgb, var(--color-neutral-900) 55%, transparent);display:flex;align-items:safe center;justify-content:safe center;padding:20px;z-index:60;overflow:auto;"
          data-backdrop="cal-close">
@@ -13050,8 +13074,6 @@ let deckIndex = 0;
    scrolls inside its own .deck-body, so the page-level restore in render()
    never touched it. */
 let deckScroll = 0;
-// Raised once a session; see the offer in render().
-let teamOfferSeen = false;
 
 function deckGo(i) {
   const track = root.querySelector('[data-deck-track]');
