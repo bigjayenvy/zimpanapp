@@ -10,10 +10,36 @@
 import nodemailer from 'nodemailer';
 
 const PROD = process.env.NODE_ENV === 'production';
-const HOST = process.env.SMTP_HOST || '';
-const FROM = process.env.MAIL_FROM || '';
+const HOST = (process.env.SMTP_HOST || '').trim();
+const FROM = (process.env.MAIL_FROM || '').trim();
 
-export const mailerConfigured = () => Boolean(HOST && FROM);
+/* MAIL_FROM has to be an address, not a name.
+
+   "Zimpan" is a perfectly reasonable thing to type into a box labelled
+   MAIL_FROM and a perfectly useless sender: the MTA rejects it, and because
+   the old check only asked whether the value was non-empty, the mailer
+   reported itself configured and every send failed with an SMTP error nobody
+   could connect back to this setting. Both shapes are accepted — a bare
+   address, or a display name with the address in angle brackets. */
+const HAS_ADDRESS = /^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+$|<[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+>/;
+export const fromLooksValid = () => HAS_ADDRESS.test(FROM);
+
+export const mailerConfigured = () => Boolean(HOST && FROM) && fromLooksValid();
+
+/* Why it is off, in words an admin can act on. Empty when it is on. */
+export function mailerProblem() {
+  if (!HOST) return 'SMTP_HOST is not set.';
+  if (!FROM) return 'MAIL_FROM is not set.';
+  if (!fromLooksValid()) {
+    return `MAIL_FROM is "${FROM}", which is not an email address — it needs to be noreply@yourdomain.com, or Name <noreply@yourdomain.com>.`;
+  }
+  return '';
+}
+
+/* Said once, at boot, rather than only at the moment somebody presses a button.
+   A server that cannot send mail should say so while there is still someone
+   watching the log, not the first time an invitation quietly fails. */
+if (!mailerConfigured()) console.warn(`[zimpan] outbound email is off — ${mailerProblem()}`);
 
 let cached = null;
 function transport() {
@@ -109,7 +135,7 @@ export async function sendInviteEmail(to, link, { team, from, days } = {}) {
   const life = days || 14;
   if (!mailerConfigured()) {
     if (!PROD) console.log(`\n[zimpan] mail is not configured — invite link for ${to}:\n${link}\n`);
-    return { delivered: false, reason: 'Mail is not configured on this server.' };
+    return { delivered: false, reason: mailerProblem() };
   }
   try {
     await transport().sendMail({

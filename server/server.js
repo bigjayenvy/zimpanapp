@@ -15,7 +15,7 @@ import {
 } from './auth.js';
 import { changesSince, applyChanges, Invalid, CURRENCIES } from './sync.js';
 import { verifyGoogleIdToken } from './google.js';
-import { sendResetEmail, sendInviteEmail, mailerConfigured } from './mail.js';
+import { sendResetEmail, sendInviteEmail, mailerConfigured, mailerProblem } from './mail.js';
 import {
   BlogError, listPosts, readPost, publishedSlugs,
   adminList, adminRead, createPost, updatePost, deletePost
@@ -685,7 +685,8 @@ const inviteReply = async (req, invite) => {
     delivered: !!sent.delivered,
     // Named for the admin, not for the log: "not configured" is something they
     // can act on, an SMTP error string is not.
-    mailReason: sent.delivered ? '' : (mailerConfigured() ? 'The mail server refused it.' : 'Email is not set up on this server.')
+    mailReason: sent.delivered ? ''
+      : (mailerConfigured() ? `The mail server refused it: ${sent.reason || 'no reason given'}` : mailerProblem())
   };
 };
 
