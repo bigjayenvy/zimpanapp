@@ -1732,8 +1732,6 @@ const purposeColor = (name) => {
    the arithmetic in four different places. */
 const RANGE_DAYS = Object.assign({ day: 1, week: 7, fortnight: 14, month: 30 },
   Object.fromEntries(LONG_RANGES.map(([key, , days]) => [key, days])));
-const rangeDays = () => RANGE_DAYS[state.range] || 1;
-
 // ISO dates sort lexically, so plain string comparison beats Date round-trips.
 function windowStart(endIso, days) {
   const d = new Date(endIso + 'T00:00:00');
@@ -1741,11 +1739,57 @@ function windowStart(endIso, days) {
   return iso(d);
 }
 
+/* ── a window is two dates, not a length ──
+
+   Every window used to be a count of days ending on the selected date, which
+   is what a trailing one is. Two of the ones offered now are not: "Last Month"
+   ends on the last day of the previous month rather than on the day you are
+   looking at, and a calendar month is 28 to 31 days depending on which. All
+   Time has no length that can be written down at all.
+
+   So the pair became the primary thing and the length became derived. Every
+   trailing range still answers exactly as it did — windowStart is the same
+   arithmetic — but the callers now ask for two dates and stop assuming the
+   second one is today. */
+function rangeWindow(range, endIso) {
+  const anchor = new Date(endIso + 'T00:00:00');
+  if (range === 'thismonth') {
+    return { from: iso(new Date(anchor.getFullYear(), anchor.getMonth(), 1)), to: endIso };
+  }
+  if (range === 'lastmonth') {
+    // Day 0 of this month is the last day of the previous one, whatever its length.
+    return {
+      from: iso(new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1)),
+      to: iso(new Date(anchor.getFullYear(), anchor.getMonth(), 0))
+    };
+  }
+  if (range === 'all') {
+    /* Back to the first thing ever logged. Steps count: a day may carry a step
+       count and nothing else, and All Time that started after it would be
+       missing a day it can see on the chart. With nothing logged at all the
+       window is the selected day, so the heading has a date to print rather
+       than an empty string. */
+    let first = endIso;
+    const consider = (d) => { if (d && d < first) first = d; };
+    state.entries.forEach((e) => consider(e.date));
+    state.money.forEach((e) => consider(e.date));
+    Object.keys(state.steps || {}).forEach(consider);
+    return { from: first, to: endIso };
+  }
+  return { from: windowStart(endIso, RANGE_DAYS[range] || 1), to: endIso };
+}
+
+const DAY_MS = 86400000;
+const daysBetween = (from, to) => Math.max(1,
+  Math.round((new Date(to + 'T00:00:00') - new Date(from + 'T00:00:00')) / DAY_MS) + 1);
+
+// The window the page is currently on, and how many days are in it.
+const currentWindow = () => rangeWindow(state.range, state.selectedDate);
+const rangeDays = () => { const w = currentWindow(); return daysBetween(w.from, w.to); };
+
 function withinRange(list) {
-  const { selectedDate, range } = state;
-  if (range === 'day') return list.filter((e) => e.date === selectedDate);
-  const start = windowStart(selectedDate, RANGE_DAYS[range] || 1);
-  return list.filter((e) => e.date >= start && e.date <= selectedDate);
+  const w = currentWindow();
+  return list.filter((e) => e.date >= w.from && e.date <= w.to);
 }
 const rangeEntries = () => withinRange(state.entries);
 const moneyRangeEntries = () => withinRange(state.money);
@@ -1809,10 +1853,10 @@ function totalsByPurpose(list) {
 }
 
 function reportRangeLabel() {
-  const { range, selectedDate } = state;
   const f = (d) => new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-  if (range === 'day') return f(selectedDate);
-  return `${f(windowStart(selectedDate, RANGE_DAYS[range] || 1))} — ${f(selectedDate)}`;
+  if (state.range === 'day') return f(state.selectedDate);
+  const w = currentWindow();
+  return `${f(w.from)} — ${f(w.to)}`;
 }
 
 /* ─────────────────────────── wellbeing ───────────────────────────
@@ -3132,9 +3176,11 @@ function compute() {
      still has to be counted. */
   const pastSpan = (() => {
     const out = [];
-    for (let i = 0; i < rangeDays(); i++) {
-      const d = new Date(s.selectedDate + 'T00:00:00');
-      d.setDate(d.getDate() - i);
+    /* Walked from the window's own end rather than from the selected date:
+       Last Month ends before it, and counting back from today would read a
+       month that has not happened. */
+    const w = currentWindow();
+    for (let d = new Date(w.to + 'T00:00:00'); iso(d) >= w.from; d.setDate(d.getDate() - 1)) {
       const key = iso(d);
       if (key !== todayIso) out.push(key);
     }
@@ -3186,7 +3232,14 @@ function compute() {
 
     dayTotalLabel: dur(dayTracked),
     rangeTotal: fmtShort(total),
-    rangeLabel: s.range === 'day' ? 'this day' : `last ${RANGE_DAYS[s.range] || 1} days`,
+    /* Named rather than measured for the two calendar windows and All Time:
+       "last 30 days" is a true description of a trailing month and a false one
+       of September, and "last 412 days" is not how anyone says "everything". */
+    rangeLabel: s.range === 'day' ? 'this day'
+      : s.range === 'thismonth' ? 'this month'
+        : s.range === 'lastmonth' ? 'last month'
+          : s.range === 'all' ? 'everything logged'
+            : `last ${winDays} days`,
     leaderboard: totals.map((t) => ({ name: t.name, color: t.color, label: fmtShort(t.mins), width: `${Math.round((t.mins / top) * 100)}%` })),
 
     // Every date in the window, enumerated — a chart needs the nights with
@@ -5300,10 +5353,28 @@ function fieldError(scope) {
    the column it sits in on a narrow screen, so it scrolls inside itself rather
    than forcing the labels down to initials — the same answer the landing nav
    and the phone's chip row already give to the same problem. */
+/* The windows the page offers, in the order they read: shortest first, then
+   the two calendar ones, then the long trailing counts, then everything.
+
+   The labels are the definitions. "This Month" is this calendar month, not the
+   last thirty days — the two differ by up to a day short of a month, and a
+   control that said one and meant the other is worse than no control. */
+const PAGE_RANGES = [
+  ['day', 'Day'],
+  ['week', 'Week'],
+  ['thismonth', 'This Month'],
+  ['lastmonth', 'Last Month'],
+  ...LONG_RANGES.map(([key, label]) => [key, label]),
+  ['all', 'All Time']
+];
+
+/* `labels` is still accepted so the three callers can keep naming their own
+   first option — "Yesterday" rather than "Day" on the lookback, which counts
+   only finished days. Anything it does not override keeps the table's word. */
 function segRange(name, labels) {
+  const over = labels || [];
   const opt = (val, label) => `<label class="seg-opt"><input type="radio" name="${name}" data-act="range-${val}"${state.range === val ? ' checked' : ''}><span>${label}</span></label>`;
-  return `<div class="seg">${opt('day', labels[0])}${opt('week', labels[1])}${opt('fortnight', labels[2])}${opt('month', labels[3])}`
-    + `${LONG_RANGES.map(([val, label]) => opt(val, label)).join('')}</div>`;
+  return `<div class="seg">${PAGE_RANGES.map(([val, label], i) => opt(val, over[i] || label)).join('')}</div>`;
 }
 
 /* The centre overlay covers the whole ring, so it stays click-through and only
@@ -6376,7 +6447,7 @@ function pastCard(v) {
           <!-- The same window the chart above runs on, reachable from down
                here too. "Yesterday" rather than "Day": this section only ever
                counts days that have finished. -->
-          <div style="margin-left: auto;">${segRange('lookrange', ['Yesterday', 'Week', '2 Weeks', 'Month'])}</div>
+          <div style="margin-left: auto;">${segRange('lookrange', ['Yesterday'])}</div>
         </div>
         <div style="font-size: 12px; color: var(--color-neutral-600); margin-bottom: 12px;">${esc(v.pastLabel)}</div>
         <div style="font-size: 13.5px; line-height: 1.6;">${esc(v.pastHeadline)}</div>
@@ -6647,7 +6718,7 @@ function timeDesktop(v) {
     <div class="col">
 
       <div class="blueprint card-w-head" data-sec="chart">
-        ${cardHead('Where the time went', '', segRange('range', ['Day', 'Week', '2 Weeks', 'Month']))}
+        ${cardHead('Where the time went', '', segRange('range'))}
         <div class="card-body">
         <div class="chart-row" style="display: flex; gap: 24px; align-items: center; flex-wrap: wrap;">
           ${donut(v, 190, 34, 27)}
@@ -6760,7 +6831,7 @@ function moneyDesktop(v) {
     <div style="display: flex; flex-direction: column; gap: 22px; min-width: 0;">
       <div class="blueprint" style="padding: 20px 22px 24px;">        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;">
           <h4 style="margin: 0; margin-right: auto;">Where the money went</h4>
-          ${segRange('mrange2', ['Day', 'Week', '2 Weeks', 'Month'])}
+          ${segRange('mrange2')}
         </div>
         <div class="chart-row" style="display: flex; gap: 24px; align-items: center; flex-wrap: wrap;">
           ${donut(v, 190, 34, 24)}
@@ -9017,8 +9088,15 @@ const ACTIONS = {
 
   'range-day': () => { state.range = 'day'; render(); },
   'range-week': () => { state.range = 'week'; render(); },
+  /* fortnight and month are no longer offered on the page, but the actions
+     stay: a stored preference, a deck window and the "Read 2 weeks" button in
+     the insights block all still name them, and an action that vanished would
+     turn those into dead controls rather than into anything better. */
   'range-fortnight': () => { state.range = 'fortnight'; render(); },
   'range-month': () => { state.range = 'month'; render(); },
+  'range-thismonth': () => { state.range = 'thismonth'; render(); },
+  'range-lastmonth': () => { state.range = 'lastmonth'; render(); },
+  'range-all': () => { state.range = 'all'; render(); },
   /* Toggles a class rather than re-rendering: a render rebuilds the deck and
      would throw the reader back to the first card, which is a steep price for
      a drawer. */
