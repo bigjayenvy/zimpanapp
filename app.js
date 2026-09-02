@@ -12371,11 +12371,27 @@ const M_ACTIONS = {
     state.timerUpdatedAt = Date.now();
     state.dirty.timer = true;
     mResetDraft();
+    /* The day the timer STARTED, not the day it stopped.
+
+       mCommit reads this field as the entry's start day and pushes a wrapping
+       one forward itself — `to < from` means it ended the following morning.
+       Handing it the stop day made it shift a night that had already been
+       shifted: sleep timed from 11PM Monday to 7AM Tuesday was filed against
+       Wednesday, a day that had not happened yet, so Tuesday's sleep reading
+       found nothing and the night was never recorded where it belonged.
+
+       Derived from the start timestamp the same way m-gap-fill derives its
+       day, so a timer left running for more than one night lands correctly
+       too rather than only the one-night case being patched. */
+    const startedIso = iso(started);
     /* The kind is settled and the clock has already been read, so those two
        steps are dropped: the only thing left is to say what it was, which is
        the whole point of timing first and naming after. */
     Object.assign(state.m, {
-      screen: 'flow', kind: 'time', step: 2, day: 'today', skip: [1, 3], timed: true,
+      screen: 'flow', kind: 'time', step: 2, skip: [1, 3], timed: true,
+      day: startedIso === todayIso ? 'today'
+        : startedIso === mShiftIso(todayIso, -1) ? 'yesterday' : 'earlier',
+      earlierIso: startedIso,
       startMin: Math.max(0, Math.min(1439, started.getHours() * 60 + started.getMinutes())),
       durMin: mins
     });
