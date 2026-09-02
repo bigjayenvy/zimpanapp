@@ -53,6 +53,12 @@ const state = {
   me: null,            // { email, role } once signed in as an admin
   denied: false,       // signed in, but not an admin
   overview: null,
+  /* The blog. `posts` is the list; `editing` is the post open in the editor,
+     or null. A new post is `editing` with no id. */
+  posts: null,
+  editing: null,
+  blogMsg: null,
+  blogBusy: false,
   rows: [],
   total: 0,
   q: '',
@@ -399,6 +405,156 @@ function modalBlock() {
       </div>`;
 }
 
+/* ── the blog ──
+
+   A list of what has been written and one editor. The editor is a
+   contenteditable div with a toolbar rather than a textarea of HTML, because
+   the people writing posts are not going to type tags — and rather than a
+   library, because this app has no build step and pulling in a third-party
+   editor for six buttons would be the largest dependency in the project.
+
+   execCommand is deprecated and has no replacement that works across browsers
+   without reimplementing selection handling from scratch. It is what every
+   browser still runs, and the output is sanitised on the server whatever it
+   produces, so the worst a browser quirk can do here is produce markup the
+   allowlist then throws away. */
+const BLOG_TOOLS = [
+  ['h2', 'H2', 'Heading'],
+  ['h3', 'H3', 'Subheading'],
+  ['bold', 'B', 'Bold'],
+  ['italic', 'I', 'Italic'],
+  ['ul', '• List', 'Bulleted list'],
+  ['ol', '1. List', 'Numbered list'],
+  ['quote', 'Quote', 'Blockquote'],
+  ['link', 'Link', 'Add a link'],
+  ['image', 'Image', 'Insert an image by URL'],
+  ['clear', 'Clear', 'Strip formatting from the selection']
+];
+
+const postWhen = (p) => (p.status === 'published' && p.publishedAt
+  ? day(p.publishedAt)
+  : `edited ${day(p.updatedAt)}`);
+
+function blogBlock() {
+  if (!state.posts) {
+    return `<div class="ad-card" style="margin-top: 16px;"><div class="ad-card-head"><h3>Blog</h3></div>
+      <div class="ad-empty">Loading the posts…</div></div>`;
+  }
+  const rows = state.posts.length ? state.posts.map((p) => `
+    <tr>
+      <td>
+        <div class="ad-name">${esc(p.title)}</div>
+        <div class="ad-sub">/blogs/${esc(p.slug)}</div>
+      </td>
+      <td><span class="ad-pill ${p.status === 'published' ? 'live' : ''}">${esc(p.status)}</span></td>
+      <td class="ad-num">${esc(postWhen(p))}</td>
+      <td class="ad-right">
+        ${p.status === 'published'
+          ? `<a class="ad-mini" href="/blogs/${esc(p.slug)}" target="_blank" rel="noopener">View</a>` : ''}
+        <button class="ad-mini" data-act="post-edit" data-id="${esc(String(p.id))}">Edit</button>
+        <button class="ad-mini danger" data-act="post-delete" data-id="${esc(String(p.id))}" data-title="${esc(p.title)}">Delete</button>
+      </td>
+    </tr>`).join('') : '';
+
+  return `
+    <div class="ad-card" style="margin-top: 16px;">
+      <div class="ad-card-head">
+        <h3>Blog</h3>
+        <button class="btn btn-primary" data-act="post-new" style="font-size:13px;">Write a post</button>
+      </div>
+      ${state.blogMsg ? `<p class="ad-msg ${state.blogMsg.tone === 'bad' ? 'bad' : 'good'}">${esc(state.blogMsg.text)}</p>` : ''}
+      ${rows
+        ? `<table class="ad-table"><thead><tr>
+             <th>Post</th><th>Status</th><th>When</th><th class="ad-right">…</th>
+           </tr></thead><tbody>${rows}</tbody></table>`
+        : '<div class="ad-empty">Nothing written yet.</div>'}
+    </div>`;
+}
+
+function editorBlock() {
+  const e = state.editing;
+  if (!e) return '';
+  return `
+  <div class="ad-back" data-post-backdrop>
+    <div class="ad-modal ad-editor" role="dialog" aria-modal="true" aria-label="Write a post">
+      <h3>${e.id ? 'Edit post' : 'Write a post'}</h3>
+
+      <label class="ad-field">
+        <span>Title</span>
+        <input class="input" id="post-title" value="${esc(e.title || '')}" placeholder="What is it called?" autocomplete="off">
+      </label>
+
+      <label class="ad-field">
+        <span>Address <small>zimpan.com/blogs/…</small></span>
+        <input class="input" id="post-slug" value="${esc(e.slug || '')}" placeholder="left blank, made from the title" autocomplete="off">
+      </label>
+
+      <label class="ad-field">
+        <span>Summary <small>shown on the index and in link previews</small></span>
+        <textarea class="input" id="post-excerpt" rows="2" placeholder="Left blank, taken from the opening.">${esc(e.excerpt || '')}</textarea>
+      </label>
+
+      <label class="ad-field">
+        <span>Cover image URL <small>optional</small></span>
+        <input class="input" id="post-cover" value="${esc(e.cover || '')}" placeholder="https://…" autocomplete="off">
+      </label>
+
+      <div class="ad-field">
+        <span>Body</span>
+        <div class="ad-tools">
+          ${BLOG_TOOLS.map(([key, label, title]) => `
+            <button type="button" class="ad-tool" data-act="post-fmt" data-fmt="${key}" title="${esc(title)}">${esc(label)}</button>`).join('')}
+        </div>
+        <!-- The editor's own markup is set once, when it is mounted, and never
+             through this template again: rebuilding it on every render would
+             throw away the caret mid-sentence. See mountEditor(). -->
+        <div class="ad-rich" id="post-body" contenteditable="true" spellcheck="true"></div>
+      </div>
+
+      <label class="ad-check">
+        <input type="checkbox" id="post-live"${e.status === 'published' ? ' checked' : ''}>
+        <span>Published <small>unticked keeps it a draft, visible only here</small></span>
+      </label>
+
+      ${state.blogMsg && state.blogMsg.where === 'editor'
+        ? `<p class="ad-msg ${state.blogMsg.tone === 'bad' ? 'bad' : 'good'}">${esc(state.blogMsg.text)}</p>` : ''}
+
+      <div class="ad-modal-acts">
+        <button class="btn btn-secondary" data-act="post-cancel">Cancel</button>
+        <button class="btn btn-primary" data-act="post-save"${state.blogBusy ? ' disabled' : ''}>${
+          state.blogBusy ? 'Saving…' : 'Save'}</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* The editor's content, across a render.
+
+   render() replaces the whole tree, so the contenteditable an admin is typing
+   into is destroyed and rebuilt every time anything on this page changes —
+   including a background loadPosts() finishing. Mounting the body only on the
+   node's "first" appearance does not survive that: the node is always new, and
+   the second render would leave a fresh empty box where the draft was.
+
+   So the content is read out of the DOM just before it is thrown away and
+   written back into whatever replaces it. Nothing triggers a render while
+   someone is typing — no keystroke handler, and the toolbar drives the
+   selection directly — so this runs on the rare renders that come from
+   somewhere else, and the cost of one of those is the caret going back to the
+   start rather than the draft going missing. */
+function captureEditor() {
+  const node = document.getElementById('post-body');
+  if (node && state.editing) state.editing.body = node.innerHTML;
+}
+
+function mountEditor() {
+  const node = document.getElementById('post-body');
+  if (!node || !state.editing) return;
+  const want = state.editing.body || '';
+  // Compared first so an identical write cannot move the caret for nothing.
+  if (node.innerHTML !== want) node.innerHTML = want;
+}
+
 function gate(title, body, cta) {
   return `
     <div class="ad-shell">
@@ -415,6 +571,8 @@ function gate(title, body, cta) {
 
 function render() {
   const scroll = window.scrollY;
+  // Before innerHTML throws the node away. See captureEditor().
+  captureEditor();
 
   if (!state.booted) {
     root.innerHTML = `<div class="ad-shell"><p class="ad-note" style="padding-top: 40px;">Loading…</p></div>`;
@@ -446,8 +604,10 @@ function render() {
 
       ${o ? overviewBlock(o) : '<div class="ad-empty">Loading the numbers…</div>'}
       ${usersBlock()}
+      ${blogBlock()}
     </div>
-    ${modalBlock()}`;
+    ${modalBlock()}
+    ${editorBlock()}`;
 
   window.scrollTo(0, scroll);
   const q = document.getElementById('ad-q');
@@ -455,9 +615,21 @@ function render() {
   // The select cannot carry its value through innerHTML on its own.
   const role = document.getElementById('ad-role');
   if (role && state.modal && state.modal.role) role.value = state.modal.role;
+  mountEditor();
 }
 
 /* ── loading ── */
+
+async function loadPosts() {
+  try {
+    const res = await api('/api/admin/blog');
+    state.posts = res.posts || [];
+  } catch (err) {
+    state.posts = [];
+    state.blogMsg = { tone: 'bad', text: err.message };
+  }
+  render();
+}
 
 async function loadUsers(append) {
   state.busy = true;
@@ -498,12 +670,104 @@ async function boot() {
   } catch (err) { /* the table below is still worth showing */ }
   render();
   await loadUsers(false);
+  await loadPosts();
 }
 
 /* ── actions ── */
 
 const ACTIONS = {
   more: () => { state.page += 1; loadUsers(true); },
+
+  /* ── the blog ── */
+  'post-new': () => {
+    state.editing = { title: '', slug: '', excerpt: '', cover: '', body: '', status: 'draft' };
+    state.blogMsg = null;
+    render();
+  },
+
+  'post-edit': async (el) => {
+    state.blogMsg = null;
+    try {
+      const post = await api(`/api/admin/blog/${encodeURIComponent(el.dataset.id)}`);
+      state.editing = post;
+      render();
+    } catch (err) {
+      state.blogMsg = { tone: 'bad', text: err.message };
+      render();
+    }
+  },
+
+  'post-cancel': () => { state.editing = null; state.blogMsg = null; render(); },
+  'post-close': () => { state.editing = null; state.blogMsg = null; render(); },
+
+  /* The toolbar. document.execCommand is deprecated and is still the only
+     thing every browser implements; whatever it emits is sanitised on the
+     server, so a quirk here can only produce markup the allowlist drops. */
+  'post-fmt': (el) => {
+    const node = document.getElementById('post-body');
+    if (!node) return;
+    node.focus();
+    const cmd = el.dataset.fmt;
+    const run = (name, value) => { try { document.execCommand(name, false, value); } catch (e) { /* nothing to do */ } };
+    if (cmd === 'h2' || cmd === 'h3') run('formatBlock', `<${cmd}>`);
+    else if (cmd === 'quote') run('formatBlock', '<blockquote>');
+    else if (cmd === 'ul') run('insertUnorderedList');
+    else if (cmd === 'ol') run('insertOrderedList');
+    else if (cmd === 'bold') run('bold');
+    else if (cmd === 'italic') run('italic');
+    else if (cmd === 'clear') { run('removeFormat'); run('formatBlock', '<p>'); }
+    else if (cmd === 'link') {
+      const url = prompt('Link to where?', 'https://');
+      if (url) run('createLink', url);
+    } else if (cmd === 'image') {
+      const url = prompt('Image URL', 'https://');
+      if (url) run('insertImage', url);
+    }
+  },
+
+  'post-save': async () => {
+    if (state.blogBusy) return;
+    const body = document.getElementById('post-body');
+    /* Read before the busy render replaces the fields, the same as every other
+       write in this file. */
+    const patch = {
+      title: (document.getElementById('post-title') || {}).value || '',
+      slug: (document.getElementById('post-slug') || {}).value || '',
+      excerpt: (document.getElementById('post-excerpt') || {}).value || '',
+      cover: (document.getElementById('post-cover') || {}).value || '',
+      body: body ? body.innerHTML : '',
+      status: (document.getElementById('post-live') || {}).checked ? 'published' : 'draft'
+    };
+    const id = state.editing && state.editing.id;
+    state.blogBusy = true;
+    state.blogMsg = null;
+    render();
+    try {
+      const saved = id
+        ? await api(`/api/admin/blog/${encodeURIComponent(id)}`, { method: 'PUT', body: patch })
+        : await api('/api/admin/blog', { method: 'POST', body: patch });
+      state.blogBusy = false;
+      state.editing = null;
+      state.blogMsg = { tone: 'good', text: `Saved · ${saved.status === 'published' ? 'live at' : 'draft at'} /blogs/${saved.slug}` };
+      await loadPosts();
+    } catch (err) {
+      state.blogBusy = false;
+      state.blogMsg = { tone: 'bad', text: err.message, where: 'editor' };
+      render();
+    }
+  },
+
+  'post-delete': async (el) => {
+    if (!window.confirm(`Delete "${el.dataset.title}"? This cannot be undone.`)) return;
+    try {
+      await api(`/api/admin/blog/${encodeURIComponent(el.dataset.id)}`, { method: 'DELETE' });
+      state.blogMsg = { tone: 'good', text: 'Post deleted.' };
+      await loadPosts();
+    } catch (err) {
+      state.blogMsg = { tone: 'bad', text: err.message };
+      render();
+    }
+  },
 
   role: (el) => {
     state.gone = '';
@@ -625,10 +889,26 @@ root.addEventListener('click', (ev) => {
   const back = ev.target.closest('[data-backdrop]');
   if (back && ev.target === back) { ev.preventDefault(); ACTIONS['close-modal'](); return; }
 
+  // The editor's own backdrop, on the same rule: only when it is itself the
+  // thing clicked, or every field inside it would close the dialog.
+  const post = ev.target.closest('[data-post-backdrop]');
+  if (post && ev.target === post) { ev.preventDefault(); ACTIONS['post-close'](); return; }
+
   const el = ev.target.closest('[data-act]');
   if (!el || el.tagName === 'SELECT') return;
   const fn = ACTIONS[el.dataset.act];
   if (fn) { ev.preventDefault(); fn(el); }
+});
+
+/* The toolbar must not take the caret.
+
+   A click moves focus, and moving focus out of a contenteditable collapses the
+   selection — so by the time the click handler runs there is nothing selected
+   to make bold. Cancelling the mousedown stops the focus moving at all, which
+   leaves the selection exactly where the writer put it. */
+root.addEventListener('mousedown', (ev) => {
+  const tool = ev.target.closest('[data-act="post-fmt"]');
+  if (tool) ev.preventDefault();
 });
 
 root.addEventListener('change', (ev) => {

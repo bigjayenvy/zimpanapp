@@ -7,6 +7,7 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { query, one, now, migrate, HERE } from './db.js';
 import {
   hashPassword, verifyPassword, createSession, userForToken, destroySession,
@@ -15,6 +16,10 @@ import {
 import { changesSince, applyChanges, Invalid, CURRENCIES } from './sync.js';
 import { verifyGoogleIdToken } from './google.js';
 import { sendResetEmail } from './mail.js';
+import {
+  BlogError, listPosts, readPost, publishedSlugs,
+  adminList, adminRead, createPost, updatePost, deletePost
+} from './blog.js';
 import { estimateNutrition, estimateBurn, summariseDeck, chatReply, aiConfigured, warmAI } from './ai.js';
 import {
   overview as adminOverview, users as adminUsers, donationsFor,
@@ -34,6 +39,14 @@ const PORT = Number(process.env.PORT) || 3000;
    amounts logged under it were entered in that currency and relabelling them
    would rewrite what every past entry meant. Mirrors DEFAULT_CURRENCY in
    app.js — the two are the same decision made on both sides of the wire. */
+/* For the one place this server writes HTML rather than serving a file: the
+   meta tags on a blog post's page. Both quote styles as well as the angle
+   brackets, because every one of these lands inside a double-quoted attribute
+   and a title with a quote in it would otherwise close it. */
+const htmlAttr = (v) => String(v == null ? '' : v)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
 const DEFAULT_CURRENCY = 'USD';
 const PROD = process.env.NODE_ENV === 'production';
 
@@ -700,6 +713,30 @@ app.post('/api/admin/team-plan', requireUser, team(async (req) => {
 
 app.get('/api/team/plans', (req, res) => res.json({ plans: PLANS }));
 
+/* ── the blog ──
+   Reading is open to anyone; every write is behind requireAdmin. The two
+   halves call different functions in blog.js rather than one function with a
+   flag, so "may this caller see a draft" is answered by which route was hit
+   rather than by a parameter that could arrive wrong. */
+const blog = (fn) => wrap(async (req, res) => {
+  try {
+    res.json(await fn(req));
+  } catch (err) {
+    if (err instanceof BlogError) return res.status(err.status).json({ error: err.message });
+    throw err;
+  }
+});
+
+app.get('/api/blog', blog((req) => listPosts({ limit: req.query.limit, before: req.query.before })));
+app.get('/api/blog/:slug', blog((req) => readPost(req.params.slug)));
+
+app.get('/api/admin/blog', requireAdmin, blog(() => adminList().then((posts) => ({ posts }))));
+app.get('/api/admin/blog/:id', requireAdmin, blog((req) => adminRead(req.params.id)));
+app.post('/api/admin/blog', requireAdmin, blog((req) =>
+  createPost({ id: req.user.id, email: req.user.email }, req.body || {})));
+app.put('/api/admin/blog/:id', requireAdmin, blog((req) => updatePost(req.params.id, req.body || {})));
+app.delete('/api/admin/blog/:id', requireAdmin, blog((req) => deletePost(req.params.id)));
+
 /* ── static ── */
 
 const sendRoot = (file) => (req, res) => res.sendFile(join(ROOT, file));
@@ -710,13 +747,82 @@ app.get('/index.html', sendRoot('index.html'));
    own. Named explicitly, like everything else here: this is an allowlist, and
    a route that is not in it is the 404 below however real the page is. */
 app.get('/teams', sendRoot('index.html'));
+app.get('/blogs', sendRoot('index.html'));
+
+/* A post's own page, with its own title and description written into the HTML
+   before it is sent.
+
+   The rest of this app is one document that decides what to draw once
+   JavaScript runs, which is fine for pages nobody links to. A blog post is the
+   opposite: its whole purpose is to be found and shared, and a crawler or a
+   chat preview reads the markup it is served, not the page the browser
+   eventually builds. So this one route fills the head in before it goes.
+
+   A miss falls through to the same document unfilled rather than 404ing — the
+   client draws its own "no such post" and an unpublished draft should look
+   like a wrong address, not like a page that exists and is being withheld. */
+app.get('/blogs/:slug', wrap(async (req, res) => {
+  const file = join(ROOT, 'index.html');
+  let post = null;
+  try { post = await readPost(req.params.slug); } catch (err) { /* unfilled is fine */ }
+  if (!post) return res.sendFile(file);
+
+  const html = await readFile(file, 'utf8');
+  const url = `https://zimpan.com/blogs/${encodeURIComponent(post.slug)}`;
+  const head = [
+    `<title>${htmlAttr(post.title)} — ZIMPAN</title>`,
+    `<meta name="description" content="${htmlAttr(post.excerpt || '')}">`,
+    `<link rel="canonical" href="${htmlAttr(url)}">`,
+    `<meta property="og:type" content="article">`,
+    `<meta property="og:title" content="${htmlAttr(post.title)}">`,
+    `<meta property="og:description" content="${htmlAttr(post.excerpt || '')}">`,
+    `<meta property="og:url" content="${htmlAttr(url)}">`,
+    post.cover ? `<meta property="og:image" content="${htmlAttr(post.cover)}">` : '',
+    `<meta name="twitter:card" content="${post.cover ? 'summary_large_image' : 'summary'}">`
+  ].filter(Boolean).join('\n  ');
+
+  /* The document's own <title> is replaced rather than added to — two titles
+     and a crawler picks the first, which would be the app's. */
+  res.type('html').send(html.replace(/<title>[\s\S]*?<\/title>/i, head));
+}));
 app.get('/app.js', sendRoot('app.js'));
 
 /* Named explicitly, like everything else here: this is an allowlist, not a
    directory, so a file existing at the project root is not enough to make it
    reachable. Without these two routes a crawler asking for the sitemap gets the
    404 below, which Search Console reports as "Couldn't fetch". */
-app.get('/sitemap.xml', sendRoot('sitemap.xml'));
+/* Generated rather than served, now that some of the URLs are rows.
+
+   The file on disk is still the source for the fixed pages — it is easier to
+   edit and it is what a person expects to find — and the published posts are
+   appended to it. If the database cannot answer, the file goes out as it is:
+   a sitemap missing its blog posts is a small loss, and a 500 on this URL is
+   reported in Search Console as a site that cannot be crawled. */
+app.get('/sitemap.xml', wrap(async (req, res) => {
+  const file = join(ROOT, 'sitemap.xml');
+  let xml;
+  try { xml = await readFile(file, 'utf8'); } catch (err) { return res.sendFile(file); }
+  let posts = [];
+  try { posts = await publishedSlugs(); } catch (err) { /* the fixed pages still go */ }
+
+  const entries = posts.map((post) => `  <url>
+    <loc>https://zimpan.com/blogs/${htmlAttr(encodeURIComponent(post.slug))}</loc>
+    <lastmod>${new Date(Number(post.updatedAt) || Date.now()).toISOString().slice(0, 10)}</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>`).join('\n');
+
+  const index = posts.length ? `  <url>
+    <loc>https://zimpan.com/blogs</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>\n` : '';
+
+  res.type('application/xml').send(
+    entries || index
+      ? xml.replace('</urlset>', `${index}${entries}\n</urlset>`)
+      : xml);
+}));
 app.get('/robots.txt', sendRoot('robots.txt'));
 
 /* The admin dashboard is a separate page, so it needs its own entries here for

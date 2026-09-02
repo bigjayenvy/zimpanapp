@@ -1026,6 +1026,98 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      narrow-screen rule below turns every other action row upside down so the
      primary sits on top, and a stack whose order is the point must not be
      caught by it. */
+  /* — the blog —
+     A reading column, not a dashboard. The measure is capped near 68 characters
+     because that is where prose stops being comfortable, and everything else
+     here follows from that one decision. */
+  .blog-head { padding: 46px 28px 8px; max-width: 760px; margin: 0 auto; }
+  .blog-wrap { padding: 18px 28px 56px; max-width: 760px; margin: 0 auto; }
+  .blog-wrap-post { padding-top: 40px; }
+  .blog-h1 {
+    font-family: var(--font-heading); font-weight: 700;
+    font-size: clamp(28px, 4.4vw, 42px); line-height: 1.14;
+    margin: 10px 0 0; color: var(--color-text);
+  }
+  .blog-sub {
+    margin: 12px 0 0; font-size: 16px; line-height: 1.6;
+    color: var(--color-neutral-700); max-width: 62ch;
+  }
+  .blog-note {
+    padding: 40px 0; font-size: 14.5px; color: var(--color-neutral-700);
+    display: flex; flex-direction: column; align-items: flex-start; gap: 14px;
+  }
+
+  .blog-grid { display: grid; gap: 18px; }
+  .blog-card { border-top: 1px solid var(--color-divider); }
+  .blog-card:first-child { border-top: 0; }
+  .blog-card-link {
+    display: flex; gap: 20px; align-items: flex-start;
+    padding: 22px 0; text-decoration: none; color: inherit;
+  }
+  .blog-card-cover {
+    flex: none; width: 148px; height: 100px; border-radius: 12px;
+    background-size: cover; background-position: center;
+    background-color: var(--color-neutral-200, #eceaf3);
+  }
+  .blog-card-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .blog-card-when {
+    font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--color-neutral-600);
+  }
+  .blog-card-title {
+    font-family: var(--font-heading); font-weight: 700; font-size: 21px;
+    line-height: 1.25; color: var(--color-text);
+  }
+  .blog-card-link:hover .blog-card-title { color: var(--color-accent-700); }
+  .blog-card-ex { font-size: 14px; line-height: 1.6; color: var(--color-neutral-700); }
+  @media (max-width: 560px) {
+    .blog-card-link { flex-direction: column; gap: 12px; }
+    .blog-card-cover { width: 100%; height: 168px; }
+  }
+
+  .blog-cover { width: 100%; border-radius: 14px; margin: 24px 0 0; display: block; }
+  .blog-back {
+    margin-top: 34px; border: 0; background: transparent; padding: 0;
+    font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+    color: var(--color-accent-700); text-decoration: underline; text-underline-offset: 3px;
+  }
+
+  /* — a post's own body —
+     Every rule here is scoped under .blog-body, because this is the one place
+     the page renders markup somebody else wrote. A bare `h2` or `img` rule
+     would reach the rest of the app; these cannot. */
+  .blog-body { margin-top: 26px; font-size: 16.5px; line-height: 1.75; color: var(--color-neutral-900, #1a1626); }
+  .blog-body > :first-child { margin-top: 0; }
+  .blog-body p { margin: 0 0 20px; }
+  .blog-body h2 {
+    font-family: var(--font-heading); font-weight: 700; font-size: 26px;
+    line-height: 1.25; margin: 38px 0 12px;
+  }
+  .blog-body h3 { font-family: var(--font-heading); font-weight: 700; font-size: 20px; margin: 30px 0 10px; }
+  .blog-body h4 { font-family: var(--font-heading); font-weight: 700; font-size: 17px; margin: 24px 0 8px; }
+  .blog-body ul, .blog-body ol { margin: 0 0 20px; padding-left: 24px; }
+  .blog-body li { margin-bottom: 8px; }
+  .blog-body a { color: var(--color-accent-700); text-underline-offset: 3px; }
+  .blog-body blockquote {
+    margin: 26px 0; padding: 4px 0 4px 20px;
+    border-left: 3px solid var(--color-accent-400, #a78bfa);
+    color: var(--color-neutral-700); font-style: italic;
+  }
+  .blog-body img { max-width: 100%; height: auto; border-radius: 12px; margin: 8px 0 20px; }
+  .blog-body figure { margin: 24px 0; }
+  .blog-body figcaption { font-size: 12.5px; color: var(--color-neutral-600); margin-top: 8px; }
+  .blog-body hr { border: 0; border-top: 1px solid var(--color-divider); margin: 34px 0; }
+  .blog-body code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em;
+    background: var(--color-neutral-100, #f4f2f9); padding: 2px 6px; border-radius: 5px;
+  }
+  /* Long lines scroll inside the block rather than widening the article. */
+  .blog-body pre {
+    background: var(--color-neutral-100, #f4f2f9); padding: 16px 18px; border-radius: 12px;
+    overflow-x: auto; margin: 0 0 22px; font-size: 13.5px; line-height: 1.6;
+  }
+  .blog-body pre code { background: transparent; padding: 0; }
+
   /* — the FAQ's collapsible entries —
      <details> with no JavaScript behind it, so nothing has to survive the next
      re-render. The default triangle is replaced by a marker that rotates: the

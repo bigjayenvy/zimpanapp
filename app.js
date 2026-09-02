@@ -527,6 +527,10 @@ const API = {
        day it is where the team is sitting, and a timezone guessed there would
        put a whole office's morning on yesterday. */
     now: (date) => api(`/api/team/now?date=${encodeURIComponent(date || '')}`)
+  },
+  blog: {
+    list: () => api('/api/blog'),
+    read: (slug) => api(`/api/blog/${encodeURIComponent(slug)}`)
   }
 };
 
@@ -593,26 +597,47 @@ const AI_CACHE_MAX = 200;
    a different reader, and a reader who is sent a link to it should arrive on
    it. One document still serves both — the server hands index.html to either
    path — so this is the only place the two are told apart. */
-const routeFromPath = () => (
-  typeof location !== 'undefined' && /^\/teams\/?$/.test(location.pathname) ? 'teams' : 'home'
+/* Three pages now, and one of them takes a name: /blogs is the index and
+   /blogs/<slug> is one post. So this returns a pair rather than a word — the
+   post's address is part of which page it is, and a route that dropped the
+   slug would send every shared link to the index. */
+function routeFromPath() {
+  if (typeof location === 'undefined') return { route: 'home', slug: '' };
+  const path = location.pathname;
+  if (/^\/teams\/?$/.test(path)) return { route: 'teams', slug: '' };
+  const post = path.match(/^\/blogs\/([^/]+)\/?$/);
+  if (post) return { route: 'blogs', slug: decodeURIComponent(post[1]) };
+  if (/^\/blogs\/?$/.test(path)) return { route: 'blogs', slug: '' };
+  return { route: 'home', slug: '' };
+}
+
+const pathForRoute = (route, slug) => (
+  route === 'teams' ? '/teams'
+    : route === 'blogs' ? (slug ? `/blogs/${encodeURIComponent(slug)}` : '/blogs')
+      : '/'
 );
 
-function goRoute(route) {
-  if (state.route === route) { scrollToAnchor(null); return; }
+function goRoute(route, slug) {
+  const want = slug || '';
+  if (state.route === route && (state.blogSlug || '') === want) { scrollToAnchor(null); return; }
   state.route = route;
-  try { history.pushState({ route }, '', route === 'teams' ? '/teams' : '/'); } catch (e) { /* file:// */ }
+  state.blogSlug = want;
+  try { history.pushState({ route, slug: want }, '', pathForRoute(route, want)); } catch (e) { /* file:// */ }
   window.scrollTo(0, 0);
   render();
+  if (route === 'blogs') loadBlog();
 }
 
 if (typeof window !== 'undefined') {
-  // Back and forward have to move between the two, or the address lies.
+  // Back and forward have to move between them, or the address lies.
   window.addEventListener('popstate', () => {
     const next = routeFromPath();
-    if (next === state.route) return;
-    state.route = next;
+    if (next.route === state.route && next.slug === (state.blogSlug || '')) return;
+    state.route = next.route;
+    state.blogSlug = next.slug;
     window.scrollTo(0, 0);
     render();
+    if (next.route === 'blogs') loadBlog();
   });
 }
 
@@ -766,7 +791,16 @@ const state = {
   teamLiveAt: 0,
   teamLiveOpen: null,
   /* 'home' or 'teams', read from the address on boot. */
-  route: routeFromPath(),
+  route: routeFromPath().route,
+  /* Empty on the index, the post's address on a post page. */
+  blogSlug: routeFromPath().slug,
+  /* { posts, more } for the index and { ...post } for one, each null until
+     fetched and false once the fetch has failed — three states, because
+     "loading" and "there is nothing here" are different pages. */
+  blogList: null,
+  blogPost: null,
+  blogBusy: false,
+  blogError: '',
   refineAlways: stored.refineAlways === true || stored.refineAlways === false ? stored.refineAlways : null,
   /* "Chat with Zimpan". The transcript lives here and nowhere else — not on the
      server, not in localStorage — so closing the app ends the conversation.
@@ -1666,6 +1700,12 @@ async function boot() {
      they are not signed in, and landing on a marketing page with the sign-in a
      scroll away is a poor answer to "you need to sign in". */
   if (!token && params.get('signin')) state.authOpen = true;
+
+  /* Started before the session call rather than after it. The blog is public,
+     so its content does not depend on who is asking, and a reader arriving
+     from a search result should not wait on /api/me to find out there is an
+     article here. Not awaited: it renders itself when it lands. */
+  if (state.route === 'blogs') loadBlog();
 
   try {
     /* Retried once: this single call decides whether the Google button and the
@@ -4312,6 +4352,112 @@ const HERO_ART = () => `
     </g>
   </svg>`;
 
+/* ── the blog ──
+
+   Two pages behind one route: the index at /blogs and one post at
+   /blogs/<slug>. They share the landing page's bar and footer, because a
+   reader who arrives from a search result should be able to see what the site
+   is and get into it — a blog post on an island sells nothing.
+
+   The body is the one string in this whole file written with innerHTML rather
+   than escaped. That is deliberate and it is why server/blog.js sanitises on
+   the way in: the formatting is the point of a post, and there is no way to
+   have it and escape it too. Everything else here — title, byline, excerpt —
+   goes through esc() like the rest of the app. */
+const blogDate = (ms) => (ms
+  ? new Date(Number(ms)).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+  : '');
+
+function blogBar() {
+  return `
+    <header class="landing-bar">
+      <a class="landing-brand" href="/" data-act="go-home">
+        ${LOGO_BADGE(34)}
+        <span class="landing-name">ZIMPAN<span style="color:var(--color-accent);">.</span></span>
+      </a>
+      <nav class="landing-nav">
+        <button data-act="go-home">Home</button>
+        <button data-act="go-blogs">Blog</button>
+        <button class="nav-gold" data-act="go-teams">For Teams</button>
+      </nav>
+      <div class="landing-actions">
+        <button class="landing-login" data-act="auth-open">Log In</button>
+        <div class="landing-cta-top">
+          <button data-act="auth-open" class="btn btn-primary" style="font-size:14px;font-weight:600;padding:10px 24px;border-radius:999px;cursor:pointer;">Start Tracking Now</button>
+        </div>
+      </div>
+    </header>`;
+}
+
+const blogFoot = () => `
+    <footer style="padding:22px 28px 34px;display:flex;flex-direction:column;align-items:center;gap:12px;">
+      ${legalLinks('var(--color-neutral-600)')}
+    </footer>`;
+
+function blogIndex() {
+  const data = state.blogList;
+  const body = state.blogBusy && data === null
+    ? '<p class="blog-note">Loading…</p>'
+    : state.blogError
+      ? `<p class="blog-note">${esc(state.blogError)}</p>`
+      : !data || !data.posts || !data.posts.length
+        ? '<p class="blog-note">Nothing published yet. Come back soon.</p>'
+        : `<div class="blog-grid">${data.posts.map((post) => `
+          <article class="blog-card">
+            <a class="blog-card-link" href="${esc(pathForRoute('blogs', post.slug))}"
+               data-act="go-post" data-slug="${esc(post.slug)}">
+              ${post.cover ? `<span class="blog-card-cover" style="background-image:url('${esc(post.cover)}');"></span>` : ''}
+              <span class="blog-card-body">
+                <span class="blog-card-when">${esc(blogDate(post.publishedAt))}</span>
+                <span class="blog-card-title">${esc(post.title)}</span>
+                ${post.excerpt ? `<span class="blog-card-ex">${esc(post.excerpt)}</span>` : ''}
+              </span>
+            </a>
+          </article>`).join('')}</div>`;
+
+  return `
+  <div class="landing">
+    ${blogBar()}
+    <section class="blog-head">
+      <span class="strip-kicker">The ZIMPAN blog</span>
+      <h1 class="blog-h1">On time, money, and what they cost you</h1>
+      <p class="blog-sub">Notes on tracking, habits and the readings behind the app.</p>
+    </section>
+    <section class="blog-wrap">${body}</section>
+    ${blogFoot()}
+  </div>`;
+}
+
+function blogPostPage() {
+  const post = state.blogPost;
+  const body = state.blogBusy && post === null
+    ? '<p class="blog-note">Loading…</p>'
+    : post === false
+      ? `<p class="blog-note">${esc(state.blogError || 'No post lives at that address.')}
+         <button class="blog-back" data-act="go-blogs">See everything published</button></p>`
+      : !post
+        ? '<p class="blog-note">Loading…</p>'
+        : `
+      <article class="blog-post">
+        <span class="blog-card-when">${esc(blogDate(post.publishedAt))}${post.author ? ` · ${esc(post.author)}` : ''}</span>
+        <h1 class="blog-h1">${esc(post.title)}</h1>
+        ${post.excerpt ? `<p class="blog-sub">${esc(post.excerpt)}</p>` : ''}
+        ${post.cover ? `<img class="blog-cover" src="${esc(post.cover)}" alt="">` : ''}
+        <!-- Sanitised on the way into the database by server/blog.js. This is
+             the only unescaped string in this file, and that is where it is
+             made safe. -->
+        <div class="blog-body">${post.body}</div>
+        <button class="blog-back" data-act="go-blogs">← All posts</button>
+      </article>`;
+
+  return `
+  <div class="landing">
+    ${blogBar()}
+    <section class="blog-wrap blog-wrap-post">${body}</section>
+    ${blogFoot()}
+  </div>`;
+}
+
 function landingScreen() {
   const cta = (size) => `
     <button data-act="auth-open" class="btn btn-primary" style="
@@ -4328,6 +4474,7 @@ function landingScreen() {
       <nav class="landing-nav">
         <button data-act="scroll-features">Features</button>
         <button data-act="scroll-features">How it works</button>
+        <button data-act="go-blogs">Blog</button>
         <button data-act="legal-privacy">Privacy</button>
         <button data-act="legal-terms">Terms</button>
         <button class="nav-gold" data-act="go-teams">For Teams</button>
@@ -7836,6 +7983,24 @@ function render() {
   // Gates, in order: nothing to show before the session is known (unless this
   // browser already has an account and can work offline), then the migration
   // question, then the app itself.
+  /* Ahead of the splash, which every other screen waits behind.
+
+     The splash is there because nothing else on this site means anything until
+     the session is known — whose entries, whose team. A blog post is the one
+     page where that is not true: it is the same article for everybody, and a
+     reader arriving from a search result should get it immediately rather than
+     watching a spinner while /api/me decides they are a stranger. The sign-in
+     panel still opens over it. */
+  if (state.route === 'blogs') {
+    const panel = state.authOpen || state.authMode === 'reset';
+    root.innerHTML = (state.blogSlug ? blogPostPage() : blogIndex())
+      + (panel ? authScreen() : '') + legalSheet();
+    if (scrollY && window.scrollY !== scrollY) window.scrollTo(0, scrollY);
+    restoreFocus(f);
+    if (panel) mountGoogleButton();
+    return;
+  }
+
   if (!state.booted && !state.account) { root.innerHTML = splashScreen(); return; }
 
   /* Ahead of the session gate on purpose. /teams is a page about a product,
@@ -8544,6 +8709,35 @@ const projectName = (id) => {
 
 /* Read once the session is known. A failure is not worth a banner: an account
    with no team is the ordinary case and looks exactly the same from here. */
+/* Fetches whichever of the two blog pages the address is on.
+
+   Both are public, so neither waits for a session and neither is retried on a
+   401 — a reader who has never signed in is the normal case here, which is not
+   true of anything else this file fetches. */
+async function loadBlog() {
+  const slug = state.blogSlug || '';
+  state.blogBusy = true;
+  state.blogError = '';
+  render();
+  try {
+    if (slug) {
+      state.blogPost = await API.blog.read(slug);
+    } else {
+      state.blogList = await API.blog.list();
+    }
+  } catch (err) {
+    /* A 404 is not an error to apologise for — it is a wrong address, and the
+       page says so in its own words. Anything else is worth naming, because
+       "no posts yet" and "the server did not answer" look identical on screen
+       and send the reader to do different things about it. */
+    if (slug) state.blogPost = false;
+    else state.blogList = false;
+    if (err.status !== 404) state.blogError = err.message || 'Could not reach the blog.';
+  }
+  state.blogBusy = false;
+  render();
+}
+
 async function loadTeam() {
   if (!state.auth) { state.team = null; return; }
   try {
@@ -9396,6 +9590,8 @@ const ACTIONS = {
      single document — nothing is fetched — while the address bar and the back
      button both tell the truth. */
   'go-teams': () => goRoute('teams'),
+  'go-blogs': () => goRoute('blogs'),
+  'go-post': (el) => goRoute('blogs', el.dataset.slug),
   'go-home': () => goRoute('home'),
 
   'legal-privacy': () => { state.legalOpen = 'privacy'; render(); },

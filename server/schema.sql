@@ -270,3 +270,37 @@ CREATE TABLE IF NOT EXISTS team_projects (
   KEY idx_projects_updated (team_id, updated_at),
   CONSTRAINT fk_tp_team FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+/* ── the blog ──
+
+   Posts written in the admin dashboard and read by anyone. The only table in
+   this database that holds something meant to be public, which is why it is
+   the only one with a slug: every other row is reached by an id nobody types.
+
+   The slug is unique on its own rather than per anything, because it is the
+   URL — /blogs/<slug> — and two posts that resolve to one address is not a
+   conflict a reader can be asked to resolve.
+
+   body_html is what the editor produced, already sanitised on the way in. It
+   is stored rather than re-derived because the sanitiser may get stricter and
+   a post that silently changed shape on the next deploy would be worse than
+   one that has to be re-saved. body_text is the same content flattened, for
+   search and for the excerpt when nobody wrote one. */
+CREATE TABLE IF NOT EXISTS blog_posts (
+  id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  slug         VARCHAR(180) NOT NULL,
+  title        VARCHAR(200) NOT NULL,
+  excerpt      VARCHAR(400) NULL,
+  body_html    MEDIUMTEXT   NOT NULL,
+  body_text    MEDIUMTEXT   NOT NULL,
+  cover_url    VARCHAR(500) NULL,
+  status       VARCHAR(16)  NOT NULL DEFAULT 'draft',
+  author_id    INT UNSIGNED NULL,
+  author_name  VARCHAR(120) NULL,
+  published_at BIGINT       NULL,
+  created_at   BIGINT       NOT NULL,
+  updated_at   BIGINT       NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_blog_slug (slug),
+  KEY idx_blog_live (status, published_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
