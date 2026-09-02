@@ -1618,6 +1618,12 @@ async function onGoogleCredential(response) {
     state.authPassword = '';
     state.auth = res.user;
     landAfterSignIn(res.user);
+    /* Before afterSignIn rather than after it. A work account with no team yet
+       has exactly one thing to do, and the sheet that says so is raised by
+       render() — which afterSignIn calls. Until now only boot() loaded this,
+       so a team account that had just signed up saw the app with nothing to
+       log against and no prompt, and the offer only arrived on a reload. */
+    await loadTeam();
     await afterSignIn(res.user);
   } catch (err) {
     state.authBusy = false;
@@ -3682,10 +3688,11 @@ function mobileNav(v) {
   <nav class="bottomnav no-print" aria-label="Main">
     ${item('app-time', 'time', 'Activity', !v.isMoney)}
     ${workMode() ? '' : item('app-money', 'money', 'Money', v.isMoney)}
+    ${workMode() ? '' : `
     <a class="bn-donate" href="${DONATE_URL}" data-donate target="_blank" rel="noopener noreferrer">
       <span class="bn-icon">${NAV_ICONS.donate}</span><span class="bn-label">Donate</span>
-    </a>
-    ${item('scroll-insights', 'insights', 'Insights', false)}
+    </a>`}
+    ${workMode() ? '' : item('scroll-insights', 'insights', 'Insights', false)}
     ${item('open-report', 'report', 'Report', false)}
   </nav>`;
 }
@@ -3763,7 +3770,7 @@ function header(v) {
         </span>` : ''}
       <span class="appbar-cta" style="display:flex;align-items:center;gap:10px;">
         ${state.aiEstimates ? `<button class="btn btn-secondary" data-act="chat-open" style="display:inline-flex;align-items:center;gap:7px;">${nodeIcon('pulse', 15)}<span>Ask Zimpan</span></button>` : ''}
-        <a class="btn btn-donate" href="${DONATE_URL}" data-donate target="_blank" rel="noopener noreferrer">${NAV_ICONS.donate}<span>Donate</span></a>
+        ${workMode() ? '' : `<a class="btn btn-donate" href="${DONATE_URL}" data-donate target="_blank" rel="noopener noreferrer">${NAV_ICONS.donate}<span>Donate</span></a>`}
         <button class="btn btn-primary" data-act="open-report" style="position:relative">Your Report Cards</button>
       </span>
     </div>
@@ -4539,7 +4546,7 @@ function lightbox(o) {
       ${o.kicker ? `<div class="lb-kicker" style="color:${tone};">${esc(o.kicker)}</div>` : ''}
       <h2 class="lb-title">${esc(o.title)}</h2>
       <div class="lb-body">${o.body}</div>
-      ${o.actions ? `<div class="lb-acts">${o.actions}</div>` : ''}
+      ${o.actions ? `<div class="lb-acts${o.actsClass ? ` ${esc(o.actsClass)}` : ''}">${o.actions}</div>` : ''}
       ${o.foot ? `<p class="lb-foot">${o.foot}</p>` : ''}
     </div>
   </div>`;
@@ -5153,6 +5160,8 @@ const markDonateSeen = () => { try { localStorage.setItem(DONATE_SEEN_KEY, iso(n
 
 function tickDonate() {
   if (!state.auth || state.donateOpen || (state.m && state.m.donateOpen)) return;
+  // Never to a paying team. See mDonateCard().
+  if (workMode()) return;
   // Still only counts while the tab is actually on screen — a window left in a
   // background tab for an hour has not been used for an hour.
   if (document.visibilityState !== 'visible') return;
@@ -5808,6 +5817,12 @@ function insightsBody(v, forPrint) {
 /* Both trackers head their reading the same way, and the anchor the Insights
    button scrolls to lives on it. */
 function insightsHeading() {
+  /* The whole reading underneath this heading is about a body — what it ate,
+     how it slept, whether it moved. A team's report has none of that to say,
+     so the section goes rather than standing empty over its own subtitle.
+     Both trackers head their reading from here, which is why one guard covers
+     the money page too. See workMode(). */
+  if (workMode()) return '';
   return `
       <div class="blueprint card-w-head insights-head" data-anchor="insights" style="scroll-margin-top: 78px;">
         ${cardHead('Your Insights, our recommendations',
@@ -6296,6 +6311,9 @@ function aiConsentDialog() {
 }
 
 function todayCard(v) {
+  // Part of the Insights section, which this product does not have. See
+  // insightsHeading().
+  if (workMode()) return '';
   return `
       <div class="blueprint" style="padding: 20px 22px 22px;">
         <div style="display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; flex-wrap: wrap;">
@@ -6340,6 +6358,9 @@ function weightCard(v) {
 }
 
 function pastCard(v) {
+  // Part of the Insights section, which this product does not have. See
+  // insightsHeading().
+  if (workMode()) return '';
   return `
       <div class="blueprint" style="padding: 20px 22px 22px;">
         <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px; flex-wrap: wrap;">
@@ -6995,6 +7016,87 @@ function deckEffects(v) {
   return out;
 }
 
+/* ── the team report's closing card ──
+
+   The personal report ends on what a stretch like this tends to do to a body:
+   how it slept, what it ate, whether it moved. A team report knows none of
+   that and must not pretend to, so the same card is built from the only thing
+   it does know — where the hours went.
+
+   Four readings against the personal report's four, and each one a claim about
+   the work rather than about a person. Every figure has already appeared on a
+   card behind this one; nothing here is a new measurement. */
+
+/* Which projects are time off. A guess from the name, because that is all a
+   project is — but a guess worth making: "did the team stop" is a question the
+   hours can answer, and a team that names a project Break Time means it. */
+const BREAK_RE = /\b(break|lunch|rest|breather|downtime)\b/i;
+const workBreakMins = (rows) => (rows || []).filter((r) => BREAK_RE.test(r.name))
+  .reduce((a, r) => a + r.mins, 0);
+
+function workEffects(v) {
+  const rows = v.reportRows || [];
+  const total = Math.max(1, v.rangeTotalMins);
+  const days = Math.max(1, v.rangeDayCount);
+  const top = rows[0];
+  const focusPct = top ? Math.round((top.mins / total) * 100) : 0;
+  const breaks = workBreakMins(rows);
+  const perDay = Math.round(breaks / days);
+  const graft = rows.filter((r) => !BREAK_RE.test(r.name));
+  const lead = graft[0];
+
+  return [{
+    label: 'Focus',
+    value: top ? `${focusPct}% to ${top.name}` : 'nothing logged',
+    color: METER_COLOR[focusPct >= 55 ? 'strong' : focusPct >= 30 ? 'steady' : 'thin'],
+    text: !top
+      ? 'Nothing was logged against a project in this window, so there is no shape to read yet.'
+      : focusPct >= 55
+        ? 'Most of the stretch went to one project. Long runs at a single thing are where visible progress on it comes from — and they are also how everything else quietly slips.'
+        : focusPct >= 30
+          ? 'One project led without taking over. That is usually the shape of a stretch that moved something forward and still answered everything else.'
+          : 'The hours spread thin, with nothing taking a clear lead. Sometimes that is the job. When it is not, it is the stretch where a lot got touched and little got finished.'
+  }, {
+    label: 'Break time',
+    value: breaks ? `${durShort(breaks)} · ~${durShort(perDay)} a day` : 'none logged',
+    color: METER_COLOR[!breaks ? 'none' : perDay >= 30 ? 'strong' : 'thin'],
+    text: !breaks
+      ? 'No break was logged in this stretch. It may only be missing from the record — but a run of days with no time off in it is worth checking against how the days actually felt.'
+      : perDay >= 30
+        ? 'Time off is in the record, and on most days. Breaks are what keeps the back half of a day worth as much as the front, and they only appear in a report when somebody bothers to log them.'
+        : 'Some time off is logged, but not much of it. Short days carry that fine. Long ones tend to pay for it in the last hour.'
+  }, {
+    label: 'Projects in play',
+    value: `${graft.length} ${graft.length === 1 ? 'project' : 'projects'}`,
+    color: METER_COLOR[graft.length <= 1 ? 'thin' : graft.length <= 4 ? 'strong' : 'steady'],
+    text: graft.length <= 1
+      ? 'Everything went to one project. Nothing is lost to switching, which is the best case — as long as the other work is genuinely not waiting.'
+      : graft.length <= 4
+        ? 'A handful of projects, which is about as many as a stretch can hold before the moving between them starts costing more than the work.'
+        : 'A lot of projects at once. Every switch has a cost that never appears as an entry, and the more of them there are the more of the day goes to it.'
+  }, {
+    label: 'Practice',
+    value: lead ? `${durShort(lead.mins)} on ${lead.name}` : 'not yet',
+    color: METER_COLOR[lead ? 'steady' : 'none'],
+    text: lead
+      ? 'Hours at one thing are the raw material skill is made from — this is how many went in. Not proof anyone improved, but the only figure a log can honestly offer about it.'
+      : 'No hours are on a project yet, so there is nothing here to build on.'
+  }];
+}
+
+function localWorkClosing(v, days, lit) {
+  const bits = ['None of this is a verdict on anyone. It is a reading of where the hours went, set against what was written down.'];
+  if (lit < days) {
+    bits.push(`Time was logged on ${lit} of ${days} days, so read the gaps as gaps in the record rather than as days off.`);
+  }
+  const top = v.reportRows[0];
+  if (top) bits.push(`Most of it went to ${top.name}, which is worth knowing whether or not that is where it was meant to go.`);
+  const breaks = workBreakMins(v.reportRows);
+  if (breaks) bits.push(`${durShort(breaks)} of the stretch was logged as time off.`);
+  bits.push('The useful question is not whether the totals are high. It is whether this is the stretch the team meant to have — and that can only be asked about one somebody actually looked at.');
+  return bits.join(' ');
+}
+
 function localClosing(v, days, lit) {
   const bits = [];
   bits.push('None of this is a verdict, and none of it is about you specifically — it is what these patterns tend to do to people, set against what you happened to write down.');
@@ -7031,7 +7133,8 @@ function timeCards(v) {
     lines: [`${v.reportEntryCount} ${v.reportEntryCount === 1 ? 'entry' : 'entries'} logged`],
     rows: [
       { label: 'Days Streak (actively time tracking)', value: v.streakLabel },
-      v.rangeSteps ? { label: 'Steps walked', value: v.rangeSteps.toLocaleString('en-US') } : null
+      // Steps are a body's measurement, not a team's. See workMode().
+      v.rangeSteps && !workMode() ? { label: 'Steps walked', value: v.rangeSteps.toLocaleString('en-US') } : null
     ].filter(Boolean),
     note: v.reportHeadline,
     summary: ai.cover || localCover(v, days, lit)
@@ -7072,7 +7175,11 @@ function timeCards(v) {
     }));
   }
 
-  const fed = v.rangeReadings.filter((r) => r.total > 0);
+  /* Everything from here to the closing card reads a body: what the hours did
+     for it, how it slept, what it ate and burned. A team report measures a
+     team's work, and none of this is any of the team's business. See
+     workMode(). */
+  const fed = workMode() ? [] : v.rangeReadings.filter((r) => r.total > 0);
   if (fed.length) out.push(card('pillars', {
     kicker: 'How it fed you',
     rows: v.rangeReadings.map((r) => ({
@@ -7081,7 +7188,7 @@ function timeCards(v) {
     note: 'Partial credit is deliberate — an hour of chores is not an hour of exercise.'
   }));
 
-  if (v.rangeSleep.nights) {
+  if (v.rangeSleep.nights && !workMode()) {
     const nights = v.rangeSleep.list;
     out.push(card('sleep', {
       kicker: 'How you slept',
@@ -7096,7 +7203,7 @@ function timeCards(v) {
   }
 
   const b = v.rangeBurn, f = v.rangeFood;
-  if (b.kcal || f.kcal) {
+  if ((b.kcal || f.kcal) && !workMode()) {
     const net = Math.round((b.kcal + b.restKcal - f.kcal) / Math.max(1, b.days));
     out.push(card('energy', {
       kicker: 'Energy',
@@ -7116,7 +7223,7 @@ function timeCards(v) {
     }));
   }
 
-  if (v.rangeNet) {
+  if (v.rangeNet && !workMode()) {
     const shown = v.rangeNet.filter((d) => d.logged);
     if (shown.length > 1) {
       const avg = Math.round(shown.reduce((a, d) => a + d.net, 0) / shown.length);
@@ -7133,15 +7240,16 @@ function timeCards(v) {
   /* The last card is the one people actually finish on, so it is the one that
      should say something worth finishing on. No figures of its own — every
      number in it has already been shown on a card behind this one. */
+  const work = workMode();
   out.push(card('closing', {
     kicker: 'Before you go',
-    title: 'What a stretch like this tends to do',
+    title: work ? 'What a stretch like this tends to cost' : 'What a stretch like this tends to do',
     /* Rendered from the readings every time, never from the AI cache. This is
        the part of the report that makes claims about a body, and it should say
        what the figures on the cards behind it actually support — not whatever
        was written about a different window an hour ago. */
-    effects: deckEffects(v),
-    summary: ai.closing || localClosing(v, days, lit),
+    effects: work ? workEffects(v) : deckEffects(v),
+    summary: work ? localWorkClosing(v, days, lit) : (ai.closing || localClosing(v, days, lit)),
     closing: true
   }));
 
@@ -7873,6 +7981,12 @@ async function submitAuth() {
     state.authPassword = '';
     state.auth = res.user;
     landAfterSignIn(res.user);
+    /* Before afterSignIn rather than after it. A work account with no team yet
+       has exactly one thing to do, and the sheet that says so is raised by
+       render() — which afterSignIn calls. Until now only boot() loaded this,
+       so a team account that had just signed up saw the app with nothing to
+       log against and no prompt, and the offer only arrived on a reload. */
+    await loadTeam();
     await afterSignIn(res.user);
   } catch (err) {
     state.authBusy = false;
@@ -8425,7 +8539,10 @@ async function teamEdit(id, patch) {
   render();
 }
 
-const TEAM_TABS = [['people', 'People'], ['projects', 'Projects'], ['hours', 'Hours'], ['dashboard', 'Dashboard'], ['billing', 'Billing']];
+/* Billing is not in this list on purpose: it is the owner's errand rather than
+   a view of the team, and it sits under the dialog's own buttons instead of
+   competing with the four tabs that are about the work. */
+const TEAM_TABS = [['people', 'Members'], ['projects', 'Categories/Projects'], ['hours', 'Team Hours'], ['dashboard', 'Dashboard']];
 
 const teamStatusOf = () => (state.team && state.team.team && state.team.team.status) || 'trial';
 const teamExpired = () => teamStatusOf() === 'expired';
@@ -8627,19 +8744,19 @@ function teamStartBody() {
     <p class="tm-foot">Sign out and create a team account with your work email. This Zimpan stays exactly as it is.</p>`;
   }
   return `
-    <p>A team is a separate space for work hours: projects to log against, people you invite by email, and a reading of where the week went. Nothing personal from this account is part of it.</p>
-    <div class="tm-add" style="margin-top:14px;">
+    <div class="tm-add" style="margin-top:2px;">
       <input class="input" type="text" data-k="team-name" data-sync="teamName"
         value="${esc(state.teamName)}" placeholder="What is the team called?" autocomplete="off">
       <button class="btn btn-primary" data-act="team-create"${state.teamBusy === 'create' ? ' disabled' : ''}>${state.teamBusy === 'create' ? 'Creating…' : 'Create'}</button>
     </div>
+    <p style="margin-top:12px;">A team is a separate space for work hours: projects to log against, people you invite by email, and a reading of where the week went. Nothing personal from this account is part of it.</p>
     <p class="tm-foot">You will own it, and start on the trial plan — three people, including you.</p>`;
 }
 
 /* Each tab is a different job, so the dialog says which one you are in rather
    than wearing the same shield for all five. */
 const TEAM_TAB_FACE = {
-  people: ['shield', 'Who is on it', 'var(--color-accent)'],
+  people: ['shield', 'Building Your Team', 'var(--color-accent)'],
   projects: ['clipboard', 'What they log against', '#0e9f6e'],
   hours: ['clock', 'What was logged', '#4f46e5'],
   dashboard: ['insights', 'Where the hours went', '#7856f5'],
@@ -8653,8 +8770,7 @@ function teamSheet() {
   const body = !has ? teamStartBody() : `
     <div class="seg tm-tabs">
       ${TEAM_TABS.filter(([k]) => (k !== 'dashboard' || teamIsSuper())
-          && (k !== 'hours' || teamIsAdmin())
-          && (k !== 'billing' || teamIsSuper()))
+          && (k !== 'hours' || teamIsAdmin()))
         .map(([k, label]) => `
         <label class="seg-opt"><input type="radio" name="team-tab" data-act="team-tab" data-v="${k}"${state.teamTab === k ? ' checked' : ''}><span>${label}</span></label>`).join('')}
     </div>
@@ -8681,7 +8797,11 @@ function teamSheet() {
     title: has ? face[1] : 'Start a team',
     closeAct: 'team-close',
     body,
-    actions: `<button class="btn btn-secondary" data-act="team-close">Done</button>`
+    actsClass: has && teamIsSuper() ? 'lb-stack' : '',
+    actions: `<button class="btn btn-secondary" data-act="team-close">Done</button>${
+      has && teamIsSuper() ? `
+      <button class="btn btn-primary" data-act="team-tab" data-v="${state.teamTab === 'billing' ? 'people' : 'billing'}">${
+        state.teamTab === 'billing' ? 'Back to the team' : 'Billing'}</button>` : ''}`
   });
 }
 
@@ -9812,7 +9932,12 @@ const mRowsIn = (list, dates) => {
   return list.filter((e) => set.has(e.date));
 };
 const mTimeRows = (dates) => mRowsIn(state.entries, dates);
-const mMoneyRows = (dates) => mRowsIn(state.money, dates);
+/* One choke point for every money figure the phone draws: the day list, the
+   bars, the range totals and the food report all come through here. A team
+   account cannot log money, but a state saved before the account joined one
+   still carries rows — and a spend showing up in a day of work hours is the
+   one thing this product is separated to prevent. See workMode(). */
+const mMoneyRows = (dates) => (workMode() ? [] : mRowsIn(state.money, dates));
 
 /* One list, timed rows in clock order and the money after them — money has no
    position on a clock, and interleaving it by insertion time made the day read
@@ -10814,6 +10939,10 @@ function mCalCard(dates) {
 }
 
 function mDonateCard() {
+  /* A team is paying for this. Asking them for a dollar on top, under a
+     heading that calls the app free, contradicts the plan they are on and the
+     billing tab that sold it to them. See workMode(). */
+  if (workMode()) return '';
   return `
 <div class="card" style="border-radius:20px;padding:18px;border:1px solid rgba(120,86,245,.25);box-shadow:0 4px 14px rgba(47,28,102,.08);gap:0;margin-top:22px;">
   <div style="font-family:var(--font-heading);font-weight:700;font-size:19px;color:#16131f;">Zimpan is free, and stays free</div>
@@ -10908,8 +11037,9 @@ function mHome() {
         <div style="font-family:var(--font-heading);font-weight:700;font-size:32px;line-height:1.1;margin-top:4px;">${esc(mDur(logged))}</div>
       </div>
       <div style="text-align:right;">
-        <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;opacity:.78;">Money out</div>
-        <div style="font-family:var(--font-heading);font-weight:700;font-size:32px;line-height:1.1;margin-top:4px;">${esc(mMoney(mOutToday(dates)))}</div>
+        <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;opacity:.78;">${workMode() ? 'Projects' : 'Money out'}</div>
+        <div style="font-family:var(--font-heading);font-weight:700;font-size:32px;line-height:1.1;margin-top:4px;">${
+          workMode() ? String(new Set(list.map((e) => e.category).filter(Boolean)).size) : esc(mMoney(mOutToday(dates)))}</div>
       </div>
     </div>
     <div style="display:flex;gap:3px;margin-top:16px;height:9px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.22);">
@@ -10927,6 +11057,8 @@ function mHome() {
          screen and this is not — an unlabelled figure here would read as
          today's. -->
     ${(() => {
+      // Nothing in this product puts money on the account. See workMode().
+      if (workMode()) return '';
       const st = moneyStatus(moneyAll());
       if (!st.inCents && !st.asideCents) return '';
       return `<div style="display:flex;gap:8px;margin-top:8px;padding-top:9px;border-top:1px solid rgba(255,255,255,.22);font-size:12px;opacity:.92;">
@@ -10939,8 +11071,8 @@ function mHome() {
   ${mRangeKey() === 'today' ? mTimerCard() : ''}
 
   <div style="display:flex;gap:10px;margin-bottom:22px;">
-    ${[['m-log-time', '#f2eefe', '#5f3ac9', nodeIcon('clock', 17), 'Log time', '15px'],
-      ['m-log-money', '#eceefe', '#3f4bc4', esc(mGlyph()), 'Log money', '13px']].map((q) => `
+    ${[['m-log-time', '#f2eefe', '#5f3ac9', nodeIcon('clock', 17), workMode() ? 'Log work' : 'Log time', '15px']]
+      .concat(workMode() ? [] : [['m-log-money', '#eceefe', '#3f4bc4', esc(mGlyph()), 'Log money', '13px']]).map((q) => `
       <button class="card" data-act="${q[0]}"
         style="flex:1;flex-direction:column;gap:6px;align-items:flex-start;padding:14px;border-radius:16px;box-shadow:${M_SHADOW_SM};cursor:pointer;text-align:left;">
         <span style="width:30px;height:30px;border-radius:10px;background:${q[1]};display:grid;place-items:center;font-size:${q[5]};font-weight:700;color:${q[2]};">${q[3]}</span>
@@ -11493,7 +11625,8 @@ function mDetail() {
 /* ── 6. insights ── */
 
 function mInsights() {
-  const money = state.m.insightTab === 'money';
+  // Nothing to chart, and no way to have logged any. See workMode().
+  const money = !workMode() && state.m.insightTab === 'money';
   const series = mRangeSeries(money);
   const byCategory = !!(series[0] && series[0].color);
   const max = Math.max.apply(null, series.map((w) => w.v).concat([1]));
@@ -11521,7 +11654,7 @@ function mInsights() {
   </div>
   ${mRangeChips('m-insight-range', mInsightKey())}
   <div class="seg" style="display:flex;width:100%;gap:6px;padding:4px;background:#e8e6ef;border-color:transparent;margin-bottom:18px;">
-    ${opt('time', 'Activity')}${opt('money', 'Money')}
+    ${opt('time', workMode() ? 'Work' : 'Activity')}${workMode() ? '' : opt('money', 'Money')}
   </div>
 
   ${mReportCard(money)}
@@ -11616,7 +11749,7 @@ function mTabs() {
 <div style="position:fixed;left:0;right:0;bottom:0;z-index:10;height:92px;display:flex;align-items:center;padding:0 10px 22px;background:linear-gradient(180deg,rgba(248,247,251,0),rgba(248,247,251,.96) 42%);backdrop-filter:blur(8px);">
   ${side(`
     ${tab('m-go-home', nodeIcon('home', 21), 'Home', on === 'home')}
-    ${tab('m-donate-open', nodeIcon('heart', 21), 'Donate', false, '#e08a1e')}`)}
+    ${workMode() ? '' : tab('m-donate-open', nodeIcon('heart', 21), 'Donate', false, '#e08a1e')}`)}
   <button data-act="m-flow-open" aria-label="Log something"
     style="width:58px;height:58px;flex:none;border:0;border-radius:50%;cursor:pointer;background:${M_GRAD_FLAT};box-shadow:0 10px 24px rgba(79,70,229,.4);color:#fff;font-size:26px;font-weight:300;line-height:1;margin-bottom:12px;">+</button>
   ${side(`
@@ -12091,7 +12224,12 @@ const M_ACTIONS = {
   'm-range': (el) => mSet({ range: el.dataset.key }),
   'm-insight-range': (el) => mSet({ insightRange: el.dataset.key }),
   'm-go-review': (el) => mSet({ reviewDay: (el && el.dataset.day) || todayIso, screen: 'review' }),
-  'm-insight-tab': (el) => mSet({ insightTab: el.dataset.tab }),
+  // Refused as well as hidden, the same way the money tracker is: a hidden
+  // control is a drawing decision, and this is what the product is.
+  'm-insight-tab': (el) => {
+    if (workMode() && el.dataset.tab === 'money') return;
+    mSet({ insightTab: el.dataset.tab });
+  },
   'm-open-entry': (el) => mSet({ screen: 'detail', selected: el.dataset.id, selectedKind: el.dataset.kind }),
   'm-account-open': () => mSet({ accountOpen: true }),
   'm-cal-open': (el) => mSet({ calOpen: el.dataset.kind }),
@@ -12331,7 +12469,11 @@ const M_ACTIONS = {
   },
 
   /* donate */
-  'm-donate-open': () => mSet({ donateOpen: true, donateThanks: false }),
+  'm-donate-open': () => {
+    // A paying team is never asked for a gift. See mDonateCard().
+    if (workMode()) return;
+    mSet({ donateOpen: true, donateThanks: false });
+  },
   'm-donate-close': () => mSet({ donateOpen: false, donateThanks: false }),
 };
 
