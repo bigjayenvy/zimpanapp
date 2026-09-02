@@ -424,6 +424,89 @@ export async function memberEntries(userId, targetUserId, from, to) {
     [m.teamId, targetUserId, String(from || '0000-01-01'), String(to || '9999-12-31')]);
 }
 
+/* ── who is working right now ──
+
+   An admin's view of the team as it stands this minute: who has a timer
+   running, on what, since when, and what each person has already logged today.
+
+   Three rules hold it to the same line everything else in this file is on.
+
+   The timer is a single row on `users` — the same one sync.js reads back to
+   its owner — so the only thing this adds is who may look at it. The project
+   is resolved against the team's own list rather than trusted from the row: a
+   timer started before the account joined, or against a category that is not a
+   project, is work this team has no claim to see, so it reports as running
+   without naming what it is on.
+
+   Today's entries come through ADMIN_ENTRY_WHERE like every other admin read,
+   which is what keeps a personal entry out of it — an entry with no project_id
+   is not the team's, whoever logged it.
+
+   And notes never leave the database. cleanEntryPatch already refuses to write
+   one; this refuses to read one. What a member wrote to themselves about an
+   hour is not part of the hour. */
+export async function teamNow(userId, todayIso) {
+  const m = await requireLive(userId, 'admin');
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(String(todayIso || '')) ? String(todayIso) : null;
+  if (!day) throw new TeamError('A date is needed.');
+
+  const rows = await query(
+    `SELECT tm.user_id AS userId, tm.role, u.email, u.display_name AS name,
+            u.timer_start AS timerStart, u.timer_cat AS timerCat, u.timer_activity AS timerActivity
+       FROM team_members tm JOIN users u ON u.id = tm.user_id
+      WHERE tm.team_id = ? ORDER BY FIELD(tm.role, 'super', 'admin', 'member'), u.email`, [m.teamId]);
+
+  const entries = await query(
+    `SELECT id, user_id AS userId, activity, from_min AS \`from\`, to_min AS \`to\`, project_id AS project
+       FROM entries
+      WHERE ${ADMIN_ENTRY_WHERE} AND date = ?
+      ORDER BY user_id, from_min`, [m.teamId, day]);
+
+  const projects = await query(
+    'SELECT id, name, color FROM team_projects WHERE team_id = ? AND deleted = 0', [m.teamId]);
+  const byId = new Map(projects.map((p) => [String(p.id), p]));
+  const byName = new Map(projects.map((p) => [p.name, p]));
+
+  const timeline = new Map();
+  entries.forEach((e) => {
+    const list = timeline.get(e.userId) || [];
+    const p = byId.get(String(e.project));
+    list.push({
+      id: e.id, activity: e.activity, from: Number(e.from), to: Number(e.to),
+      project: p ? p.name : null, color: p ? p.color : null
+    });
+    timeline.set(e.userId, list);
+  });
+
+  const at = now();
+  return {
+    at,
+    date: day,
+    members: rows.map((r) => {
+      const started = Number(r.timerStart) || 0;
+      /* Only a project this team owns is named. Anything else is a timer
+         running on something that is not the team's business, and saying so is
+         the honest half of the answer. */
+      const onProject = started && r.timerCat ? byName.get(r.timerCat) || null : null;
+      const list = timeline.get(r.userId) || [];
+      return {
+        userId: r.userId, role: r.role, email: r.email, name: r.name,
+        running: !!started,
+        // Clamped at zero: a clock a few seconds ahead should not read as
+        // having started in the future.
+        since: started || null,
+        elapsedMin: started ? Math.max(0, Math.round((at - started) / 60000)) : 0,
+        activity: started ? (r.timerActivity || '') : '',
+        project: onProject ? onProject.name : null,
+        color: onProject ? onProject.color : null,
+        offTeam: !!started && !onProject,
+        loggedMin: list.reduce((a, e) => a + (e.to >= e.from ? e.to - e.from : e.to + 1440 - e.from), 0),
+        timeline: list
+      };
+    })
+  };
+}
+
 export async function editMemberEntry(userId, entryId, patch) {
   const m = await requireLive(userId, 'admin');
   const fields = cleanEntryPatch(patch);

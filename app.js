@@ -522,7 +522,11 @@ const API = {
     dropProject: (id) => api('/api/team/project/delete', { method: 'POST', body: { id } }),
     entries: (userId, from, to) => api(`/api/team/member/${encodeURIComponent(userId)}/entries?from=${encodeURIComponent(from || '')}&to=${encodeURIComponent(to || '')}`),
     editEntry: (id, patch) => api(`/api/team/entry/${encodeURIComponent(id)}`, { method: 'POST', body: patch }),
-    dashboard: (from, to) => api(`/api/team/dashboard?from=${encodeURIComponent(from || '')}&to=${encodeURIComponent(to || '')}`)
+    dashboard: (from, to) => api(`/api/team/dashboard?from=${encodeURIComponent(from || '')}&to=${encodeURIComponent(to || '')}`),
+    /* The date is sent because the server cannot know it. It has no idea what
+       day it is where the team is sitting, and a timezone guessed there would
+       put a whole office's morning on yesterday. */
+    now: (date) => api(`/api/team/now?date=${encodeURIComponent(date || '')}`)
   }
 };
 
@@ -755,6 +759,12 @@ const state = {
   teamMemberId: null,
   teamRows: [],
   teamDash: null,
+  /* Who is working right now, and what each of them has logged today. Polled
+     while the Members tab is open and dropped when it closes — nothing about
+     this is worth keeping once nobody is looking at it. */
+  teamLive: null,
+  teamLiveAt: 0,
+  teamLiveOpen: null,
   /* 'home' or 'teams', read from the address on boot. */
   route: routeFromPath(),
   refineAlways: stored.refineAlways === true || stored.refineAlways === false ? stored.refineAlways : null,
@@ -3929,7 +3939,7 @@ const LEGAL = {
       ['Zimpan for Teams', [
         ['What is Zimpan for Teams?', 'A separate product for measuring a team\'s productivity: hours logged against projects, a roster you invite by email, and a reading of where the week went. It tracks work only — no money, no food, no sleep, nothing personal.'],
         ['Can I use my personal account for it?', 'No. A team account is its own login with its own email, decided at sign-up and never moved between the two. That separation is what keeps your personal log out of your employer\'s sight.'],
-        ['Who can see my hours?', 'Your team\'s admins and its owner, and only the hours you logged against the team\'s projects. Notes on your entries are never shown to them.'],
+        ['Who can see my hours?', 'Your team\'s admins and its owner, and only the hours you logged against the team\'s projects. They can also see when you have a timer running and what it is on. Notes you write on an entry are never shown to them, and a timer running on anything that is not one of the team\'s projects shows only as "working" — never by name.'],
         ['Who can edit them?', 'Admins and the owner can correct a member\'s hours; members log their own. Only the owner manages billing.'],
         ['What does it cost?', 'From $9 a month for six people up to $100 for unlimited, and every team starts on a 14-day trial for three people with no card needed.']
       ]],
@@ -7917,6 +7927,7 @@ function render() {
     mPaintBars();
     paintDeck();
     paintChatLog();
+    teamLiveWatch();
     return;
   }
 
@@ -7967,6 +7978,7 @@ function render() {
   // The tree was just replaced, so the scroll-driven classes have to be put back.
   paintScrollChrome();
   paintChatLog();
+  teamLiveWatch();
   // The dialog exists to be typed in, so put the caret there straight away.
   const note = root.querySelector('[data-k="note-draft"]');
   if (note && document.activeElement !== note) note.focus();
@@ -8665,6 +8677,63 @@ async function loadTeamHours() {
   }
 }
 
+/* ── the live view ──
+
+   Polled rather than pushed. A socket for a handful of admins watching a
+   handful of timers is a second server to keep alive for a screen that is
+   usually closed; thirty seconds is well inside the resolution of the thing
+   being watched, which is measured in minutes.
+
+   `quiet` is the poll: it leaves the last answer on screen while the next one
+   is in flight and it does not report failure. A momentary network blip
+   replacing a live roster with an error message would be worse than a figure
+   that is thirty seconds stale, and the timestamp under it already says how
+   old the reading is. */
+async function loadTeamLive(quiet) {
+  if (!teamIsAdmin() || !(state.team && state.team.team)) return;
+  if (!quiet) { state.teamError = ''; state.teamLive = null; }
+  try {
+    state.teamLive = await API.team.now(todayIso);
+    state.teamLiveAt = Date.now();
+  } catch (err) {
+    if (!quiet) state.teamError = err.message || 'Could not read who is working.';
+  }
+  render();
+}
+
+/* One interval, started when the Members tab is showing and stopped the moment
+   it is not. Kept in a module variable rather than on state: a timer id is not
+   something a render should be able to change, and two of them running would
+   double the traffic and never be noticed. */
+let teamLiveTimer = null;
+const TEAM_LIVE_MS = 30000;
+
+function teamLiveWatch() {
+  const wanted = !!(state.teamOpen && state.teamTab === 'people'
+    && teamIsAdmin() && state.team && state.team.team);
+  if (wanted && !teamLiveTimer) {
+    /* The interval is created BEFORE the first read, not after it.
+
+       loadTeamLive renders when it finishes, either way, and render() calls
+       back into here. With the guard still null at that moment this starts a
+       second read, which renders, which starts a third — straight down to
+       "Maximum call stack size exceeded". Setting the guard first makes that
+       re-entry a no-op whether the read finishes on the next tick or before it
+       has yielded at all. */
+    teamLiveTimer = setInterval(() => {
+      // A tab in the background is not being watched, so it is not polled.
+      if (document.hidden) return;
+      loadTeamLive(true);
+    }, TEAM_LIVE_MS);
+    loadTeamLive(false);
+  } else if (!wanted && teamLiveTimer) {
+    clearInterval(teamLiveTimer);
+    teamLiveTimer = null;
+    state.teamLive = null;
+    state.teamLiveOpen = null;
+  }
+}
+
 async function loadTeamDashboard() {
   const [from, to] = teamWindow();
   state.teamError = '';
@@ -8756,24 +8825,88 @@ const teamNothing = (icon, title, body) => `
     <p>${esc(body)}</p>
   </div>`;
 
+/* What one person is doing this minute, drawn under their name.
+
+   Three states, and they are not the same thing: running on one of the team's
+   projects, running on something that is not the team's, and not running. The
+   middle one is why the server sends `offTeam` rather than simply omitting the
+   project — a timer going on a member's own account is not the team's to read,
+   and "working, not on your projects" is the true answer where naming it would
+   be a leak and silence would be a lie. */
+function teamLiveRow(live) {
+  if (!live) return '';
+  if (!live.running) {
+    return `<span class="tm-live tm-live-off">${live.loggedMin
+      ? `${esc(durShort(live.loggedMin))} logged today`
+      : 'nothing logged today'}</span>`;
+  }
+  const on = live.offTeam
+    ? 'working · not on a team project'
+    : `${live.activity || 'Untitled'}${live.project ? ` · ${live.project}` : ''}`;
+  return `<span class="tm-live tm-live-on">
+    <span class="tm-live-dot" aria-hidden="true"></span>
+    <span class="tm-live-what">${esc(on)}</span>
+    <span class="tm-live-for">${esc(durShort(live.elapsedMin))}</span>
+  </span>`;
+}
+
+/* Today, in order, as a row of blocks scaled to the hours they took. Opened
+   per person rather than drawn for everybody: five timelines at once is a
+   wall, and the question an admin has is usually about one of them. */
+function teamTimeline(live) {
+  if (!live || !live.timeline.length) {
+    return '<div class="tm-tl-empty">Nothing logged against a project today.</div>';
+  }
+  const total = live.timeline.reduce((a, e) => a + Math.max(1, e.to >= e.from ? e.to - e.from : e.to + 1440 - e.from), 0);
+  return `
+    <div class="tm-tl">
+      <div class="tm-tl-bar">
+        ${live.timeline.map((e) => {
+          const mins = Math.max(1, e.to >= e.from ? e.to - e.from : e.to + 1440 - e.from);
+          return `<span class="tm-tl-seg" style="flex-grow:${mins};background:${esc(e.color || 'var(--color-neutral-400)')};"
+            title="${esc(e.activity)} · ${esc(clock12(e.from))}–${esc(clock12(e.to))}"></span>`;
+        }).join('')}
+      </div>
+      ${live.timeline.map((e) => {
+        const mins = Math.max(1, e.to >= e.from ? e.to - e.from : e.to + 1440 - e.from);
+        return `
+        <div class="tm-tl-row">
+          <span class="tm-tl-dot" style="background:${esc(e.color || 'var(--color-neutral-400)')};"></span>
+          <span class="tm-tl-name">${esc(e.activity || 'Untitled')}</span>
+          <span class="tm-tl-proj">${esc(e.project || '—')}</span>
+          <span class="tm-tl-when">${esc(clock12(e.from))}–${esc(clock12(e.to))}</span>
+          <span class="tm-tl-mins">${esc(durShort(mins))}</span>
+        </div>`;
+      }).join('')}
+      <div class="tm-tl-foot">${live.timeline.length} ${live.timeline.length === 1 ? 'entry' : 'entries'} · ${esc(durShort(total))} today</div>
+    </div>`;
+}
+
 function teamPeopleTab() {
   const t = state.team;
   const cap = t.team.seatCap;
+  const liveBy = new Map(((state.teamLive && state.teamLive.members) || []).map((m) => [m.userId, m]));
   const rows = t.members.map((m) => {
     const isMe = m.userId === t.me.userId;
     const canManage = teamIsSuper() ? m.role !== 'super' : (teamIsAdmin() && m.role === 'member' && !isMe);
+    const live = teamIsAdmin() ? liveBy.get(m.userId) : null;
+    const open = state.teamLiveOpen === m.userId;
     return `
     <div class="tm-row">
       <div class="tm-who">
         <span class="tm-name">${esc(m.name || m.email)}${isMe ? ' <span class="tm-you">you</span>' : ''}</span>
         <span class="tm-mail">${esc(m.email)}</span>
+        ${teamLiveRow(live)}
       </div>
+      ${live ? `<button class="tm-act" data-act="team-live-open" data-id="${esc(String(m.userId))}"
+        aria-expanded="${open}">${open ? 'Hide today' : 'Today'}</button>` : ''}
       <span class="tm-role tm-role-${esc(m.role)}">${esc(m.role === 'super' ? 'Owner' : m.role)}</span>
       ${teamIsSuper() && m.role !== 'super' ? `
         <button class="tm-act" data-act="team-role" data-id="${esc(String(m.userId))}"
           data-v="${m.role === 'admin' ? 'member' : 'admin'}">${m.role === 'admin' ? 'Make member' : 'Make admin'}</button>` : ''}
       ${canManage ? `<button class="tm-act tm-drop" data-act="team-remove" data-id="${esc(String(m.userId))}">Remove</button>` : ''}
-    </div>`;
+    </div>
+    ${open && live ? teamTimeline(live) : ''}`;
   }).join('');
 
   /* The server does not send these to a member, and this does not draw them
@@ -8790,10 +8923,21 @@ function teamPeopleTab() {
     </div>`).join('');
 
   return `
+    ${teamIsAdmin() ? `
+    <div class="tm-livehead">
+      <span>${(() => {
+        const on = ((state.teamLive && state.teamLive.members) || []).filter((m) => m.running).length;
+        if (!state.teamLive) return 'Reading who is working…';
+        return on ? `${on} working right now` : 'Nobody has a timer running';
+      })()}</span>
+      <button class="tm-act" data-act="team-live-refresh">Refresh</button>
+    </div>` : ''}
     <div class="tm-cap">${t.seatsUsed} of ${cap ? cap : 'unlimited'} on the <strong>${esc(t.team.planLabel)}</strong> plan${
       t.team.status === 'trial' ? ` · ${t.team.trialDaysLeft} ${t.team.trialDaysLeft === 1 ? 'day' : 'days'} left` : ''}${
       t.team.status === 'expired' ? ' · ended' : ''}</div>
     <div class="tm-list">${rows}${invites}</div>
+    ${teamIsAdmin() ? '' : `
+    <p class="tm-seen">Your admins can see when you have a timer running, what it is on, and the hours you have logged against this team's projects today. Notes you write on an entry are never shown to them, and nothing you log outside this team is visible here at all.</p>`}
     ${teamIsAdmin() ? `
     <div class="tm-add">
       <input class="input" type="email" data-k="team-invite" data-sync="teamInviteEmail"
@@ -9665,6 +9809,12 @@ const ACTIONS = {
       render();
     });
   },
+  'team-live-open': (el) => {
+    const id = Number(el.dataset.id);
+    state.teamLiveOpen = state.teamLiveOpen === id ? null : id;
+    render();
+  },
+  'team-live-refresh': () => { loadTeamLive(false); },
   'team-revoke': (el) => teamDo('revoke', () => API.team.revoke(el.dataset.v), 'Invitation withdrawn.'),
   'team-role': (el) => teamDo('role', () => API.team.role(Number(el.dataset.id), el.dataset.v), 'Role changed.'),
   'team-remove': (el) => teamDo('remove', () => API.team.remove(Number(el.dataset.id)), 'Removed from the team.'),

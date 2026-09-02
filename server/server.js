@@ -23,7 +23,7 @@ import {
 import {
   TeamError, membershipFor, createTeam, teamOverview, inviteMember, revokeInvite,
   acceptInvite, setMemberRole, removeMember, saveProject, deleteProject,
-  memberEntries, editMemberEntry, teamDashboard, setTeamPlan, PLANS
+  memberEntries, editMemberEntry, teamDashboard, teamNow, setTeamPlan, PLANS
 } from './teams.js';
 
 const ROOT = join(HERE, '..');
@@ -683,6 +683,12 @@ app.post('/api/team/entry/:id', requireUser, team((req) =>
 
 app.get('/api/team/dashboard', requireUser, team((req) =>
   teamDashboard(req.user.id, req.query.from, req.query.to)));
+
+/* Polled while the Members tab is open, so the date comes from the caller: the
+   server has no idea what day it is where the team is sitting, and a timezone
+   guessed here would put a whole office's morning on yesterday. Validated as a
+   date inside teamNow before it reaches any query. */
+app.get('/api/team/now', requireUser, team((req) => teamNow(req.user.id, req.query.date)));
 
 /* The manual half of billing. Site admins only — a team's own owner reaching
    this would be one request away from the unlimited plan. */
