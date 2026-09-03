@@ -241,7 +241,7 @@ app.post('/api/register', wrap(async (req, res) => {
 
   const { token, expiresAt } = await createSession(result.insertId);
   setSessionCookie(res, token, expiresAt, PROD);
-  res.status(201).json({ user: { email: creds.email, currency: DEFAULT_CURRENCY, kind }, fresh: true });
+  res.status(201).json({ user: { id: result.insertId, email: creds.email, currency: DEFAULT_CURRENCY, kind }, fresh: true });
 }));
 
 app.post('/api/login', wrap(async (req, res) => {
@@ -257,7 +257,7 @@ app.post('/api/login', wrap(async (req, res) => {
 
   const { token, expiresAt } = await createSession(user.id);
   setSessionCookie(res, token, expiresAt, PROD);
-  res.json({ user: { email: user.email, currency: user.currency, role: user.role, kind: user.kind } });
+  res.json({ user: { id: user.id, email: user.email, currency: user.currency, role: user.role, kind: user.kind } });
 }));
 
 app.post('/api/logout', wrap(async (req, res) => {
@@ -275,7 +275,42 @@ app.get('/api/me', wrap(async (req, res) => {
     [user.id, user.id]);
   // The role is what lets the app offer the dashboard link at all; it says
   // nothing an ordinary account could not already work out about itself.
-  res.json({ user: { email: user.email, currency: user.currency, role: user.role, kind: user.kind }, counts });
+  res.json({ user: { id: user.id, email: user.email, currency: user.currency, role: user.role, kind: user.kind }, counts });
+}));
+
+/* ── closing your own account ──
+
+   The same rules the dashboard's delete follows, minus the ones that only make
+   sense between two people: nobody has to type anybody else's address, and a
+   superadmin closing their own account is their business.
+
+   The team rule stays, and it is the important one. An owner walking out of a
+   team with people still in it would leave their projects, hours and
+   invitations attached to a team with nobody who can administer it — so they
+   are told to hand it over or empty it first. A team of one goes with them.
+
+   The users row cascades: entries, money, sessions, tokens, memberships, all
+   of it. Which is what the privacy policy already promises, and what makes
+   "deleted" mean deleted rather than "hidden until you sign up again". */
+app.delete('/api/me', requireUser, wrap(async (req, res) => {
+  const id = req.user.id;
+  const member = await one('SELECT team_id AS teamId, role FROM team_members WHERE user_id = ?', [id]);
+  let emptied = null;
+  if (member) {
+    const left = await one('SELECT COUNT(*) AS n FROM team_members WHERE team_id = ?', [member.teamId]);
+    const others = Number(left.n) - 1;
+    if (member.role === 'super' && others > 0) {
+      return res.status(409).json({
+        error: `You own a team with ${others} other ${others === 1 ? 'person' : 'people'} in it. Make somebody else the owner, or remove them, before closing your account.`
+      });
+    }
+    if (others === 0) emptied = member.teamId;
+  }
+
+  await query('DELETE FROM users WHERE id = ?', [id]);
+  if (emptied) await query('DELETE FROM teams WHERE id = ?', [emptied]);
+  clearSessionCookie(res, PROD);
+  res.json({ ok: true, teamRemoved: !!emptied });
 }));
 
 /* ── password reset ── */
@@ -350,7 +385,7 @@ app.post('/api/reset', wrap(async (req, res) => {
   const user = await one('SELECT id, email, currency, role FROM users WHERE id = ?', [row.user_id]);
   const { token: sessionToken, expiresAt } = await createSession(user.id);
   setSessionCookie(res, sessionToken, expiresAt, PROD);
-  res.json({ user: { email: user.email, currency: user.currency, role: user.role } });
+  res.json({ user: { id: user.id, email: user.email, currency: user.currency, role: user.role } });
 }));
 
 /* ── sync ── */
@@ -448,7 +483,7 @@ app.post('/api/auth/google', wrap(async (req, res) => {
   const { token, expiresAt } = await createSession(user.id);
   setSessionCookie(res, token, expiresAt, PROD);
   res.json({
-    user: { email: user.email, currency: user.currency, role: user.role || 'user', kind: user.kind || 'personal' },
+    user: { id: user.id, email: user.email, currency: user.currency, role: user.role || 'user', kind: user.kind || 'personal' },
     fresh
   });
 }));

@@ -443,7 +443,7 @@ function save() {
       refineAlways: state.refineAlways,
       entryMode: state.entryMode,
       tombstones: state.tombstones, dirty: state.dirty,
-      lastSyncAt: state.lastSyncAt, account: state.account,
+      lastSyncAt: state.lastSyncAt, account: state.account, accountId: state.accountId,
       drawers: state.drawers,
       timerStart: state.timerStart, timerActivity: state.timerActivity, timerCategory: state.timerCategory
     }));
@@ -530,6 +530,7 @@ const API = {
     now: (date) => api(`/api/team/now?date=${encodeURIComponent(date || '')}`)
   },
   support: (body) => api('/api/support', { method: 'POST', body }),
+  closeAccount: () => api('/api/me', { method: 'DELETE' }),
   blog: {
     list: () => api('/api/blog'),
     read: (slug) => api(`/api/blog/${encodeURIComponent(slug)}`)
@@ -928,6 +929,10 @@ const state = {
   }),
   lastSyncAt: Number(stored.lastSyncAt) || 0,
   account: stored.account || null,
+  /* Which account, not just which address. An account deleted and re-made
+     under the same email is a different one, and this is how the browser
+     knows. See afterSignIn(). */
+  accountId: Number(stored.accountId) || null,
 
   // Collapsed by default; whether you left one open is remembered.
   drawers: Object.assign({ categories: false, activities: false, lookback: false, legend: false, leaderboard: false, today: false, mEntries: false }, stored.drawers),
@@ -953,6 +958,9 @@ const state = {
   // question stops asking until the next page load.
   notePrompt: null, noteDraft: '', noteSkipped: {},
   legalOpen: null,
+  // The header menu, and the close-account confirmation it opens.
+  menuOpen: false,
+  closing: null,
   /* The help dialog: null when shut, otherwise the draft being written. Held
      as one object so closing it throws the whole thing away rather than
      leaving three fields to remember to clear. */
@@ -1608,10 +1616,30 @@ function adoptLocalData() {
 }
 
 async function afterSignIn(user) {
-  // Different account on this browser: its data is not ours to inherit.
-  if (state.account && state.account !== user.email) {
+  /* An address is not an identity.
+
+     Deleting an account and signing up again with the same email makes a new
+     account with a new id — and the browser, which only ever compared
+     addresses, kept its local copy and pushed the whole thing back up. A team
+     member removed by an admin came back with their hours, except the admin
+     could not see them: the re-uploaded entries carried no project, because at
+     the moment they synced the account was not on a team yet, and nothing
+     revisits a row to stamp it later.
+
+     So the id decides. Only when a KNOWN id differs, because a browser that
+     signed in before this existed has none stored and must not be wiped for
+     it — it records the id and carries on. */
+  const knownId = Number(state.accountId) || 0;
+  const nowId = Number(user.id) || 0;
+  if (knownId && nowId && knownId !== nowId) {
     resetLocal();
     state.account = user.email;
+    state.accountId = nowId;
+    save();
+  } else if (state.account && state.account !== user.email) {
+    resetLocal();
+    state.account = user.email;
+    state.accountId = nowId;
     save();
   } else if (!state.account) {
     if (hasLocalData()) {
@@ -1621,8 +1649,11 @@ async function afterSignIn(user) {
       return;
     }
     state.account = user.email;
+    state.accountId = nowId;
     save();
   }
+  // Recorded whichever branch ran, so the next sign-in has something to compare.
+  if (nowId && state.accountId !== nowId) { state.accountId = nowId; save(); }
   if (!state.dirty.currency && user.currency) state.currency = user.currency;
   render();
   await syncNow();
@@ -3866,7 +3897,7 @@ function stickyBar(v) {
 
    Only the full layout reaches this — the phone's takeover carries Ask in its
    tab bar. On a phone in full view it is the only way in at all, because
-   .appbar-cta is display:none below 720px and the header's button is not
+   the header carries a menu rather than a row of buttons, and Ask Zimpan is not
    there to fall back to. */
 function backToTop() {
   return `
@@ -3895,20 +3926,50 @@ function header(v) {
         <button data-act="sync-now" title="Sync now" style="border:0;background:transparent;padding:0;font:inherit;font-size:12px;cursor:pointer;color:var(--color-neutral-600);"><span data-net>${esc(netLabel())}</span></button>` : ''}
     </div>
     <div class="appbar-actions" style="display:flex;align-items:center;gap:10px;">
-      ${state.auth ? `
-        <span class="appbar-account">
-          ${adminRole() ? `<a class="btn btn-ghost appbar-admin" href="/admin" style="font-size:12px;">Admin</a>` : ''}
-          <span class="appbar-email">${esc(state.auth.email)}</span>
-          <button class="btn btn-ghost" data-act="sign-out" style="font-size:12px;">Sign out</button>
-        </span>` : ''}
-      <span class="appbar-cta" style="display:flex;align-items:center;gap:10px;">
-        ${workMode()
-          ? `<button class="btn btn-secondary" data-act="team-open" style="display:inline-flex;align-items:center;gap:7px;">${nodeIcon('shield', 15)}<span>Building Your Team</span></button>`
-          : `<button class="btn btn-secondary" data-act="prefs-open" style="display:inline-flex;align-items:center;gap:7px;">${nodeIcon('sliders', 15)}<span>Preferences</span></button>`}
-        ${workMode() ? '' : `<a class="btn btn-donate" href="${DONATE_URL}" data-donate target="_blank" rel="noopener noreferrer">${NAV_ICONS.donate}<span>Donate</span></a>`}
-        <button class="btn btn-primary" data-act="open-report" style="position:relative">Your Report Cards</button>
-      </span>
+      ${appbarMenu()}
     </div>
+  </div>`;
+}
+
+/* ── the header menu ──
+
+   The bar used to lay everything out in a row: the address, Sign out, the
+   product's own dialog and the report. It fit, and then it stopped fitting —
+   an email address is as long as somebody's name and domain make it, and the
+   row grew with it until the buttons were the smallest thing on screen.
+
+   So it is a menu. A hamburger is a poor choice where three things need to be
+   one tap away and a fine one where they are all secondary to the page behind
+   them, which these are: everything here opens something else.
+
+   The address is the first line rather than a control — it answers "whose app
+   is this" without being a button that does nothing when pressed. */
+function appbarMenu() {
+  if (!state.auth) return '';
+  const item = (act, label, extra) => `
+    <button class="am-item${extra ? ` ${extra}` : ''}" data-act="${esc(act)}">${esc(label)}</button>`;
+
+  return `
+  <div class="appbar-menu">
+    <button class="am-toggle" data-act="menu-toggle" aria-haspopup="true" aria-expanded="${!!state.menuOpen}" aria-label="Menu">
+      <span class="am-bars" aria-hidden="true"><i></i><i></i><i></i></span>
+    </button>
+    ${state.menuOpen ? `
+    <div class="am-drop" role="menu">
+      <div class="am-who">${esc(state.auth.email)}</div>
+
+      ${item('open-report', 'Your Report Cards', 'am-strong')}
+      ${workMode() ? item('team-open', 'Your Team') : item('prefs-open', 'Preferences')}
+      ${adminRole() ? `<a class="am-item" href="/admin" role="menuitem">Admin dashboard</a>` : ''}
+      ${item('legal-faq', 'FAQs')}
+      ${item('help-open', 'Help')}
+      ${workMode() ? '' : `
+      <a class="am-item" href="${DONATE_URL}" data-donate target="_blank" rel="noopener noreferrer" role="menuitem">Donate</a>`}
+
+      <div class="am-rule"></div>
+      ${item('sign-out', 'Sign out')}
+      ${item('close-account', 'Delete my account', 'am-danger')}
+    </div>` : ''}
   </div>`;
 }
 
@@ -4038,6 +4099,59 @@ const LEGAL = {
    The address is asked for only when there is no session to take it from. A
    signed-in person's own address is what we reply to, and offering to change
    it would be offering to send somebody else's answer somewhere else. */
+/* ── closing your own account ──
+
+   Typed rather than clicked. Every other destructive thing in this app is one
+   button; this is the one that cannot be undone at all, and a dialog that only
+   needs a click is a dialog that gets clicked.
+
+   What it says is what actually happens, which is worth being exact about
+   because the answer changed: signing up again with the same address makes a
+   NEW account, and the browser now knows the difference and clears what it was
+   holding. There is no version of this where the data comes back. */
+function closeAccountDialog() {
+  const c = state.closing;
+  if (!c) return '';
+  const email = (state.auth && state.auth.email) || '';
+
+  if (c.done) {
+    return lightbox({
+      icon: 'check',
+      tone: 'var(--color-neutral-600)',
+      kicker: 'Closed',
+      title: 'Your account is gone',
+      body: '<p>Everything logged under it has been deleted, here and on the server. Thanks for trying it.</p>',
+      actions: '<button class="btn btn-primary" data-act="closed-done">Back to the start</button>'
+    });
+  }
+
+  return lightbox({
+    icon: 'trash',
+    tone: '#8a2f4a',
+    kicker: 'This cannot be undone',
+    title: 'Delete your account?',
+    closeAct: 'close-account-cancel',
+    body: `
+      <div class="help-form">
+        <p style="margin:0;">Everything goes: every entry, every amount, your categories, your settings${
+          workMode() ? ', and your hours on this team' : ''}. It is deleted from the server, not hidden — nobody can restore it and neither can we.</p>
+        <p style="margin:0;color:var(--color-neutral-700);font-size:13px;">Signing up again with this address later makes a <strong>new</strong> account, empty. What is here now does not come back with it.</p>
+        ${workMode() ? `
+        <p style="margin:0;color:var(--color-neutral-700);font-size:13px;">Your team's admins will no longer see the hours you logged against its projects.</p>` : ''}
+        <label class="help-field">
+          <span>Type ${esc(email)} to confirm</span>
+          <input class="input" type="text" data-k="close-typed" data-sync="closing.typed"
+            value="${esc(c.typed || '')}" placeholder="${esc(email)}" autocomplete="off" spellcheck="false">
+        </label>
+        ${c.error ? `<p class="tm-err" style="margin:0;">${esc(c.error)}</p>` : ''}
+      </div>`,
+    actions: `
+      <button class="btn btn-secondary" data-act="close-account-cancel">Cancel</button>
+      <button class="btn btn-danger" data-act="close-account-go"${c.busy ? ' disabled' : ''}>${
+        c.busy ? 'Deleting…' : 'Delete everything'}</button>`
+  });
+}
+
 function helpDialog() {
   const h = state.help;
   if (!h) return '';
@@ -8085,7 +8199,7 @@ function render() {
   if (state.route === 'blogs') {
     const panel = state.authOpen || state.authMode === 'reset';
     root.innerHTML = (state.blogSlug ? blogPostPage() : blogIndex())
-      + (panel ? authScreen() : '') + legalSheet() + helpDialog();
+      + (panel ? authScreen() : '') + legalSheet() + helpDialog() + closeAccountDialog();
     if (scrollY && window.scrollY !== scrollY) window.scrollTo(0, scrollY);
     restoreFocus(f);
     if (panel) mountGoogleButton();
@@ -8134,7 +8248,7 @@ function render() {
 
   if (state.route === 'teams') {
     const teamPanel = state.authOpen || state.authMode === 'reset';
-    root.innerHTML = teamsScreen() + (teamPanel ? authScreen() : '') + legalSheet() + helpDialog();
+    root.innerHTML = teamsScreen() + (teamPanel ? authScreen() : '') + legalSheet() + helpDialog() + closeAccountDialog();
     if (scrollY && window.scrollY !== scrollY) window.scrollTo(0, scrollY);
     restoreFocus(f);
     if (teamPanel) mountGoogleButton();
@@ -8145,7 +8259,7 @@ function render() {
     // A reset link has to open its panel directly; there is no landing page
     // journey that leads to it.
     const panelOpen = state.authOpen || state.authMode === 'reset';
-    root.innerHTML = (mobileOn() ? mSignin() : landingScreen()) + (panelOpen ? authScreen() : '') + legalSheet() + helpDialog();
+    root.innerHTML = (mobileOn() ? mSignin() : landingScreen()) + (panelOpen ? authScreen() : '') + legalSheet() + helpDialog() + closeAccountDialog();
     if (scrollY && window.scrollY !== scrollY) window.scrollTo(0, scrollY);
     restoreFocus(f);
     if (panelOpen) mountGoogleButton();
@@ -8165,7 +8279,7 @@ function render() {
       state.setupDone = true;
       state.m.screen = 'home';
     }
-    root.innerHTML = `<div id="zimpan-progress" class="topbar" style="display:none"><i></i></div>${mobileApp()}${legalSheet()}${helpDialog()}`;
+    root.innerHTML = `<div id="zimpan-progress" class="topbar" style="display:none"><i></i></div>${mobileApp()}${legalSheet()}${helpDialog()}${closeAccountDialog()}`;
     if (scrollY && window.scrollY !== scrollY) window.scrollTo(0, scrollY);
     restoreFocus(f);
     paintBusy();
@@ -8227,6 +8341,7 @@ function render() {
   ${aiConsentDialog()}
   ${legalSheet()}
   ${helpDialog()}
+  ${closeAccountDialog()}
   ${backToTop()}
   ${mobileNav(v)}
 </div>`;
@@ -9774,6 +9889,58 @@ const ACTIONS = {
   'legal-privacy': () => { state.legalOpen = 'privacy'; render(); },
   'legal-terms': () => { state.legalOpen = 'terms'; render(); },
   'legal-faq': () => { state.legalOpen = 'faq'; render(); },
+
+  'menu-toggle': () => { state.menuOpen = !state.menuOpen; render(); },
+  'menu-close': () => { if (state.menuOpen) { state.menuOpen = false; render(); } },
+
+  'close-account': () => {
+    state.menuOpen = false;
+    if (state.m) state.m.accountOpen = false;
+    state.closing = { typed: '', busy: false, error: '', done: false };
+    render();
+  },
+  'close-account-cancel': () => { state.closing = null; render(); },
+
+  'close-account-go': () => {
+    const c = state.closing;
+    if (!c || c.busy) return;
+    const email = (state.auth && state.auth.email) || '';
+    if (String(c.typed || '').trim().toLowerCase() !== email.toLowerCase()) {
+      state.closing = Object.assign({}, c, { error: 'Type the address exactly to confirm.' });
+      render();
+      return;
+    }
+    state.closing = Object.assign({}, c, { busy: true, error: '' });
+    render();
+    API.closeAccount()
+      .then(() => {
+        /* Local first, then the session. The server row is already gone; what
+           is left here is a copy of something that no longer exists, and
+           leaving it would be the exact resurrection this whole change is
+           about. */
+        resetLocal();
+        state.account = null;
+        state.accountId = null;
+        state.auth = null;
+        state.team = null;
+        save();
+        state.closing = { done: true };
+        render();
+      })
+      .catch((err) => {
+        state.closing = Object.assign({}, state.closing, {
+          busy: false, error: err.message || 'That did not go through. Try again in a moment.'
+        });
+        render();
+      });
+  },
+
+  'closed-done': () => {
+    state.closing = null;
+    state.route = 'home';
+    try { history.replaceState({ route: 'home' }, '', '/'); } catch (e) { /* file:// */ }
+    location.reload();
+  },
 
   'help-open': () => {
     /* A fresh draft each time. Keeping the last one would mean a message
@@ -12581,6 +12748,10 @@ function mAccountSheet() {
   </div>
   <button class="btn" data-act="m-sign-out"
     style="width:100%;min-height:48px;font-size:15px;color:#8a2f4a;background:#fff;border:1px solid rgba(138,47,74,.3);margin-bottom:8px;">Sign out</button>
+  <!-- Below signing out, and quieter than it: they are next to each other in
+       the list of ways to leave, and only one of them is reversible. -->
+  <button class="btn" data-act="close-account"
+    style="width:100%;min-height:44px;font-size:13.5px;color:#756f88;background:transparent;border:0;">Delete my account</button>
   <button data-act="m-sheet-close"
     style="width:100%;min-height:42px;border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;color:#756f88;">Close</button>`, '24px 22px 30px');
 }
@@ -13589,6 +13760,17 @@ root.addEventListener('click', (ev) => {
   if (ev.target.closest('[data-donate]')) noteDonateClick();
 });
 
+/* Anywhere but the menu closes it. Registered before the action handler and
+   on the same phase, so a click on one of its own items still runs the action
+   — the menu closes because that item's action re-renders without it, not
+   because this fired first. */
+root.addEventListener('click', (ev) => {
+  if (!state.menuOpen) return;
+  if (ev.target.closest('.appbar-menu')) return;
+  state.menuOpen = false;
+  scheduleRender();
+});
+
 root.addEventListener('click', (ev) => {
   const el = ev.target.closest('[data-act]');
   if (!el || !root.contains(el)) return;
@@ -13725,6 +13907,7 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && String(state.searchQuery || '').trim()) { ACTIONS['search-clear'](); return; }
   if (ev.key === 'Escape' && state.notePrompt) { closeFollowUp(false); return; }
   if (ev.key === 'Escape' && state.donateOpen) { state.donateOpen = false; render(); return; }
+  if (ev.key === 'Escape' && state.menuOpen) { state.menuOpen = false; render(); return; }
   if (ev.key === 'Escape' && state.legalOpen) { state.legalOpen = null; render(); return; }
   if (ev.key === 'Escape' && state.authOpen && state.authMode !== 'reset') { state.authOpen = false; render(); return; }
   if (ev.key === 'Escape' && state.stepsOpen) { state.stepsOpen = null; state.stepsDraft = ''; render(); return; }
