@@ -331,8 +331,12 @@ CREATE TABLE IF NOT EXISTS support_tickets (
   subject    VARCHAR(200) NOT NULL,
   body       TEXT         NOT NULL,
   delivered  TINYINT(1)   NOT NULL DEFAULT 0,
+  status     VARCHAR(16)  NOT NULL DEFAULT 'unanswered',
+  status_at  BIGINT       NULL,
+  status_by  VARCHAR(190) NULL,
   created_at BIGINT       NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_ticket_ref (ref),
+  KEY idx_ticket_status (status),
   KEY idx_ticket_new (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

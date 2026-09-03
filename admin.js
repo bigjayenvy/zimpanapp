@@ -56,6 +56,9 @@ const state = {
   /* The blog. `posts` is the list; `editing` is the post open in the editor,
      or null. A new post is `editing` with no id. */
   tickets: null,
+  statuses: [],
+  ticketBusy: 0,
+  ticketMsg: null,
   posts: null,
   editing: null,
   blogMsg: null,
@@ -452,7 +455,10 @@ function ticketsBlock() {
     return `<div class="ad-card" style="margin-top: 16px;"><div class="ad-card-head"><h3>Help requests</h3></div>
       <div class="ad-empty">Loading…</div></div>`;
   }
-  const rows = state.tickets.map((t) => `
+  const options = state.statuses.length ? state.statuses : [['unanswered', 'Unanswered']];
+  const rows = state.tickets.map((t) => {
+    const status = t.status || 'unanswered';
+    return `
     <div class="ad-ticket">
       <div class="ad-ticket-head">
         <span class="ad-ref">${esc(t.ref)}</span>
@@ -462,7 +468,22 @@ function ticketsBlock() {
       </div>
       <div class="ad-ticket-subject">${esc(t.subject)}</div>
       <div class="ad-ticket-body">${esc(t.body)}</div>
-    </div>`).join('');
+      <div class="ad-ticket-foot">
+        <select class="input ad-status" data-act="ticket-status" data-id="${esc(String(t.id))}"
+          data-status="${esc(status)}"${state.ticketBusy === t.id ? ' disabled' : ''}>
+          ${options.map(([key, label]) => `
+            <option value="${esc(key)}"${status === key ? ' selected' : ''}>${esc(label)}</option>`).join('')}
+        </select>
+        <!-- Who last moved it and when. A status is a claim about work
+             happening in a mailbox this page cannot see, so the only honest
+             thing it can add is how old the claim is. -->
+        ${t.statusAt ? `<span class="ad-ticket-stamp">${esc(ago(t.statusAt))}${
+          t.statusBy ? ` by ${esc(t.statusBy)}` : ''}</span>` : ''}
+        ${state.ticketMsg && state.ticketMsg.id === t.id
+          ? `<span class="ad-ticket-stamp ${state.ticketMsg.tone === 'bad' ? 'bad' : 'good'}">${esc(state.ticketMsg.text)}</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
 
   return `
     <div class="ad-card" style="margin-top: 16px;">
@@ -690,6 +711,8 @@ async function loadTickets() {
   try {
     const res = await api('/api/admin/support');
     state.tickets = res.tickets || [];
+    // Sent by the server so the two lists cannot drift apart.
+    state.statuses = res.statuses || [];
   } catch (err) {
     state.tickets = [];
   }
@@ -992,7 +1015,32 @@ root.addEventListener('mousedown', (ev) => {
   if (tool) ev.preventDefault();
 });
 
-root.addEventListener('change', (ev) => {
+root.addEventListener('change', async (ev) => {
+  if (ev.target.dataset.act === 'ticket-status') {
+    const el = ev.target;
+    const id = Number(el.dataset.id);
+    const was = el.dataset.status;
+    const want = el.value;
+    if (want === was) return;
+    state.ticketBusy = id;
+    state.ticketMsg = null;
+    render();
+    try {
+      const out = await api(`/api/admin/support/${encodeURIComponent(id)}/status`, { method: 'POST', body: { status: want } });
+      /* Patched in place rather than re-fetching the list: the row is the only
+         thing that changed, and a reload would scroll a long list back to the
+         top under whoever just used it. */
+      state.tickets = state.tickets.map((t) => (t.id === id
+        ? Object.assign({}, t, { status: out.status, statusAt: out.statusAt, statusBy: out.statusBy })
+        : t));
+      state.ticketMsg = { id, tone: 'good', text: 'Saved' };
+    } catch (err) {
+      state.ticketMsg = { id, tone: 'bad', text: err.message };
+    }
+    state.ticketBusy = 0;
+    render();
+    return;
+  }
   if (ev.target.dataset.act !== 'sort') return;
   state.sort = ev.target.value;
   state.page = 0;

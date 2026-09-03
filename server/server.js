@@ -20,7 +20,7 @@ import {
   BlogError, listPosts, readPost, publishedSlugs,
   adminList, adminRead, createPost, updatePost, deletePost
 } from './blog.js';
-import { SupportError, SUPPORT_TO, fileTicket, listTickets } from './support.js';
+import { SupportError, SUPPORT_TO, fileTicket, listTickets, setTicketStatus, TICKET_STATUSES } from './support.js';
 import { estimateNutrition, estimateBurn, summariseDeck, chatReply, aiConfigured, warmAI } from './ai.js';
 import {
   overview as adminOverview, users as adminUsers, donationsFor,
@@ -806,7 +806,18 @@ app.post('/api/support', wrap(async (req, res) => {
 /* Read-only, and deliberately so — replying happens in the mailbox, which is
    the only place that can see the rest of the conversation. */
 app.get('/api/admin/support', requireAdmin, wrap(async (req, res) => {
-  res.json({ tickets: await listTickets(req.query.limit) });
+  res.json({ tickets: await listTickets(req.query.limit), statuses: TICKET_STATUSES });
+}));
+
+/* The one thing that is not read-only. Still no reply box: the answering
+   happens in the mailbox, and this only records where somebody says it got to. */
+app.post('/api/admin/support/:id/status', requireAdmin, wrap(async (req, res) => {
+  try {
+    res.json(await setTicketStatus(req.user, req.params.id, (req.body || {}).status));
+  } catch (err) {
+    if (err instanceof SupportError) return res.status(err.status).json({ error: err.message });
+    throw err;
+  }
 }));
 
 /* ── the blog ──

@@ -261,6 +261,25 @@ async function alterExisting() {
     }
   }
 
+  /* A ticket's status, added after the table. Whoever last moved it and when
+     go alongside it: a status set three weeks ago and never touched since is a
+     different thing from one set this morning, and a bare word cannot tell
+     them apart. */
+  const [tix] = await pool.query(
+    'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?',
+    [CONFIG.database, 'support_tickets']);
+  if (tix.length) {
+    const hasTix = (n) => tix.some((c) => c.name === n);
+    if (!hasTix('status')) {
+      await pool.query("ALTER TABLE support_tickets ADD COLUMN status VARCHAR(16) NOT NULL DEFAULT 'unanswered' AFTER delivered");
+      await pool.query('ALTER TABLE support_tickets ADD KEY idx_ticket_status (status)');
+    }
+    if (!hasTix('status_at')) {
+      await pool.query('ALTER TABLE support_tickets ADD COLUMN status_at BIGINT NULL AFTER status');
+      await pool.query('ALTER TABLE support_tickets ADD COLUMN status_by VARCHAR(190) NULL AFTER status_at');
+    }
+  }
+
   const [proj] = await pool.query(
     'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME IN (?, ?)',
     [CONFIG.database, 'entries', 'project_id', 'team_id']);

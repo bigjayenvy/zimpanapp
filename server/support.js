@@ -24,6 +24,21 @@ export const SUPPORT_TO = (process.env.SUPPORT_EMAIL || 'admin@bigcavestudios.co
    Padded to four and allowed to outgrow it rather than wrapping. */
 export const refFor = (id) => `zimp${String(Number(id) || 0).padStart(4, '0')}`;
 
+/* Where a request has got to. Stored as the key, labelled in the dashboard, so
+   renaming one later is a change in one file rather than a migration.
+
+   Ordered as a request usually travels, which is what the dropdown shows —
+   Stuck last because it is the exception rather than the end. */
+export const TICKET_STATUSES = [
+  ['unanswered', 'Unanswered'],
+  ['replied', 'Replied'],
+  ['wip', 'WIP'],
+  ['resolved', 'Resolved'],
+  ['stuck', 'Stuck']
+];
+const STATUS_KEYS = TICKET_STATUSES.map(([k]) => k);
+export const isStatus = (v) => STATUS_KEYS.includes(String(v || ''));
+
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 export const cleanEmail = (v) => String(v || '').trim().toLowerCase().slice(0, 190);
 
@@ -99,7 +114,28 @@ export async function listTickets(limit) {
   const take = Math.min(200, Math.max(1, Number(limit) || 50));
   return query(
     `SELECT t.id, t.ref, t.email, t.subject, t.body, t.delivered, t.created_at AS createdAt,
+            t.status, t.status_at AS statusAt, t.status_by AS statusBy,
             u.role AS senderRole
        FROM support_tickets t LEFT JOIN users u ON u.id = t.user_id
       ORDER BY t.id DESC LIMIT ${take}`);
+}
+
+/* Moving one along.
+
+   Who and when are recorded with it, and the dashboard shows them. A status
+   is a claim about work happening somewhere this table cannot see — the
+   mailbox — so the only honest thing it can offer is who last said so and how
+   long ago. Without that, "Replied" three weeks stale looks exactly like
+   "Replied" this morning, which is the failure mode worth designing against.
+
+   The actor's own address, not their id: it is what the next person reading
+   the row wants, and an id would need a join to be of any use. */
+export async function setTicketStatus(actor, id, status) {
+  const key = String(status || '');
+  if (!isStatus(key)) throw new SupportError('That is not a status.');
+  const res = await query(
+    'UPDATE support_tickets SET status = ?, status_at = ?, status_by = ? WHERE id = ?',
+    [key, now(), (actor && actor.email) || null, Number(id) || 0]);
+  if (!res.affectedRows) throw new SupportError('No such ticket.', 404);
+  return { id: Number(id), status: key, statusAt: now(), statusBy: (actor && actor.email) || null };
 }
