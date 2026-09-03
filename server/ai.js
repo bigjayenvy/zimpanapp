@@ -378,6 +378,7 @@ Each question arrives with a JSON snapshot of that one person's own log, inside 
 - "daily": per date, the same figures the app puts on screen — calories burned moving, burned at rest, eaten, protein/carbs/fat in grams, sleep minutes, steps, and netDeficitKcal.
 - "wellbeing": the four-dimension reading behind their report cards.
 "energyTotals" sums the daily rows across the window.
+The entry lists are capped to what fits in one request. "truncated" says whether older rows in the window were left out, and "truncated.rowsFrom" is the oldest date they reach. Days before that are still summarised in "daily" — answer from those figures and say the individual entries are not in this snapshot. Never read a trimmed list as proof that nothing was logged.
 
 WHAT YOU CAN ANSWER
 - Their log: what they did, ate, spent, and when.

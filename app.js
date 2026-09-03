@@ -5290,8 +5290,62 @@ function recapDialog() {
    the less that leaves the device the better. */
 const CHAT_DAYS = 60;
 const CHAT_ROWS = 400;
+/* The server refuses a body over 60,000 characters, and four hundred rows is
+   only a small request when the rows are short. An account that writes notes
+   on what it logs reached the refusal — "That is more log than we can send in
+   one go" — with no way past it but to log less, which is not an answer.
 
+   So the row cap is fitted rather than fixed: the payload is measured and
+   shrunk until it is inside the budget, dropping the oldest first. Under the
+   server's number by a margin, because the request carries the transcript
+   too. */
+const CHAT_BUDGET = 52000;
+const CHAT_ROWS_MIN = 25;
+// One long note should cost a few rows, not the whole request.
+const CHAT_NOTE_MAX = 400;
+
+const chatNote = (note) => {
+  const t = String(note || '').trim();
+  if (!t) return undefined;
+  return t.length > CHAT_NOTE_MAX ? `${t.slice(0, CHAT_NOTE_MAX)}…` : t;
+};
+
+/* The oldest day the lists actually reach. Without it a trimmed log reads as
+   an empty one, and the assistant answers "you logged nothing that week" about
+   a week that is right there in `daily`. Both lists are newest first, so it is
+   the earlier of their last rows. */
+const rowsFrom = (lists) => lists
+  .map((l) => (l.length ? l[l.length - 1].date : ''))
+  .filter(Boolean)
+  .sort()[0];
+
+const windowSteps = (inWindow) => {
+  const out = {};
+  Object.keys(state.steps || {}).forEach((d) => {
+    const v = Number(state.steps[d]) || 0;
+    if (v && inWindow(d)) out[d] = v;
+  });
+  return out;
+};
+
+/* Newest first, so the fit drops the oldest rather than the most relevant, and
+   the count that was asked for is reported back as `rowCap` — the assistant is
+   told what it is not being shown. */
 function chatFacts() {
+  let cap = CHAT_ROWS;
+  let facts = chatPayload(cap);
+  // A guess scaled from the measured size lands close; the loop covers rows of
+  // uneven length and the part of the body that does not shrink with them.
+  for (let i = 0; i < 8; i++) {
+    const size = JSON.stringify(facts).length;
+    if (size <= CHAT_BUDGET || cap <= CHAT_ROWS_MIN) break;
+    cap = Math.max(CHAT_ROWS_MIN, Math.min(cap - 1, Math.floor(cap * (CHAT_BUDGET / size))));
+    facts = chatPayload(cap);
+  }
+  return facts;
+}
+
+function chatPayload(rowCap) {
   const to = iso(new Date());
   const from = mShiftIso(to, -(CHAT_DAYS - 1));
   const inWindow = (d) => d >= from && d <= to;
@@ -5300,22 +5354,22 @@ function chatFacts() {
   const entries = state.entries
     .filter((e) => inWindow(e.date))
     .sort(newestFirst)
-    .slice(0, CHAT_ROWS)
+    .slice(0, rowCap)
     .map((e) => ({
       date: e.date, activity: e.activity || '', category: e.category || '',
       from: clock12(e.from), to: clock12(e.to), minutes: span(e) || 0,
-      note: e.note || undefined
+      note: chatNote(e.note)
     }));
 
   const money = state.money
     .filter((e) => inWindow(e.date))
     .sort(newestFirst)
-    .slice(0, CHAT_ROWS)
+    .slice(0, rowCap)
     .map((e) => ({
       date: e.date, activity: e.activity || '', purpose: e.purpose || '',
       in: Number(e.in) || 0, out: Number(e.out) || 0,
       offBudget: e.offBudget ? true : undefined,
-      note: e.note || undefined
+      note: chatNote(e.note)
     }));
 
   /* The figures the app itself puts on screen, worked out here the same way
@@ -5374,7 +5428,11 @@ function chatFacts() {
       window: { from, to, days: CHAT_DAYS },
       product: 'Zimpan for Teams — work hours against projects. This account has no money, meal or sleep tracking; say so if asked about them.',
       projects: teamProjects().map((p) => p.name),
-      truncated: { entries: state.entries.filter((e) => inWindow(e.date)).length > CHAT_ROWS },
+      rowCap,
+      truncated: {
+        entries: state.entries.filter((e) => inWindow(e.date)).length > rowCap,
+        rowsFrom: rowsFrom([entries])
+      },
       entries
     };
   }
@@ -5396,13 +5454,18 @@ function chatFacts() {
     currency: currency().code,
     weightKg: state.weightKg || null,
     // Named so the model does not read a capped list as the whole of it.
+    rowCap,
     truncated: {
-      entries: state.entries.filter((e) => inWindow(e.date)).length > CHAT_ROWS,
-      money: state.money.filter((e) => inWindow(e.date)).length > CHAT_ROWS
+      entries: state.entries.filter((e) => inWindow(e.date)).length > rowCap,
+      money: state.money.filter((e) => inWindow(e.date)).length > rowCap,
+      rowsFrom: rowsFrom([entries, money])
     },
     categories: state.categories.map((c) => c.name),
     purposes: state.purposes.map((p) => p.name),
-    steps: state.steps || {},
+    /* The window's days only. The whole map is every day this account has ever
+       recorded a step count on, which for a long-standing account is thousands
+       of characters about days the question cannot be about. */
+    steps: windowSteps(inWindow),
     balance: {
       inTotal: bal.inCents / 100, outTotal: bal.outCents / 100,
       left: bal.leftCents / 100, heldAside: bal.asideCents / 100
@@ -5410,6 +5473,29 @@ function chatFacts() {
     entries,
     money
   };
+}
+
+/* The turns that go with the question. The server takes forty of them and
+   20,000 characters, and a long enough afternoon of asking reaches both — so
+   the oldest turns are dropped here rather than the whole request being
+   refused. The newest are what a follow-up depends on, and the question just
+   typed is never among the ones dropped. */
+const CHAT_TURNS = 20;
+const CHAT_TURN_CHARS = 2000;
+const CHAT_HISTORY_BUDGET = 16000;
+
+function chatHistory() {
+  const all = state.chat.messages.map((m) => ({
+    role: m.role,
+    // The same clamp the server puts on a turn before it reaches the model, so
+    // what is measured against the budget here is what would be used there.
+    text: String(m.text || '').slice(0, CHAT_TURN_CHARS)
+  }));
+  let out = all.slice(-CHAT_TURNS);
+  while (out.length > 1 && JSON.stringify(out).length > CHAT_HISTORY_BUDGET) out = out.slice(1);
+  // A single turn over the budget is still sent: the server's own cap is the
+  // backstop, and dropping the question itself would send nothing to answer.
+  return out;
 }
 
 /* ── asking, and being answered ──
@@ -5435,7 +5521,7 @@ async function chatSend(text) {
   render();
 
   try {
-    const res = await API.chat(state.chat.messages.map((m) => ({ role: m.role, text: m.text })), chatFacts());
+    const res = await API.chat(chatHistory(), chatFacts());
     const reply = (res.reply && res.reply.text) || '';
     state.chat.messages = state.chat.messages.concat([{ role: 'assistant', text: reply, truncated: !!(res.reply && res.reply.truncated) }]);
     if (state.chat.speak) speakReply(reply);
