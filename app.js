@@ -3897,7 +3897,9 @@ function header(v) {
           <button class="btn btn-ghost" data-act="sign-out" style="font-size:12px;">Sign out</button>
         </span>` : ''}
       <span class="appbar-cta" style="display:flex;align-items:center;gap:10px;">
-        ${state.aiEstimates ? `<button class="btn btn-secondary" data-act="chat-open" style="display:inline-flex;align-items:center;gap:7px;">${nodeIcon('pulse', 15)}<span>Ask Zimpan</span></button>` : ''}
+        ${workMode()
+          ? `<button class="btn btn-secondary" data-act="team-open" style="display:inline-flex;align-items:center;gap:7px;">${nodeIcon('shield', 15)}<span>Building Your Team</span></button>`
+          : `<button class="btn btn-secondary" data-act="prefs-open" style="display:inline-flex;align-items:center;gap:7px;">${nodeIcon('sliders', 15)}<span>Preferences</span></button>`}
         ${workMode() ? '' : `<a class="btn btn-donate" href="${DONATE_URL}" data-donate target="_blank" rel="noopener noreferrer">${NAV_ICONS.donate}<span>Donate</span></a>`}
         <button class="btn btn-primary" data-act="open-report" style="position:relative">Your Report Cards</button>
       </span>
@@ -4848,13 +4850,14 @@ function lightbox(o) {
   const tone = o.tone || 'var(--color-accent)';
   return `
   <div class="no-print lb-back"${o.closeAct ? ` data-backdrop="${esc(o.closeAct)}"` : ''}>
-    <div class="lb" role="dialog" aria-modal="true" aria-label="${esc(o.title)}">
+    <div class="lb${o.wide ? ' lb-wide' : ''}" role="dialog" aria-modal="true" aria-label="${esc(o.title)}">
       ${o.closeAct ? `<button class="lb-x" data-act="${esc(o.closeAct)}" aria-label="Close">✕</button>` : ''}
       <div class="lb-mark" style="--lb-tone:${tone};" aria-hidden="true">${nodeIcon(o.icon, 26)}</div>
       ${o.kicker ? `<div class="lb-kicker" style="color:${tone};">${esc(o.kicker)}</div>` : ''}
       <h2 class="lb-title">${esc(o.title)}</h2>
       ${o.sub ? `<p class="lb-sub">${esc(o.sub)}</p>` : ''}
       <div class="lb-body">${o.body}</div>
+      ${o.pinned || ''}
       ${o.actions ? `<div class="lb-acts${o.actsClass ? ` ${esc(o.actsClass)}` : ''}">${o.actions}</div>` : ''}
       ${o.foot ? `<p class="lb-foot">${o.foot}</p>` : ''}
     </div>
@@ -8112,6 +8115,7 @@ function render() {
     mPaintBars();
     paintDeck();
     paintChatLog();
+    paintTeamDrawer();
     teamLiveWatch();
     return;
   }
@@ -8163,6 +8167,7 @@ function render() {
   // The tree was just replaced, so the scroll-driven classes have to be put back.
   paintScrollChrome();
   paintChatLog();
+  paintTeamDrawer();
   teamLiveWatch();
   // The dialog exists to be typed in, so put the caret there straight away.
   const note = root.querySelector('[data-k="note-draft"]');
@@ -9201,8 +9206,22 @@ function teamPeopleTab() {
       t.team.status === 'expired' ? ' · ended' : ''}</div>
     <div class="tm-list">${rows}${invites}</div>
     ${teamIsAdmin() ? '' : `
-    <p class="tm-seen">Your admins can see when you have a timer running, what it is on, and the hours you have logged against this team's projects today. Notes you write on an entry are never shown to them, and nothing you log outside this team is visible here at all.</p>`}
-    ${teamIsAdmin() ? `
+    <p class="tm-seen">Your admins can see when you have a timer running, what it is on, and the hours you have logged against this team's projects today. Notes you write on an entry are never shown to them, and nothing you log outside this team is visible here at all.</p>`}`;
+}
+
+/* ── what stays put while the list scrolls ──
+
+   The roster grows without limit and the invite field does not, so the field
+   is the thing that must never be scrolled off. It sits below the drawer
+   rather than at the end of the list it belongs to: a team of thirty is thirty
+   rows between an admin and the only control on the tab.
+
+   The link block rides with it for the same reason — it appears the moment an
+   invitation is sent, and an admin who has to hunt for the link is an admin
+   who will not send it on. */
+function teamPeopleAdd() {
+  if (!teamIsAdmin()) return '';
+  return `
     <div class="tm-add">
       <input class="input" type="email" data-k="team-invite" data-sync="teamInviteEmail"
         value="${esc(state.teamInviteEmail)}" placeholder="Their work email" autocomplete="off">
@@ -9219,7 +9238,7 @@ function teamPeopleTab() {
         ? 'Emailed to them. If it does not arrive, this is the same link:'
         : 'Send them this link — it is the only way in until email works:'}</span>
       <code>${esc(state.teamInviteLink)}</code>
-    </div>` : ''}` : ''}`;
+    </div>` : ''}`;
 }
 
 function teamProjectsTab() {
@@ -9234,12 +9253,18 @@ function teamProjectsTab() {
     <div class="tm-list">${rows || teamNothing('clipboard', 'No projects yet',
       teamIsAdmin() ? 'Add the first one below. Members log their hours against these, so name them the way your team already talks about the work.'
         : 'An admin has not set any up yet. Until they do there is nothing to log against.')}</div>
-    ${teamIsAdmin() ? `
+`;
+}
+
+// Pinned under the drawer, for the same reason the invite field is.
+function teamProjectsAdd() {
+  if (!teamIsAdmin()) return '';
+  return `
     <div class="tm-add">
       <input class="input" type="text" data-k="team-project" data-sync="teamProjectName"
         value="${esc(state.teamProjectName)}" placeholder="New project name" autocomplete="off">
       <button class="btn btn-primary" data-act="team-project-add"${state.teamBusy === 'project' ? ' disabled' : ''}>Add</button>
-    </div>` : ''}`;
+    </div>`;
 }
 
 /* An admin reading somebody's hours. Only entries against a project come back
@@ -9343,7 +9368,7 @@ function teamSheet() {
       <span>Your trial has ended — inviting, projects and the dashboard are paused. Your hours are untouched.</span>
       ${teamIsSuper() ? '<button class="tm-act" data-act="team-tab" data-v="billing">See plans</button>' : ''}
     </div>` : ''}
-    <div class="tm-body">
+    <div class="tm-body tm-drawer" data-tm-drawer>
       ${state.teamTab === 'projects' ? teamProjectsTab()
         : state.teamTab === 'hours' && teamIsAdmin() ? teamHoursTab()
         : state.teamTab === 'dashboard' && teamIsSuper() ? teamDashboardTab()
@@ -9369,7 +9394,14 @@ function teamSheet() {
     title: has ? face[1] : 'Start a team',
     sub: has ? face[3] : '',
     closeAct: locked ? '' : 'team-close',
+    /* 600px once there is a team in it. The starting sheet is one field and a
+       paragraph and looks stranded at that width; the tabbed one holds a
+       roster, a timeline and a chart, all of which were being squeezed into a
+       column meant for a yes/no question. */
+    wide: !!has,
     body,
+    pinned: has ? (state.teamTab === 'people' ? teamPeopleAdd()
+      : state.teamTab === 'projects' ? teamProjectsAdd() : '') : '',
     actsClass: has && teamIsSuper() ? 'lb-stack' : '',
     actions: locked
       ? `<button class="btn btn-ghost" data-act="sign-out" style="font-size:13px;">Sign out</button>`
@@ -10049,6 +10081,7 @@ const ACTIONS = {
   'team-close': () => {
     // Nothing behind it means anything yet. See teamSheet().
     if (workMode() && state.team && !state.team.team) return;
+    teamDrawerScroll = 0;
     state.teamOpen = false;
     state.teamInviteLink = '';
     state.teamError = ''; state.teamNotice = '';
@@ -10057,6 +10090,8 @@ const ACTIONS = {
   'team-tab': (el) => {
     state.teamTab = el.dataset.v;
     state.teamError = ''; state.teamNotice = '';
+    // A different tab is a different list, so it starts at its own top.
+    teamDrawerScroll = 0;
     render();
     if (state.teamTab === 'dashboard') loadTeamDashboard();
   },
@@ -13715,6 +13750,27 @@ let chatScroll = 0;
 let chatPinned = true;
 let chatTurns = 0;
 
+/* The team drawer keeps its place across a render.
+
+   render() replaces the whole tree, so a scroller inside it starts at the top
+   again every time — and this dialog re-renders on every invite, resend, role
+   change and thirty-second live poll. An admin scrolled halfway down a roster
+   would be thrown back to the first row by a poll they never asked for, which
+   is the same bug the chat log and the report deck each had to be taught out
+   of separately.
+
+   The fade at the bottom is driven from here too: it should say "there is more
+   below", so it goes away once there is not. */
+let teamDrawerScroll = 0;
+function paintTeamDrawer() {
+  const el = root.querySelector('[data-tm-drawer]');
+  if (!el) { teamDrawerScroll = 0; return; }
+  if (teamDrawerScroll) el.scrollTop = teamDrawerScroll;
+  const more = el.scrollHeight - el.clientHeight - el.scrollTop > 4;
+  if (more) el.setAttribute('data-more', '');
+  else el.removeAttribute('data-more');
+}
+
 function paintChatLog() {
   const log = root.querySelector('[data-chat-log]');
   if (!log) { chatScroll = 0; chatPinned = true; chatTurns = 0; return; }
@@ -13740,6 +13796,14 @@ root.addEventListener('scroll', (ev) => {
   /* Reading down a card. Recorded here rather than read off the DOM at render
      time, because by then the tree that held it is already gone. */
   if (track.matches && track.matches('.deck-body')) { deckScroll = track.scrollTop; return; }
+  // Same reasoning, for the team dialog's drawer. See paintTeamDrawer().
+  if (track.matches && track.matches('[data-tm-drawer]')) {
+    teamDrawerScroll = track.scrollTop;
+    const more = track.scrollHeight - track.clientHeight - track.scrollTop > 4;
+    if (more) track.setAttribute('data-more', '');
+    else track.removeAttribute('data-more');
+    return;
+  }
   if (!track.matches || !track.matches('[data-deck-track]')) return;
   const slides = [...track.querySelectorAll('.deck-slide')];
   if (!slides.length) return;
