@@ -1212,6 +1212,14 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     font-size: 13.5px; line-height: 1.65; color: var(--color-neutral-800);
   }
 
+  /* The line under a dialog's heading. 16px on purpose: it is a second
+     heading rather than body copy — the heading names the view, this names the
+     job — so it sits above the 13.5px the body runs at. */
+  .lb-sub {
+    margin: 6px 0 0; font-size: 16px; line-height: 1.4; font-weight: 600;
+    color: var(--color-neutral-700);
+  }
+
   .lb-acts.lb-stack { flex-direction: column; }
   .lb-acts.lb-stack .btn { width: 100%; flex: 0 0 auto; }
   /* Figures worth reading before deciding to read more. Chips rather than a

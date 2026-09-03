@@ -227,6 +227,7 @@ export async function listPosts({ limit, before } = {}) {
 export async function readPost(slug) {
   const row = await one(
     `SELECT id, slug, title, excerpt, body_html AS body, cover_url AS cover,
+            meta_title AS metaTitle, meta_desc AS metaDesc, meta_words AS metaWords,
             author_name AS author, published_at AS publishedAt, updated_at AS updatedAt
        FROM blog_posts WHERE slug = ? AND ${LIVE}`, [String(slug || ''), now()]);
   if (!row) throw new BlogError('No such post.', 404);
@@ -251,6 +252,7 @@ export async function adminList() {
 export async function adminRead(id) {
   const row = await one(
     `SELECT id, slug, title, excerpt, body_html AS body, cover_url AS cover, status,
+            meta_title AS metaTitle, meta_desc AS metaDesc, meta_words AS metaWords,
             author_name AS author, published_at AS publishedAt, updated_at AS updatedAt
        FROM blog_posts WHERE id = ?`, [Number(id) || 0]);
   if (!row) throw new BlogError('No such post.', 404);
@@ -269,11 +271,23 @@ function fields(patch) {
 
   const status = STATUSES.includes(patch.status) ? patch.status : 'draft';
   const cover = String(patch.cover || '').trim().slice(0, 500);
+  /* Left null rather than filled in with the title and excerpt. The fallback
+     belongs at the point of use — a post whose meta title is stored as a copy
+     of its title stops following it the moment the title is edited, and the
+     drift is invisible until somebody looks at a search result. */
+  const meta = (v, max) => (String(v || '').trim().slice(0, max) || null);
+
   return {
     title,
     body,
     text,
     status,
+    metaTitle: meta(patch.metaTitle, 200),
+    metaDesc: meta(patch.metaDesc, 400),
+    /* Kept as typed apart from the spacing. Keywords are a comma-separated
+       list by convention and nothing here needs to parse them, so imposing a
+       shape on them would only be a way to get somebody's list wrong. */
+    metaWords: meta(String(patch.metaWords || '').replace(/\s*,\s*/g, ', '), 400),
     // A supplied excerpt wins; otherwise the opening of the post, cut at a
     // sentence where there is one near enough to the limit.
     excerpt: String(patch.excerpt || '').trim().slice(0, 400) || autoExcerpt(text),
@@ -291,9 +305,10 @@ export async function createPost(actor, patch) {
   const published = f.status === 'published' ? t : null;
   const res = await query(
     `INSERT INTO blog_posts
-       (slug, title, excerpt, body_html, body_text, cover_url, status, author_id, author_name, published_at, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [slug, f.title, f.excerpt, f.body, f.text, f.cover, f.status,
+       (slug, title, excerpt, body_html, body_text, cover_url, meta_title, meta_desc, meta_words,
+        status, author_id, author_name, published_at, created_at, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [slug, f.title, f.excerpt, f.body, f.text, f.cover, f.metaTitle, f.metaDesc, f.metaWords, f.status,
       actor.id || null, actor.name || actor.email || null, published, t, t]);
   return adminRead(res.insertId);
 }
@@ -307,9 +322,11 @@ export async function updatePost(id, patch) {
   const published = f.status === 'published' ? (existing.publishedAt || t) : null;
   await query(
     `UPDATE blog_posts SET slug = ?, title = ?, excerpt = ?, body_html = ?, body_text = ?,
-            cover_url = ?, status = ?, published_at = ?, updated_at = ?
+            cover_url = ?, meta_title = ?, meta_desc = ?, meta_words = ?,
+            status = ?, published_at = ?, updated_at = ?
       WHERE id = ?`,
-    [slug, f.title, f.excerpt, f.body, f.text, f.cover, f.status, published, t, existing.id]);
+    [slug, f.title, f.excerpt, f.body, f.text, f.cover, f.metaTitle, f.metaDesc, f.metaWords,
+      f.status, published, t, existing.id]);
   return adminRead(existing.id);
 }
 

@@ -612,6 +612,19 @@ function routeFromPath() {
   return { route: 'home', slug: '' };
 }
 
+/* The one place the address is copied into state.
+
+   routeFromPath returns a pair now that /blogs/<slug> exists, and a pair
+   assigned whole to state.route is an object that stringifies to
+   "[object Object]" and quietly fails every === against 'home' or 'teams'.
+   Three call sites were three chances to do that; this is one. */
+function applyPath() {
+  const at = routeFromPath();
+  state.route = at.route;
+  state.blogSlug = at.slug;
+  return at;
+}
+
 const pathForRoute = (route, slug) => (
   route === 'teams' ? '/teams'
     : route === 'blogs' ? (slug ? `/blogs/${encodeURIComponent(slug)}` : '/blogs')
@@ -634,8 +647,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('popstate', () => {
     const next = routeFromPath();
     if (next.route === state.route && next.slug === (state.blogSlug || '')) return;
-    state.route = next.route;
-    state.blogSlug = next.slug;
+    applyPath();
     window.scrollTo(0, 0);
     render();
     if (next.route === 'blogs') loadBlog();
@@ -1677,6 +1689,10 @@ async function onGoogleCredential(response) {
        so a team account that had just signed up saw the app with nothing to
        log against and no prompt, and the offer only arrived on a reload. */
     await loadTeam();
+    /* Before afterSignIn, because afterSignIn renders — and a render with an
+       unredeemed invitation is the "Start a team" sheet in the face of
+       somebody who was invited to one. */
+    if (pendingInviteToken()) await acceptPendingInvite();
     await afterSignIn(res.user);
   } catch (err) {
     state.authBusy = false;
@@ -4605,7 +4621,7 @@ function teamsScreen() {
 
         <div class="hero-ctas">
           <button data-act="scroll-pricing" class="btn btn-primary" style="font-size:16px;font-weight:600;padding:13px 30px;border-radius:999px;cursor:pointer;">See pricing</button>
-          <button class="btn btn-secondary hero-cta2" data-act="scroll-features">How it works</button>
+          <button class="btn btn-secondary hero-cta2" data-act="auth-open-work">Create Teams Account</button>
         </div>
       </div>
 
@@ -4668,9 +4684,6 @@ function teamsScreen() {
     </section>
 
     <footer style="padding:22px 28px 34px;display:flex;flex-direction:column;align-items:center;gap:12px;">
-      <div style="font-size:13px;color:var(--color-neutral-800);text-align:center;">
-        Hours and projects only · <strong>No personal spending, food or sleep is ever shown to an admin</strong>
-      </div>
       ${legalLinks('var(--color-neutral-600)')}
     </footer>
   </div>`;
@@ -4840,6 +4853,7 @@ function lightbox(o) {
       <div class="lb-mark" style="--lb-tone:${tone};" aria-hidden="true">${nodeIcon(o.icon, 26)}</div>
       ${o.kicker ? `<div class="lb-kicker" style="color:${tone};">${esc(o.kicker)}</div>` : ''}
       <h2 class="lb-title">${esc(o.title)}</h2>
+      ${o.sub ? `<p class="lb-sub">${esc(o.sub)}</p>` : ''}
       <div class="lb-body">${o.body}</div>
       ${o.actions ? `<div class="lb-acts${o.actsClass ? ` ${esc(o.actsClass)}` : ''}">${o.actions}</div>` : ''}
       ${o.foot ? `<p class="lb-foot">${o.foot}</p>` : ''}
@@ -8018,7 +8032,10 @@ function render() {
      do, and nothing behind the sheet means anything until it is done. Raised
      once a session: dismissing it leaves the app alone, and the way back in is
      where it always is. */
-  if (workMode() && state.team && !state.team.team) {
+  /* Not while an invitation is still being redeemed. They are seconds away
+     from being on a team, and asking them to start one in the meantime is the
+     confusion this whole path exists to avoid. */
+  if (workMode() && state.team && !state.team.team && !pendingInviteToken()) {
     state.teamOpen = true;
     state.teamTab = 'people';
   }
@@ -8321,6 +8338,10 @@ async function submitAuth() {
        so a team account that had just signed up saw the app with nothing to
        log against and no prompt, and the offer only arrived on a reload. */
     await loadTeam();
+    /* Before afterSignIn, because afterSignIn renders — and a render with an
+       unredeemed invitation is the "Start a team" sheet in the face of
+       somebody who was invited to one. */
+    if (pendingInviteToken()) await acceptPendingInvite();
     await afterSignIn(res.user);
   } catch (err) {
     state.authBusy = false;
@@ -8332,11 +8353,21 @@ async function submitAuth() {
 }
 
 async function signOut() {
+  /* Which product they were in, read before the session is dropped — after it,
+     workMode() has nothing left to answer with. Signing out of a team account
+     onto the personal landing page reads as being handed the wrong app, and
+     the way back in is a Log In button that belongs to the other one. */
+  const wasWork = workMode();
   // Anything still queued would be stranded — flush it before dropping the session.
   if (pendingCount()) { try { await syncNow(); } catch (e) { /* keep it locally */ } }
   try { await API.logout(); } catch (e) { /* the local session goes either way */ }
   // Without this Google silently signs them straight back in on the next visit.
   try { if (window.google) window.google.accounts.id.disableAutoSelect(); } catch (e) { /* not loaded */ }
+  if (wasWork) {
+    state.route = 'teams';
+    state.blogSlug = '';
+    try { history.pushState({ route: 'teams' }, '', '/teams'); } catch (e) { /* file:// */ }
+  }
   state.auth = null;
   state.authEmail = '';
   state.authPassword = '';
@@ -8829,9 +8860,20 @@ async function teamDo(what, fn, notice) {
 /* An invitation arrives as ?invite=… on /teams. Held until there is an account
    to attach it to — accepting needs a signed-in session, and the address on
    the invitation has to be the address on the account. */
-function pendingInviteToken() {
+/* Read once, at load, and held here rather than re-read from the address.
+
+   landAfterSignIn replaces the URL with "/" the moment a sign-in succeeds,
+   which took the token with it: an invitee who followed their link, signed up
+   on the spot and was sent to the app arrived with no invitation at all — and
+   was then shown "Start a team", because as far as the app could tell they
+   were a work account with no team. The invitation was still sitting in the
+   database, unaccepted, and the link that would have redeemed it was gone from
+   the address bar. */
+let inviteHeld = (() => {
   try { return new URLSearchParams(location.search).get('invite') || ''; } catch (e) { return ''; }
-}
+})();
+
+const pendingInviteToken = () => inviteHeld;
 
 /* Arriving on an invitation link with nobody signed in. The account they are
    about to make has to be a work one, so the panel opens knowing that. */
@@ -8846,10 +8888,17 @@ function offerInviteSignup() {
 async function acceptPendingInvite() {
   const token = pendingInviteToken();
   if (!token || !state.auth) return;
-  await teamDo('accept', () => API.team.accept(token), 'You are on the team.');
+  const out = await teamDo('accept', () => API.team.accept(token), 'You are on the team.');
+  /* Cleared whatever happened. A token that has been tried and refused —
+     already used, expired, sent to a different address — must not be tried
+     again on the next render, or the error replaces itself forever and the
+     reason never stays on screen long enough to read. teamDo has already put
+     the server's words in state.teamError. */
+  inviteHeld = '';
   try { history.replaceState({}, '', '/'); } catch (e) { /* file:// */ }
   state.route = 'home';
   render();
+  return out;
 }
 
 /* Thirty days: long enough to be a picture of the month, short enough that a
@@ -9271,11 +9320,11 @@ function teamStartBody() {
 /* Each tab is a different job, so the dialog says which one you are in rather
    than wearing the same shield for all five. */
 const TEAM_TAB_FACE = {
-  people: ['shield', 'Building Your Team', 'var(--color-accent)'],
-  projects: ['clipboard', 'What they log against', '#0e9f6e'],
-  hours: ['clock', 'What was logged', '#4f46e5'],
-  dashboard: ['insights', 'Where the hours went', '#7856f5'],
-  billing: ['scales', 'What it costs', 'var(--zg-donate)']
+  people: ['shield', 'Building Your Team', 'var(--color-accent)', 'Invite Team Members'],
+  projects: ['clipboard', 'What they log against', '#0e9f6e', 'Add Projects or Tasks Categories'],
+  hours: ['clock', 'What was logged', '#4f46e5', "See members' activities"],
+  dashboard: ['insights', 'Where the hours went', '#7856f5', 'Your teams productivity insights'],
+  billing: ['scales', 'What it costs', 'var(--zg-donate)', 'Your plan and billing']
 };
 
 function teamSheet() {
@@ -9318,6 +9367,7 @@ function teamSheet() {
     tone: has ? face[2] : 'var(--color-accent)',
     kicker: has ? state.team.team.name : 'Zimpan for Teams',
     title: has ? face[1] : 'Start a team',
+    sub: has ? face[3] : '',
     closeAct: locked ? '' : 'team-close',
     body,
     actsClass: has && teamIsSuper() ? 'lb-stack' : '',

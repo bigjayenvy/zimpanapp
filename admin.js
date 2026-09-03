@@ -499,6 +499,32 @@ function editorBlock() {
         <input class="input" id="post-cover" value="${esc(e.cover || '')}" placeholder="https://…" autocomplete="off">
       </label>
 
+      <!-- Search and link previews. Grouped and after the post itself, because
+           they are written once the piece exists and are a different job from
+           writing it. Each says what fills in when it is left blank, so the
+           blank is a decision rather than an omission. -->
+      <details class="ad-meta"${(e.metaTitle || e.metaDesc || e.metaWords) ? ' open' : ''}>
+        <summary>Search engine listing</summary>
+
+        <label class="ad-field">
+          <span>Meta title <small>blank uses the post title</small></span>
+          <input class="input" id="post-meta-title" value="${esc(e.metaTitle || '')}"
+            maxlength="200" placeholder="What Google shows as the headline" autocomplete="off">
+        </label>
+
+        <label class="ad-field">
+          <span>Meta description <small>blank uses the summary above</small></span>
+          <textarea class="input" id="post-meta-desc" rows="2" maxlength="400"
+            placeholder="The couple of lines under the headline in a search result.">${esc(e.metaDesc || '')}</textarea>
+        </label>
+
+        <label class="ad-field">
+          <span>Meta keywords <small>comma separated</small></span>
+          <input class="input" id="post-meta-words" value="${esc(e.metaWords || '')}"
+            maxlength="400" placeholder="time tracking, productivity, habits" autocomplete="off">
+        </label>
+      </details>
+
       <div class="ad-field">
         <span>Body</span>
         <div class="ad-tools">
@@ -680,7 +706,8 @@ const ACTIONS = {
 
   /* ── the blog ── */
   'post-new': () => {
-    state.editing = { title: '', slug: '', excerpt: '', cover: '', body: '', status: 'draft' };
+    state.editing = { title: '', slug: '', excerpt: '', cover: '', body: '', status: 'draft',
+      metaTitle: '', metaDesc: '', metaWords: '' };
     state.blogMsg = null;
     render();
   },
@@ -735,6 +762,9 @@ const ACTIONS = {
       slug: (document.getElementById('post-slug') || {}).value || '',
       excerpt: (document.getElementById('post-excerpt') || {}).value || '',
       cover: (document.getElementById('post-cover') || {}).value || '',
+      metaTitle: (document.getElementById('post-meta-title') || {}).value || '',
+      metaDesc: (document.getElementById('post-meta-desc') || {}).value || '',
+      metaWords: (document.getElementById('post-meta-words') || {}).value || '',
       body: body ? body.innerHTML : '',
       status: (document.getElementById('post-live') || {}).checked ? 'published' : 'draft'
     };

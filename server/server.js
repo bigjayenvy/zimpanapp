@@ -794,13 +794,23 @@ app.get('/blogs/:slug', wrap(async (req, res) => {
 
   const html = await readFile(file, 'utf8');
   const url = `https://zimpan.com/blogs/${encodeURIComponent(post.slug)}`;
+  /* The meta fields when they were written, the post's own when they were not.
+     Resolved here rather than stored as a copy: a meta title saved as a
+     duplicate of the title stops following it the first time the title is
+     edited, and nobody sees the drift until they look at a search result.
+
+     The <title> tag carries the ZIMPAN suffix only when it is the post's title
+     standing in — a meta title is written to be the whole thing. */
+  const metaTitle = post.metaTitle || `${post.title} — ZIMPAN`;
+  const metaDesc = post.metaDesc || post.excerpt || '';
   const head = [
-    `<title>${htmlAttr(post.title)} — ZIMPAN</title>`,
-    `<meta name="description" content="${htmlAttr(post.excerpt || '')}">`,
+    `<title>${htmlAttr(metaTitle)}</title>`,
+    `<meta name="description" content="${htmlAttr(metaDesc)}">`,
+    post.metaWords ? `<meta name="keywords" content="${htmlAttr(post.metaWords)}">` : '',
     `<link rel="canonical" href="${htmlAttr(url)}">`,
     `<meta property="og:type" content="article">`,
-    `<meta property="og:title" content="${htmlAttr(post.title)}">`,
-    `<meta property="og:description" content="${htmlAttr(post.excerpt || '')}">`,
+    `<meta property="og:title" content="${htmlAttr(post.metaTitle || post.title)}">`,
+    `<meta property="og:description" content="${htmlAttr(metaDesc)}">`,
     `<meta property="og:url" content="${htmlAttr(url)}">`,
     post.cover ? `<meta property="og:image" content="${htmlAttr(post.cover)}">` : '',
     `<meta name="twitter:card" content="${post.cover ? 'summary_large_image' : 'summary'}">`

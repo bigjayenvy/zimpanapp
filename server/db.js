@@ -242,6 +242,25 @@ async function alterExisting() {
     await pool.query('ALTER TABLE teams ADD COLUMN trial_ends_at BIGINT NULL AFTER seat_cap');
   }
 
+  /* The blog's meta fields, added after the table existed. Nullable and read
+     with a fallback to the post's own title and excerpt, so a post written
+     before these columns is not suddenly missing its description. */
+  const [blogCols] = await pool.query(
+    'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?',
+    [CONFIG.database, 'blog_posts']);
+  if (blogCols.length) {
+    const hasBlogCol = (n) => blogCols.some((c) => c.name === n);
+    if (!hasBlogCol('meta_title')) {
+      await pool.query('ALTER TABLE blog_posts ADD COLUMN meta_title VARCHAR(200) NULL AFTER cover_url');
+    }
+    if (!hasBlogCol('meta_desc')) {
+      await pool.query('ALTER TABLE blog_posts ADD COLUMN meta_desc VARCHAR(400) NULL AFTER meta_title');
+    }
+    if (!hasBlogCol('meta_words')) {
+      await pool.query('ALTER TABLE blog_posts ADD COLUMN meta_words VARCHAR(400) NULL AFTER meta_desc');
+    }
+  }
+
   const [proj] = await pool.query(
     'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME IN (?, ?)',
     [CONFIG.database, 'entries', 'project_id', 'team_id']);

@@ -210,6 +210,26 @@ export async function createTeam(userId, name) {
   await requireWorkAccount(userId);
   const existing = await membershipFor(userId);
   if (existing) throw new TeamError('You are already in a team.', 409);
+
+  /* Somebody who was invited joins that team; they do not start a rival one.
+
+     A work login belongs to exactly one workplace, and an invitee who creates
+     their own team is then permanently unable to accept the invitation that
+     brought them here — acceptInvite refuses anyone already in a team, so the
+     mistake is one click and has no undo short of an admin removing them.
+     Matched on the address, because the invitation was addressed to a mailbox
+     rather than to an account that may not have existed when it was sent. */
+  const me = await one('SELECT email FROM users WHERE id = ?', [userId]);
+  const invited = me && await one(
+    `SELECT t.name FROM team_invites ti JOIN teams t ON t.id = ti.team_id
+      WHERE ti.email = ? AND ti.accepted_at IS NULL AND ti.expires_at > ?`,
+    [normaliseEmail(me.email), now()]);
+  if (invited) {
+    throw new TeamError(
+      `You have been invited to ${invited.name}. Open the link in that invitation to join it — a work account belongs to one team, so starting your own would put this one out of reach.`,
+      409);
+  }
+
   const clean = String(name || '').trim().slice(0, 120);
   if (!clean) throw new TeamError('A team needs a name.');
 

@@ -95,6 +95,21 @@
   .ad-empty { padding: 26px 0; font-size: 13px; color: var(--color-neutral-600); text-align: center; }
 
   /* — the user table — */
+  /* The SEO fields, folded away. They are written after the post, not while
+     writing it, and open by default only when a post already has them. */
+  .ad-meta { margin-bottom: 14px; border: 1px solid var(--color-divider); border-radius: 12px; }
+  .ad-meta summary {
+    list-style: none; cursor: pointer; padding: 11px 14px;
+    font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--color-neutral-700); display: flex; align-items: center; gap: 8px;
+  }
+  .ad-meta summary::-webkit-details-marker { display: none; }
+  .ad-meta summary::before { content: '+'; color: var(--color-accent-700); font-size: 15px; }
+  .ad-meta[open] summary::before { content: '−'; }
+  .ad-meta[open] summary { border-bottom: 1px solid var(--color-divider); margin-bottom: 14px; }
+  .ad-meta .ad-field { padding: 0 14px; }
+  .ad-meta .ad-field:last-child { padding-bottom: 14px; }
+
   .ad-tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
   .ad-tools .input { width: auto; flex: 1 1 240px; max-width: 340px; }
   .ad-tools select.input { flex: 0 0 auto; width: auto; }
