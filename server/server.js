@@ -15,11 +15,12 @@ import {
 } from './auth.js';
 import { changesSince, applyChanges, Invalid, CURRENCIES } from './sync.js';
 import { verifyGoogleIdToken } from './google.js';
-import { sendResetEmail, sendInviteEmail, mailerConfigured, mailerProblem } from './mail.js';
+import { sendResetEmail, sendInviteEmail, sendTicketEmails, mailerConfigured, mailerProblem } from './mail.js';
 import {
   BlogError, listPosts, readPost, publishedSlugs,
   adminList, adminRead, createPost, updatePost, deletePost
 } from './blog.js';
+import { SupportError, SUPPORT_TO, fileTicket, listTickets } from './support.js';
 import { estimateNutrition, estimateBurn, summariseDeck, chatReply, aiConfigured, warmAI } from './ai.js';
 import {
   overview as adminOverview, users as adminUsers, donationsFor,
@@ -737,6 +738,41 @@ app.post('/api/admin/team-plan', requireUser, team(async (req) => {
 }));
 
 app.get('/api/team/plans', (req, res) => res.json({ plans: PLANS }));
+
+/* ── help ──
+
+   Open to anyone, signed in or not: the footer this is reached from is on the
+   landing page, and somebody who cannot sign in is exactly the person most
+   likely to need it. A session, where there is one, supplies the address and
+   is trusted over anything typed — a signed-in person asking us to reply to
+   somebody else's mailbox is not a case worth supporting.
+
+   The rate limiting lives in support.js and applies per address either way. */
+app.post('/api/support', wrap(async (req, res) => {
+  const b = req.body || {};
+  const user = await currentUser(req);
+  try {
+    const out = await fileTicket({
+      email: user ? user.email : b.email,
+      userId: user ? user.id : null,
+      subject: b.subject,
+      body: b.body
+    }, (ticket) => sendTicketEmails(SUPPORT_TO, {
+      ...ticket,
+      who: user ? `signed in${user.role && user.role !== 'user' ? ` · ${user.role}` : ''}` : 'not signed in'
+    }));
+    res.json(out);
+  } catch (err) {
+    if (err instanceof SupportError) return res.status(err.status).json({ error: err.message });
+    throw err;
+  }
+}));
+
+/* Read-only, and deliberately so — replying happens in the mailbox, which is
+   the only place that can see the rest of the conversation. */
+app.get('/api/admin/support', requireAdmin, wrap(async (req, res) => {
+  res.json({ tickets: await listTickets(req.query.limit) });
+}));
 
 /* ── the blog ──
    Reading is open to anyone; every write is behind requireAdmin. The two

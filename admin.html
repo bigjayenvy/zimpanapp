@@ -95,6 +95,28 @@
   .ad-empty { padding: 26px 0; font-size: 13px; color: var(--color-neutral-600); text-align: center; }
 
   /* — the user table — */
+  /* — a help request, as it came in —
+     The whole message, not a preview: the point of this list is to read what
+     people said, and a truncated one only makes somebody click to a route
+     that would have to exist for the purpose. */
+  .ad-ticket { padding: 14px 0; border-top: 1px solid var(--color-divider); }
+  .ad-ticket:first-of-type { border-top: 0; }
+  .ad-ticket-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+  .ad-ref {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+    font-weight: 600; color: var(--color-accent-800);
+    background: var(--color-accent-200); padding: 2px 8px; border-radius: 6px;
+  }
+  .ad-ticket-from { font-size: 12.5px; color: var(--color-accent-700); }
+  .ad-ticket-when { font-size: 11.5px; color: var(--color-neutral-600); margin-left: auto; }
+  .ad-ticket-subject { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+  /* pre-wrap, because paragraphs are what somebody typed and collapsing them
+     turns a structured complaint into one long sentence. */
+  .ad-ticket-body {
+    white-space: pre-wrap; font-size: 13px; line-height: 1.6;
+    color: var(--color-neutral-800); border-left: 2px solid var(--color-divider); padding-left: 12px;
+  }
+
   /* The SEO fields, folded away. They are written after the post, not while
      writing it, and open by default only when a post already has them. */
   .ad-meta { margin-bottom: 14px; border: 1px solid var(--color-divider); border-radius: 12px; }

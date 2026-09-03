@@ -63,6 +63,9 @@ function transport() {
 /* The frame both letters sit in. Written once because two mails that drift
    apart look like two products, and inline styles because an email client is
    the one place a stylesheet cannot be relied on. */
+const ENT = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const escapeHtml = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ENT[c]);
+
 const SHELL = (body) => `
 <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:15px;line-height:1.6;color:#1d1f20;max-width:520px;">
   <p style="font-weight:600;font-size:18px;margin:0 0 4px;">ZIMPAN</p>
@@ -150,6 +153,83 @@ export async function sendInviteEmail(to, link, { team, from, days } = {}) {
     console.error(`[zimpan] invite email to ${to} failed: ${err.message}`);
     return { delivered: false, reason: err.message };
   }
+}
+
+/* ── a help request ──
+
+   Two letters from one message. The one to the support mailbox is written to
+   be replied to: the sender's address is the Reply-To, so answering it goes
+   to the person rather than to us. The one to the sender is a receipt — their
+   own words back, and the reference number — because a form that swallows what
+   you typed and shows a number is indistinguishable from one that lost it.
+
+   Neither throws. The ticket is already stored by the time these run, and
+   losing the mail is recoverable where losing the message is not. */
+const TICKET_ADMIN = (t) => SHELL(`
+  <p style="margin:0 0 4px;"><strong>${t.ref}</strong> — new help request</p>
+  <p style="margin:0 0 18px;font-size:13px;color:#5d5d60;">From ${t.email}${t.who ? ` · ${t.who}` : ''}</p>
+  <p style="font-weight:600;margin:0 0 6px;">${t.subject}</p>
+  <div style="white-space:pre-wrap;border-left:3px solid #d8d5e4;padding-left:14px;color:#33313a;">${t.body}</div>
+  <p style="color:#8a8a8d;font-size:12px;margin-top:22px;">Reply to this email and it goes straight to them.</p>`);
+
+const TICKET_USER = (t) => SHELL(`
+  <p>Thanks — we have your message. Your reference is <strong>${t.ref}</strong>.</p>
+  <p style="color:#5d5d60;font-size:13.5px;">Reply to this email if you have anything to add. Quote the reference if you write to us separately.</p>
+  <p style="font-weight:600;margin:22px 0 6px;">${t.subject}</p>
+  <div style="white-space:pre-wrap;border-left:3px solid #d8d5e4;padding-left:14px;color:#33313a;">${t.body}</div>`);
+
+const TICKET_USER_TEXT = (t) =>
+  `Thanks — we have your message. Your reference is ${t.ref}.
+
+Reply to this email if you have anything to add. Quote the reference if you
+write to us separately.
+
+${t.subject}
+${'-'.repeat(Math.min(60, t.subject.length))}
+${t.body}`;
+
+export async function sendTicketEmails(to, ticket) {
+  if (!mailerConfigured()) {
+    if (!PROD) console.log(`\n[zimpan] mail is not configured — ticket ${ticket.ref} from ${ticket.email}:\n${ticket.subject}\n${ticket.body}\n`);
+    return { delivered: false, reason: mailerProblem() };
+  }
+  /* The escaping is the point: both bodies interpolate what somebody typed
+     into HTML, and a subject containing a tag would otherwise become one. */
+  const safe = {
+    ref: ticket.ref,
+    email: escapeHtml(ticket.email),
+    subject: escapeHtml(ticket.subject),
+    body: escapeHtml(ticket.body),
+    who: escapeHtml(ticket.who || '')
+  };
+  try {
+    await transport().sendMail({
+      from: FROM,
+      to,
+      replyTo: ticket.email,
+      subject: `[${ticket.ref}] ${ticket.subject}`,
+      text: `${ticket.ref} — new help request\nFrom ${ticket.email}\n\n${ticket.subject}\n\n${ticket.body}`,
+      html: TICKET_ADMIN(safe)
+    });
+  } catch (err) {
+    console.error(`[zimpan] ticket ${ticket.ref} to ${to} failed: ${err.message}`);
+    return { delivered: false, reason: err.message };
+  }
+  /* The receipt is best-effort on top. The request has reached somebody who
+     can answer it; a copy that did not arrive is not worth reporting as a
+     failure to send. */
+  try {
+    await transport().sendMail({
+      from: FROM,
+      to: ticket.email,
+      subject: `[${ticket.ref}] ${ticket.subject}`,
+      text: TICKET_USER_TEXT(ticket),
+      html: TICKET_USER(safe)
+    });
+  } catch (err) {
+    console.error(`[zimpan] ticket ${ticket.ref} receipt to ${ticket.email} failed: ${err.message}`);
+  }
+  return { delivered: true };
 }
 
 export async function sendResetEmail(to, link) {

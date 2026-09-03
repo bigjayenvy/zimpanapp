@@ -307,3 +307,32 @@ CREATE TABLE IF NOT EXISTS blog_posts (
   UNIQUE KEY uq_blog_slug (slug),
   KEY idx_blog_live (status, published_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+/* ── support tickets ──
+
+   A message from a person to whoever reads admin@bigcavestudios.com. Stored
+   for two reasons only: the reference number has to come from somewhere that
+   cannot hand the same one out twice, and the dashboard has to be able to list
+   what has come in.
+
+   The conversation itself does not live here. It is email, on both sides —
+   which is why there is no reply column and no status: this table would
+   otherwise start pretending to be a helpdesk while the actual replies
+   happened somewhere it could not see, and a half-tracked ticket is worse than
+   an untracked one.
+
+   The id is the reference. AUTO_INCREMENT never reissues a number, including
+   after a delete, which a COUNT-based scheme would. */
+CREATE TABLE IF NOT EXISTS support_tickets (
+  id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  ref        VARCHAR(24)  NOT NULL,
+  email      VARCHAR(190) NOT NULL,
+  user_id    INT UNSIGNED NULL,
+  subject    VARCHAR(200) NOT NULL,
+  body       TEXT         NOT NULL,
+  delivered  TINYINT(1)   NOT NULL DEFAULT 0,
+  created_at BIGINT       NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_ticket_ref (ref),
+  KEY idx_ticket_new (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -529,6 +529,7 @@ const API = {
        put a whole office's morning on yesterday. */
     now: (date) => api(`/api/team/now?date=${encodeURIComponent(date || '')}`)
   },
+  support: (body) => api('/api/support', { method: 'POST', body }),
   blog: {
     list: () => api('/api/blog'),
     read: (slug) => api(`/api/blog/${encodeURIComponent(slug)}`)
@@ -952,6 +953,10 @@ const state = {
   // question stops asking until the next page load.
   notePrompt: null, noteDraft: '', noteSkipped: {},
   legalOpen: null,
+  /* The help dialog: null when shut, otherwise the draft being written. Held
+     as one object so closing it throws the whole thing away rather than
+     leaving three fields to remember to clear. */
+  help: null,
   toast: '',
   netState: 'idle', netMessage: '', netError: '', netErrorRow: null, netErrorKind: '',
   syncing: false,
@@ -4024,6 +4029,71 @@ const LEGAL = {
   }
 };
 
+/* ── asking for help ──
+
+   Reachable from the footer, which is on every page including the ones you
+   reach without an account — somebody who cannot sign in is the likeliest
+   person to need this.
+
+   The address is asked for only when there is no session to take it from. A
+   signed-in person's own address is what we reply to, and offering to change
+   it would be offering to send somebody else's answer somewhere else. */
+function helpDialog() {
+  const h = state.help;
+  if (!h) return '';
+
+  if (h.ref) {
+    return lightbox({
+      icon: 'check',
+      tone: '#0e9f6e',
+      kicker: 'Sent',
+      title: `Your reference is ${h.ref}`,
+      closeAct: 'help-close',
+      body: `
+        <p>${h.delivered
+          ? `A copy is on its way to ${esc(h.email)}. Reply to it if you have anything to add.`
+          : 'We have your message and it is waiting to be read. The emailed copy did not go out, so keep the reference above — it is how we will find this.'}</p>`,
+      actions: '<button class="btn btn-primary" data-act="help-close">Done</button>'
+    });
+  }
+
+  return lightbox({
+    icon: 'pencil',
+    tone: 'var(--color-accent)',
+    kicker: 'Help',
+    title: 'What can we help with?',
+    sub: 'We answer by email',
+    closeAct: 'help-close',
+    body: `
+      <div class="help-form">
+        ${state.auth ? `
+        <p class="help-who">Replying to <strong>${esc(state.auth.email)}</strong></p>` : `
+        <label class="help-field">
+          <span>Your email</span>
+          <input class="input" type="email" data-k="help-email" data-sync="help.email"
+            value="${esc(h.email || '')}" placeholder="Where should we reply?" autocomplete="email">
+        </label>`}
+
+        <label class="help-field">
+          <span>Subject</span>
+          <input class="input" type="text" data-k="help-subject" data-sync="help.subject"
+            value="${esc(h.subject || '')}" placeholder="In a few words" maxlength="200" autocomplete="off">
+        </label>
+
+        <label class="help-field">
+          <span>Message</span>
+          <textarea class="input help-body" data-k="help-body" data-sync="help.body" rows="6"
+            maxlength="8000" placeholder="What happened, and what you expected instead.">${esc(h.body || '')}</textarea>
+        </label>
+
+        ${h.error ? `<p class="tm-err">${esc(h.error)}</p>` : ''}
+      </div>`,
+    actions: `
+      <button class="btn btn-secondary" data-act="help-close">Cancel</button>
+      <button class="btn btn-primary" data-act="help-send"${h.busy ? ' disabled' : ''}>${h.busy ? 'Sending…' : 'Send'}</button>`
+  });
+}
+
 function legalSheet() {
   const doc = LEGAL[state.legalOpen];
   if (!doc) return '';
@@ -4096,6 +4166,7 @@ const legalLinks = (color) => `
     <button data-act="legal-privacy" style="border:0;background:transparent;padding:0;font:inherit;font-size:12px;color:${color};cursor:pointer;text-decoration:underline;text-underline-offset:2px;">Privacy Policy</button>
     <button data-act="legal-terms" style="border:0;background:transparent;padding:0;font:inherit;font-size:12px;color:${color};cursor:pointer;text-decoration:underline;text-underline-offset:2px;">Terms of Use</button>
     <button data-act="legal-faq" style="border:0;background:transparent;padding:0;font:inherit;font-size:12px;color:${color};cursor:pointer;text-decoration:underline;text-underline-offset:2px;">FAQs</button>
+    <button data-act="help-open" style="border:0;background:transparent;padding:0;font:inherit;font-size:12px;color:${color};cursor:pointer;text-decoration:underline;text-underline-offset:2px;">Help</button>
   </div>`;
 
 /* ── account screens ── */
@@ -8014,7 +8085,7 @@ function render() {
   if (state.route === 'blogs') {
     const panel = state.authOpen || state.authMode === 'reset';
     root.innerHTML = (state.blogSlug ? blogPostPage() : blogIndex())
-      + (panel ? authScreen() : '') + legalSheet();
+      + (panel ? authScreen() : '') + legalSheet() + helpDialog();
     if (scrollY && window.scrollY !== scrollY) window.scrollTo(0, scrollY);
     restoreFocus(f);
     if (panel) mountGoogleButton();
@@ -8063,7 +8134,7 @@ function render() {
 
   if (state.route === 'teams') {
     const teamPanel = state.authOpen || state.authMode === 'reset';
-    root.innerHTML = teamsScreen() + (teamPanel ? authScreen() : '') + legalSheet();
+    root.innerHTML = teamsScreen() + (teamPanel ? authScreen() : '') + legalSheet() + helpDialog();
     if (scrollY && window.scrollY !== scrollY) window.scrollTo(0, scrollY);
     restoreFocus(f);
     if (teamPanel) mountGoogleButton();
@@ -8074,7 +8145,7 @@ function render() {
     // A reset link has to open its panel directly; there is no landing page
     // journey that leads to it.
     const panelOpen = state.authOpen || state.authMode === 'reset';
-    root.innerHTML = (mobileOn() ? mSignin() : landingScreen()) + (panelOpen ? authScreen() : '') + legalSheet();
+    root.innerHTML = (mobileOn() ? mSignin() : landingScreen()) + (panelOpen ? authScreen() : '') + legalSheet() + helpDialog();
     if (scrollY && window.scrollY !== scrollY) window.scrollTo(0, scrollY);
     restoreFocus(f);
     if (panelOpen) mountGoogleButton();
@@ -8094,7 +8165,7 @@ function render() {
       state.setupDone = true;
       state.m.screen = 'home';
     }
-    root.innerHTML = `<div id="zimpan-progress" class="topbar" style="display:none"><i></i></div>${mobileApp()}${legalSheet()}`;
+    root.innerHTML = `<div id="zimpan-progress" class="topbar" style="display:none"><i></i></div>${mobileApp()}${legalSheet()}${helpDialog()}`;
     if (scrollY && window.scrollY !== scrollY) window.scrollTo(0, scrollY);
     restoreFocus(f);
     paintBusy();
@@ -8155,6 +8226,7 @@ function render() {
   ${donateSheet()}
   ${aiConsentDialog()}
   ${legalSheet()}
+  ${helpDialog()}
   ${backToTop()}
   ${mobileNav(v)}
 </div>`;
@@ -9702,6 +9774,40 @@ const ACTIONS = {
   'legal-privacy': () => { state.legalOpen = 'privacy'; render(); },
   'legal-terms': () => { state.legalOpen = 'terms'; render(); },
   'legal-faq': () => { state.legalOpen = 'faq'; render(); },
+
+  'help-open': () => {
+    /* A fresh draft each time. Keeping the last one would mean a message
+       already sent reappearing in the box, which reads as "it did not go". */
+    state.help = { email: '', subject: '', body: '', busy: false, error: '', ref: '' };
+    render();
+  },
+  'help-close': () => { state.help = null; render(); },
+
+  'help-send': () => {
+    const h = state.help;
+    if (!h || h.busy) return;
+    const email = state.auth ? state.auth.email : String(h.email || '').trim();
+    if (!state.auth && !email) { state.help = Object.assign({}, h, { error: 'We need an email address to reply to.' }); render(); return; }
+    if (!String(h.subject || '').trim()) { state.help = Object.assign({}, h, { error: 'What is it about?' }); render(); return; }
+    if (!String(h.body || '').trim()) { state.help = Object.assign({}, h, { error: 'Tell us what is happening and we will look.' }); render(); return; }
+
+    state.help = Object.assign({}, h, { busy: true, error: '' });
+    render();
+    API.support({ email, subject: h.subject, body: h.body })
+      .then((out) => {
+        /* Replaced by the receipt rather than closed: a dialog that vanishes
+           takes the reference number with it, and that number is the only
+           thing the sender has to quote. */
+        state.help = { ref: out.ref, delivered: !!out.delivered, email, busy: false, error: '' };
+        render();
+      })
+      .catch((err) => {
+        state.help = Object.assign({}, state.help, {
+          busy: false, error: err.message || 'That did not send. Try again in a moment.'
+        });
+        render();
+      });
+  },
   'legal-close': () => { state.legalOpen = null; render(); },
   /* First press arms, second press sends. adoptLocalData() stamps every row on
      the device and marks it dirty, so the next sync carries the lot. */
@@ -12471,6 +12577,7 @@ function mAccountSheet() {
     <button data-act="legal-privacy" style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;color:#756f88;padding:6px;">Privacy</button>
     <button data-act="legal-terms" style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;color:#756f88;padding:6px;">Terms of Use</button>
     <button data-act="legal-faq" style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;color:#756f88;padding:6px;">FAQs</button>
+    <button data-act="help-open" style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;color:#756f88;padding:6px;">Help</button>
   </div>
   <button class="btn" data-act="m-sign-out"
     style="width:100%;min-height:48px;font-size:15px;color:#8a2f4a;background:#fff;border:1px solid rgba(138,47,74,.3);margin-bottom:8px;">Sign out</button>

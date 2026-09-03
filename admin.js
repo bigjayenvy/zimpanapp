@@ -55,6 +55,7 @@ const state = {
   overview: null,
   /* The blog. `posts` is the list; `editing` is the post open in the editor,
      or null. A new post is `editing` with no id. */
+  tickets: null,
   posts: null,
   editing: null,
   blogMsg: null,
@@ -435,6 +436,44 @@ const postWhen = (p) => (p.status === 'published' && p.publishedAt
   ? day(p.publishedAt)
   : `edited ${day(p.updatedAt)}`);
 
+/* ── help requests ──
+
+   Read-only, and that is the design rather than a shortcut. Replying happens
+   in the support mailbox, because that is the only place that can see the rest
+   of the conversation — a Reply box here would write into a thread this
+   dashboard cannot read, and a status column would go stale the moment
+   somebody answered an email without coming back to tick it.
+
+   So: what came in, from whom, and what they said. The answering is elsewhere.
+   `delivered` is worth showing because a ticket whose email never went is one
+   nobody has seen. */
+function ticketsBlock() {
+  if (!state.tickets) {
+    return `<div class="ad-card" style="margin-top: 16px;"><div class="ad-card-head"><h3>Help requests</h3></div>
+      <div class="ad-empty">Loading…</div></div>`;
+  }
+  const rows = state.tickets.map((t) => `
+    <div class="ad-ticket">
+      <div class="ad-ticket-head">
+        <span class="ad-ref">${esc(t.ref)}</span>
+        <a class="ad-ticket-from" href="mailto:${esc(t.email)}?subject=${encodeURIComponent('Re: [' + t.ref + '] ' + t.subject)}">${esc(t.email)}</a>
+        ${t.delivered ? '' : '<span class="ad-pill warm" title="The notification email did not go out">not emailed</span>'}
+        <span class="ad-ticket-when">${esc(day(t.createdAt))}</span>
+      </div>
+      <div class="ad-ticket-subject">${esc(t.subject)}</div>
+      <div class="ad-ticket-body">${esc(t.body)}</div>
+    </div>`).join('');
+
+  return `
+    <div class="ad-card" style="margin-top: 16px;">
+      <div class="ad-card-head">
+        <h3>Help requests</h3>
+        <span class="ad-sub" style="margin:0;">Reply by email — the address is a link</span>
+      </div>
+      ${rows || '<div class="ad-empty">Nobody has asked for help yet.</div>'}
+    </div>`;
+}
+
 function blogBlock() {
   if (!state.posts) {
     return `<div class="ad-card" style="margin-top: 16px;"><div class="ad-card-head"><h3>Blog</h3></div>
@@ -630,6 +669,7 @@ function render() {
 
       ${o ? overviewBlock(o) : '<div class="ad-empty">Loading the numbers…</div>'}
       ${usersBlock()}
+      ${ticketsBlock()}
       ${blogBlock()}
     </div>
     ${modalBlock()}
@@ -645,6 +685,16 @@ function render() {
 }
 
 /* ── loading ── */
+
+async function loadTickets() {
+  try {
+    const res = await api('/api/admin/support');
+    state.tickets = res.tickets || [];
+  } catch (err) {
+    state.tickets = [];
+  }
+  render();
+}
 
 async function loadPosts() {
   try {
@@ -696,6 +746,7 @@ async function boot() {
   } catch (err) { /* the table below is still worth showing */ }
   render();
   await loadUsers(false);
+  await loadTickets();
   await loadPosts();
 }
 

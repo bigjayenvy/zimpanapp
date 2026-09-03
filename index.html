@@ -1123,6 +1123,22 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .blog-body pre code { background: transparent; padding: 0; }
 
+  /* — the help form —
+     Left-aligned inside a dialog that is otherwise centred: a form is read
+     down its labels, and centred fields give the eye no edge to follow. */
+  .help-form { text-align: left; display: flex; flex-direction: column; gap: 12px; }
+  .help-field { display: block; }
+  .help-field > span {
+    display: block; font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--color-neutral-700); margin-bottom: 5px;
+  }
+  .help-field .input { width: 100%; }
+  .help-body { resize: vertical; min-height: 120px; font-family: inherit; line-height: 1.55; }
+  .help-who {
+    margin: 0; font-size: 12.5px; color: var(--color-neutral-700);
+    background: var(--color-neutral-100, #f4f2f9); padding: 9px 12px; border-radius: 10px;
+  }
+
   /* — the FAQ's collapsible entries —
      <details> with no JavaScript behind it, so nothing has to survive the next
      re-render. The default triangle is replaced by a marker that rotates: the
