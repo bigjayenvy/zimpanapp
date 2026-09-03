@@ -635,7 +635,15 @@ const pathForRoute = (route, slug) => (
 
 function goRoute(route, slug) {
   const want = slug || '';
-  if (state.route === route && (state.blogSlug || '') === want) { scrollToAnchor(null); return; }
+  /* Reached from the header menu as often as from a link now, and a menu left
+     hanging over the page it just moved you to is a menu that failed to act. */
+  const shut = state.menuOpen;
+  state.menuOpen = false;
+  if (state.route === route && (state.blogSlug || '') === want) {
+    if (shut) render();
+    scrollToAnchor(null);
+    return;
+  }
   state.route = route;
   state.blogSlug = want;
   try { history.pushState({ route, slug: want }, '', pathForRoute(route, want)); } catch (e) { /* file:// */ }
@@ -3956,11 +3964,15 @@ function appbarMenu() {
     </button>
     ${state.menuOpen ? `
     <div class="am-drop" role="menu">
-      <div class="am-who">${esc(state.auth.email)}</div>
+      <div class="am-who">
+        <span class="am-face" aria-hidden="true">${nodeIcon('person', 15)}</span>
+        <span class="am-mail">${esc(state.auth.email)}</span>
+      </div>
 
       ${item('open-report', 'Your Report Cards', 'am-strong')}
       ${workMode() ? item('team-open', 'Your Team') : item('prefs-open', 'Preferences')}
       ${adminRole() ? `<a class="am-item" href="/admin" role="menuitem">Admin dashboard</a>` : ''}
+      ${item('go-blogs', 'Blog')}
       ${item('legal-faq', 'FAQs')}
       ${item('help-open', 'Help')}
       ${workMode() ? '' : `
@@ -4382,6 +4394,10 @@ const ICON_PATHS = {
   trash: '<path d="M4.6 6.8h14.8"/><path d="M9.4 6.8V5.2a1.6 1.6 0 0 1 1.6-1.6h2a1.6 1.6 0 0 1 1.6 1.6v1.6"/>'
     + '<path d="M6.6 6.8 7.5 19a1.8 1.8 0 0 0 1.8 1.6h5.4a1.8 1.8 0 0 0 1.8-1.6l.9-12.2" stroke-linejoin="round"/>'
     + '<path d="M10.4 10.4v6.2M13.6 10.4v6.2"/>',
+  /* Whose account this is. A head over shoulders, drawn at the same weight as
+     the rest so it reads as one of the set rather than an avatar. */
+  person: '<circle cx="12" cy="8.3" r="3.5"/>'
+    + '<path d="M5.6 19.9a6.4 6.4 0 0 1 12.8 0"/>',
   scales: '<path d="M12 4.5v15.3M7.7 19.8h8.6M4.3 8.6h15.4"/>'
     + '<path d="M4.3 8.6 2.2 13.3a2.3 2.3 0 0 0 4.2 0Z" stroke-linejoin="round"/>'
     + '<path d="M19.7 8.6l-2.1 4.7a2.3 2.3 0 0 0 4.2 0Z" stroke-linejoin="round"/>'
