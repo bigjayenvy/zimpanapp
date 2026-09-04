@@ -939,6 +939,112 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .backtotop:hover { background: var(--color-accent-900); }
   .backtotop:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 
+  /* — the to-do pad —
+     Sits in the same fixed column as Ask Zimpan, above it, and expands upward
+     from it rather than opening a dialog: the notes are meant to be read
+     beside the page, not instead of it. Paper-coloured, because that is what
+     it is pretending to be, and the one surface in the app that is not on the
+     app's own background. */
+  .fab-todo {
+    display: inline-flex; align-items: center; gap: 8px;
+    height: 44px; padding: 0 16px; border: 1px solid #e6d9a8; border-radius: 999px;
+    background: #fdf6d8; color: #6b5a13; cursor: pointer;
+    font-family: var(--font-body); font-size: 13px; font-weight: 600; white-space: nowrap;
+    box-shadow: 0 0 0 2px var(--color-bg), 0 2px 10px color-mix(in srgb, #2b2b2d 26%, transparent);
+  }
+  .fab-todo svg { width: 16px; height: 16px; display: block; }
+  .fab-todo:hover { background: #fbefc0; }
+  .fab-todo:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+  .fab-todo[aria-expanded="true"] { background: #f7e8ac; border-color: #d9c88a; }
+  .fab-tally {
+    min-width: 19px; height: 19px; padding: 0 5px; border-radius: 999px;
+    background: #6b5a13; color: #fdf6d8; font-size: 11px; font-weight: 700;
+    display: grid; place-items: center;
+  }
+  /* Hidden where the menu is the way in. On a phone the column is two buttons
+     from the bottom bar already, and a third would crowd the thumb. */
+  @media (max-width: 720px) { .fab-todo { display: none; } }
+
+  .todo-pad {
+    width: min(340px, calc(100vw - 32px));
+    max-height: min(64vh, 560px);
+    display: flex; flex-direction: column;
+    background: #fffdf2; border: 1px solid #ece2bd; border-radius: 18px;
+    box-shadow: 0 18px 44px color-mix(in srgb, #2b2b2d 26%, transparent);
+    padding: 12px 12px 14px; margin-bottom: 4px;
+    animation: zStep .18s ease both;
+  }
+  .todo-head { display: flex; align-items: center; gap: 8px; padding: 0 2px 10px; }
+  .todo-name {
+    font-family: var(--font-heading); font-weight: 700; font-size: 16px; color: #4a3f0d;
+  }
+  .todo-count {
+    font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+    color: #8a7a35; background: #f6ecc4; padding: 3px 8px; border-radius: 999px;
+  }
+  .todo-x {
+    margin-left: auto; border: 0; background: transparent; cursor: pointer;
+    font-size: 15px; color: #8a7a35; min-width: 32px; min-height: 32px; border-radius: 8px;
+  }
+  .todo-x:hover { background: #f6ecc4; }
+  .todo-new {
+    width: 100%; border: 1px dashed #d9c88a; border-radius: 12px; background: transparent;
+    padding: 9px 12px; cursor: pointer; text-align: left;
+    font: inherit; font-size: 13.5px; font-weight: 600; color: #6b5a13;
+  }
+  .todo-new:hover { background: #f9f1cf; border-style: solid; }
+  .todo-list {
+    margin-top: 10px; display: flex; flex-direction: column; gap: 10px;
+    overflow-y: auto; overscroll-behavior: contain; padding-right: 2px;
+  }
+  .todo-empty { margin: 6px 2px; font-size: 12.5px; line-height: 1.55; color: #8a7a35; }
+
+  /* One note. The status tints the left edge rather than the whole card, so a
+     pad of four statuses still reads as one pad. */
+  .todo-note {
+    border: 1px solid #ece2bd; border-left: 3px solid var(--tone); border-radius: 12px;
+    background: #fff; padding: 8px 9px 9px;
+  }
+  .todo-text {
+    display: block; width: 100%; border: 0; background: transparent; resize: none;
+    font: inherit; font-size: 13.5px; line-height: 1.5; color: var(--color-text);
+    padding: 2px 2px 6px; overflow: hidden;
+  }
+  .todo-text:focus { outline: 0; }
+  .todo-text::placeholder { color: #a8a2b8; }
+  .todo-foot { display: flex; align-items: center; gap: 8px; }
+  .todo-status {
+    flex: 1 1 auto; min-width: 0; -webkit-appearance: none; appearance: none;
+    border: 1px solid color-mix(in srgb, var(--tone) 30%, transparent);
+    background: var(--tint); color: var(--tone);
+    border-radius: 999px; padding: 4px 24px 4px 10px; cursor: pointer;
+    font: inherit; font-size: 11.5px; font-weight: 600;
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position: calc(100% - 13px) 50%, calc(100% - 9px) 50%;
+    background-size: 4px 4px, 4px 4px; background-repeat: no-repeat;
+  }
+  .todo-status:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+  .todo-del {
+    flex: none; border: 0; background: transparent; cursor: pointer; color: #9b95a8;
+    min-width: 30px; min-height: 30px; border-radius: 8px; display: grid; place-items: center;
+    font: inherit; font-size: 11.5px; font-weight: 700;
+  }
+  .todo-del:hover { background: #fdecf1; color: #8a2f4a; }
+  .todo-del.is-armed { background: #8a2f4a; color: #fff; padding: 0 9px; }
+
+  /* The phone gets a sheet, on the same terms as every other sheet there. */
+  .todo-scrim {
+    position: fixed; inset: 0; z-index: 47; display: flex; flex-direction: column;
+    justify-content: flex-end; background: rgba(36, 31, 48, .5);
+  }
+  .todo-drawer {
+    background: #fffdf2; border-radius: 28px 28px 0 0; padding: 12px 16px 22px;
+    box-shadow: 0 -18px 44px rgba(47, 28, 102, .24); animation: zStep .26s ease both;
+    display: flex; flex-direction: column; max-height: calc(100dvh - 60px);
+  }
+  .todo-drawer .todo-list { max-height: 60vh; }
+  .todo-grab { width: 38px; height: 4px; border-radius: 999px; background: #e0d5a8; margin: 2px auto 12px; }
+
   /* Clears the fixed bottom bar. Declared after the base rule rather than up in
      the phone block, which comes earlier in this file and would lose to it. */
   @media (max-width: 720px) {

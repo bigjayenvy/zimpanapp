@@ -413,7 +413,7 @@ function seedTaxonomy() {
 
    View, range and timer stay per-session, as before. */
 
-const EMPTY_KEYED = () => ({ entries: {}, money: {}, categories: {}, purposes: {} });
+const EMPTY_KEYED = () => ({ entries: {}, money: {}, categories: {}, purposes: {}, todos: {} });
 
 function load() {
   try {
@@ -430,6 +430,7 @@ function save() {
     localStorage.setItem(STORE_KEY, JSON.stringify({
       entries: state.entries, money: state.money,
       categories: state.categories, purposes: state.purposes,
+      todos: state.todos,
       currency: state.currency, currencyUpdatedAt: state.currencyUpdatedAt,
       steps: state.steps, stepsAt: state.stepsAt,
       deckRange: state.deckRange,
@@ -740,6 +741,9 @@ const state = {
   money: stored.money,
   categories: stored.categories,
   purposes: stored.purposes,
+  /* The to-do pad. Absent from any store written before it existed, hence the
+     guard: load() only vouches for entries and money. */
+  todos: Array.isArray(stored.todos) ? stored.todos : [],
   currency: CURRENCIES.some((c) => c.code === stored.currency) ? stored.currency : DEFAULT_CURRENCY,
   /* Steps walked, keyed by date. Travels with everything else now, merged a
      day at a time on the stamps in `stepsAt` below. */
@@ -966,6 +970,13 @@ const state = {
   // question stops asking until the next page load.
   notePrompt: null, noteDraft: '', noteSkipped: {},
   legalOpen: null,
+  /* The to-do pad, and which note's delete button is armed. Arming rather than
+     a dialog: a note is one line, and a modal asking whether you meant it is
+     heavier than the thing it protects — but a single stray click should not
+     take away something written. */
+  todoOpen: false,
+  todoArm: '',
+
   // The header menu, and the close-account confirmation it opens.
   menuOpen: false,
   closing: null,
@@ -1008,8 +1019,8 @@ if (!storedRaw) save();
    knowing: `updatedAt` comes from whichever device made the edit, so a device
    with a badly wrong clock can win or lose exchanges it shouldn't. */
 
-const KINDS = ['entries', 'money', 'categories', 'purposes'];
-const KEY_OF = { entries: 'id', money: 'id', categories: 'name', purposes: 'name' };
+const KINDS = ['entries', 'money', 'categories', 'purposes', 'todos'];
+const KEY_OF = { entries: 'id', money: 'id', categories: 'name', purposes: 'name', todos: 'id' };
 
 const markDirty = (kind, key) => { state.dirty[kind][String(key)] = true; };
 
@@ -1031,11 +1042,13 @@ function serialise(kind, r) {
      treats it as the thing an admin cannot see. */
   if (kind === 'entries') return { id: r.id, date: r.date, activity: r.activity, category: r.category, project: r.project || undefined, from: r.from, to: r.to, note: r.note || '', updatedAt: r.updatedAt || 0 };
   if (kind === 'money') return { id: r.id, date: r.date, activity: r.activity, purpose: r.purpose, in: Number(r.in) || 0, out: Number(r.out) || 0, note: r.note || '', updatedAt: r.updatedAt || 0 };
+  if (kind === 'todos') return { id: r.id, text: r.text || '', status: r.status || 'pending', createdAt: r.createdAt || 0, updatedAt: r.updatedAt || 0 };
   return { name: r.name, color: r.color, position: r.position || 0, updatedAt: r.updatedAt || 0 };
 }
 function deserialise(kind, r) {
   if (kind === 'entries') return { id: r.id, date: r.date, activity: r.activity, category: r.category, project: r.project || undefined, from: r.from, to: r.to, note: r.note || '', updatedAt: r.updatedAt };
   if (kind === 'money') return { id: r.id, date: r.date, activity: r.activity, purpose: r.purpose, in: r.in, out: r.out, note: r.note || '', updatedAt: r.updatedAt };
+  if (kind === 'todos') return { id: r.id, text: r.text || '', status: r.status || 'pending', createdAt: r.createdAt || 0, updatedAt: r.updatedAt };
   return { name: r.name, color: r.color, position: r.position, updatedAt: r.updatedAt };
 }
 
@@ -1597,6 +1610,7 @@ function resetLocal() {
   const t = Date.now();
   state.entries = [];
   state.money = [];
+  state.todos = [];
   state.categories = tax.categories.map((c) => ({ name: c.name, color: c.color, position: 0, updatedAt: t }));
   state.purposes = tax.purposes.map((p, i) => ({ name: p.name, color: p.color, position: i, updatedAt: t }));
   state.tombstones = EMPTY_KEYED();
@@ -3929,8 +3943,13 @@ function stickyBar(v) {
    the header carries a menu rather than a row of buttons, and Ask Zimpan is not
    there to fall back to. */
 function backToTop() {
+  const open = todoOpenCount();
   return `
   <div class="fabs no-print">
+    ${todoPad()}
+    <button class="fab-todo" data-act="todo-toggle" aria-expanded="${!!state.todoOpen}">
+      ${nodeIcon('todo', 16)}<span>To Do</span>${open ? `<b class="fab-tally">${open}</b>` : ''}
+    </button>
     ${state.aiEstimates ? `
     <button class="fab-ask" data-act="chat-open">
       ${nodeIcon('pulse', 16)}<span>Ask Zimpan</span>
@@ -3939,6 +3958,108 @@ function backToTop() {
       ${NAV_ICONS.up}
     </button>
   </div>`;
+}
+
+/* ── the to-do pad ──
+
+   A sticky pad rather than a page: the notes are a handful of lines, they are
+   read at a glance, and they belong beside whatever is on screen instead of
+   somewhere you have to go. So it hangs off the same fixed column as Ask
+   Zimpan on a wide screen, and comes up as a sheet on a phone, where a panel
+   pinned to a corner would cover the thing it is meant to sit beside.
+
+   A note is text and a status. No dates, no priorities, no ordering by hand:
+   every one of those is a second thing to maintain, and the pad exists to be
+   written on and glanced at. Nothing here is shown to anyone else — a team
+   admin sees hours against projects and never this. */
+const TODO_STATUSES = [
+  { key: 'pending', label: 'Pending', tone: '#6b6580', tint: '#efedf5' },
+  { key: 'doing', label: 'In progress', tone: '#5f3ac9', tint: '#f2eefe' },
+  { key: 'done', label: 'Complete', tone: '#0e7a5c', tint: '#e3f5ed' },
+  { key: 'stuck', label: 'Stuck', tone: '#8a2f4a', tint: '#fdecf1' }
+];
+const TODO_MAX = 500;
+const todoStatus = (k) => TODO_STATUSES.find((s) => s.key === k) || TODO_STATUSES[0];
+
+/* Newest first, and it stays that way whatever the statuses do. Sinking the
+   complete ones to the bottom would move a note the moment it was marked —
+   the list would rearrange itself under the hand that just touched it, and the
+   next click would land on something else. */
+const todoRows = () => state.todos.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+const todoOpenCount = () => state.todos.filter((t) => t.status !== 'done').length;
+
+/* Client-minted, like every other id in this app, and checked for a collision
+   because two notes made inside the same millisecond would otherwise be one
+   row on the server. */
+function newTodoId() {
+  let id;
+  do { id = `td${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`; }
+  while (findRow('todos', id));
+  return id;
+}
+
+function todoNote(t) {
+  const st = todoStatus(t.status);
+  const armed = state.todoArm === t.id;
+  return `
+  <div class="todo-note" style="--tone:${st.tone};--tint:${st.tint};">
+    <textarea class="todo-text" rows="1" maxlength="${TODO_MAX}"
+      data-k="todo-${esc(t.id)}" data-todo-text="${esc(t.id)}" data-todo-grow
+      placeholder="What needs doing?" aria-label="Note">${esc(t.text || '')}</textarea>
+    <div class="todo-foot">
+      <select class="todo-status" data-change="todo-status" data-id="${esc(t.id)}" aria-label="Status">
+        ${TODO_STATUSES.map((o) => `<option value="${o.key}"${o.key === st.key ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}
+      </select>
+      <button class="todo-del${armed ? ' is-armed' : ''}" data-act="todo-del" data-id="${esc(t.id)}"
+        aria-label="${armed ? 'Delete this note for good' : 'Delete note'}">${armed ? 'Delete?' : nodeIcon('trash', 15)}</button>
+    </div>
+  </div>`;
+}
+
+/* The pad's contents, shared by the panel and the sheet so the two can never
+   drift into being different features. */
+function todoBody() {
+  const rows = todoRows();
+  return `
+  <div class="todo-head">
+    <span class="todo-name">To Do</span>
+    ${rows.length ? `<span class="todo-count">${todoOpenCount()} open</span>` : ''}
+    <button class="todo-x" data-act="todo-close" aria-label="Close the pad">✕</button>
+  </div>
+  <button class="todo-new" data-act="todo-add">+ New note</button>
+  <div class="todo-list" data-todo-list>
+    ${rows.length
+    ? rows.map(todoNote).join('')
+    : `<p class="todo-empty">Nothing on the pad yet. A note is a line of text and a status — write one and it follows you to your other devices.</p>`}
+  </div>`;
+}
+
+/* Two surfaces, one for each shape of screen. The phone gets a sheet because a
+   panel pinned to the bottom-right of a phone is the whole screen anyway, and
+   a sheet is the gesture the rest of the phone app already uses. */
+const todoPad = () => (!state.todoOpen || isPhone() ? '' : `
+  <div class="todo-pad" role="dialog" aria-label="To Do">${todoBody()}</div>`);
+
+const todoSheet = () => (!state.todoOpen || !isPhone() ? '' : `
+  <div class="todo-scrim" data-backdrop="todo-close">
+    <div class="todo-drawer" role="dialog" aria-label="To Do">
+      <div class="todo-grab" aria-hidden="true"></div>
+      ${todoBody()}
+    </div>
+  </div>`);
+
+/* The list keeps its place across a render, and every note is sized to its own
+   text. Both have to happen after the tree is replaced: the textareas are new
+   elements with no height of their own, and the scroller is a new scroller. */
+let todoScroll = 0;
+function paintTodo() {
+  root.querySelectorAll('[data-todo-grow]').forEach((el) => {
+    el.style.height = 'auto';
+    el.style.height = `${Math.max(24, el.scrollHeight)}px`;
+  });
+  const list = root.querySelector('[data-todo-list]');
+  if (!list) { todoScroll = 0; return; }
+  list.scrollTop = todoScroll;
 }
 
 function header(v) {
@@ -3993,6 +4114,7 @@ function appbarMenu() {
       ${item('open-report', 'Your Report Cards', 'am-strong')}
       ${workMode() ? item('team-open', 'Your Team') : item('prefs-open', 'Preferences')}
       ${adminRole() ? `<a class="am-item" href="/admin" role="menuitem">Admin dashboard</a>` : ''}
+      ${item('todo-open', 'To Do')}
       ${item('go-blogs', 'Blog')}
       ${item('legal-faq', 'FAQs')}
       ${item('help-open', 'Help')}
@@ -4419,6 +4541,10 @@ const ICON_PATHS = {
      the rest so it reads as one of the set rather than an avatar. */
   person: '<circle cx="12" cy="8.3" r="3.5"/>'
     + '<path d="M5.6 19.9a6.4 6.4 0 0 1 12.8 0"/>',
+  /* The to-do pad. A page with lines on it and a tick, so it reads as a list
+     of things to do rather than as another note field. */
+  todo: '<rect x="4.3" y="3.5" width="15.4" height="17" rx="3"/>'
+    + '<path d="M8 9.1h8M8 12.7h8M8 16.3h4.6"/>',
   scales: '<path d="M12 4.5v15.3M7.7 19.8h8.6M4.3 8.6h15.4"/>'
     + '<path d="M4.3 8.6 2.2 13.3a2.3 2.3 0 0 0 4.2 0Z" stroke-linejoin="round"/>'
     + '<path d="M19.7 8.6l-2.1 4.7a2.3 2.3 0 0 0 4.2 0Z" stroke-linejoin="round"/>'
@@ -8423,6 +8549,7 @@ function render() {
     mPaintBars();
     paintDeck();
     paintChatLog();
+    paintTodo();
     paintTeamDrawer();
     teamLiveWatch();
     return;
@@ -8466,6 +8593,7 @@ function render() {
   ${helpDialog()}
   ${closeAccountDialog()}
   ${backToTop()}
+  ${todoSheet()}
   ${mobileNav(v)}
 </div>`;
 
@@ -8477,6 +8605,7 @@ function render() {
   // The tree was just replaced, so the scroll-driven classes have to be put back.
   paintScrollChrome();
   paintChatLog();
+  paintTodo();
   paintTeamDrawer();
   teamLiveWatch();
   // The dialog exists to be typed in, so put the caret there straight away.
@@ -8747,6 +8876,26 @@ function addPurposeIfNeeded(name) {
   state.purposes = state.purposes.concat([touch('purposes', {
     name, color: MONEY_PALETTE[state.purposes.length % MONEY_PALETTE.length], position: state.purposes.length
   })]);
+}
+
+/* Debounced for the same reason the timer's field is, and it queues the push
+   as well: a note is worth carrying to the other device, but not once per
+   letter. */
+let todoSaveTimer = null;
+function queueTodoSave() {
+  clearTimeout(todoSaveTimer);
+  todoSaveTimer = setTimeout(() => { save(); queueSync(0); }, 500);
+}
+
+/* Notes made and left blank are swept when the pad closes. Pressing New note
+   and thinking better of it should leave nothing behind — an empty card that
+   comes back every time the pad opens is litter, and it would sync as a row. */
+function todoTidy() {
+  const empty = state.todos.filter((t) => !String(t.text || '').trim());
+  if (!empty.length) return;
+  state.todos = state.todos.filter((t) => String(t.text || '').trim());
+  empty.forEach((t) => bury('todos', t.id));
+  save(); queueSync(0);
 }
 
 // Debounced: typing should not hit localStorage on every keystroke.
@@ -10013,6 +10162,53 @@ const ACTIONS = {
   'legal-terms': () => { state.legalOpen = 'terms'; render(); },
   'legal-faq': () => { state.legalOpen = 'faq'; render(); },
 
+  /* Opened from the menus, toggled from the button beside Ask Zimpan. Both
+     menus close behind it: they are the way in, not something to leave hanging
+     over what they opened. */
+  'todo-open': () => {
+    state.todoOpen = true;
+    state.menuOpen = false;
+    if (state.m) state.m.accountOpen = false;
+    render();
+  },
+  'todo-toggle': () => { state.todoOpen = !state.todoOpen; if (!state.todoOpen) todoTidy(); state.todoArm = ''; render(); },
+  'todo-close': () => {
+    if (!state.todoOpen) return;
+    state.todoOpen = false;
+    state.todoArm = '';
+    todoTidy();
+    render();
+  },
+
+  'todo-add': () => {
+    const row = touch('todos', { id: newTodoId(), text: '', status: 'pending', createdAt: Date.now() });
+    state.todos = state.todos.concat([row]);
+    state.todoOpen = true;
+    state.todoArm = '';
+    /* The caret goes into the note that was just made — this is the one place
+       in the app where opening a field is exactly what was asked for. The list
+       is put back to the top with it, since that is where the new note is. */
+    state.focusField = `todo-${row.id}`;
+    todoScroll = 0;
+    /* Saved but not pushed. An empty note is not worth a round trip; the first
+       thing typed into it queues one, and a note abandoned empty is swept up
+       when the pad closes. */
+    save();
+    render();
+  },
+
+  'todo-del': (el) => {
+    const id = String(el.dataset.id || '');
+    const row = findRow('todos', id);
+    if (!row) return;
+    // Written notes take two presses; an empty one has nothing to lose.
+    if ((row.text || '').trim() && state.todoArm !== id) { state.todoArm = id; render(); return; }
+    state.todos = state.todos.filter((t) => t.id !== id);
+    bury('todos', id);
+    state.todoArm = '';
+    save(); queueSync(0); render();
+  },
+
   'menu-toggle': () => { state.menuOpen = !state.menuOpen; render(); },
   'menu-close': () => { if (state.menuOpen) { state.menuOpen = false; render(); } },
 
@@ -10649,6 +10845,17 @@ const ACTIONS = {
 };
 
 const CHANGES = {
+  /* A select rather than a row of chips: four statuses is more than a toggle
+     and less than a menu, it costs one tap, and it opens no keyboard. */
+  'todo-status': (el) => {
+    const row = findRow('todos', el.dataset.id);
+    const want = String(el.value || '');
+    if (!row || row.status === want || !TODO_STATUSES.some((o) => o.key === want)) return;
+    row.status = want;
+    touch('todos', row);
+    state.todoArm = '';
+    save(); queueSync(0); render();
+  },
   'entry-activity': (el) => updateEntry(el.dataset.id, { activity: el.value }),
   'log-filter': (el) => { state.logFilter = el.value || ''; render(); },
   'entry-category': (el) => updateEntry(el.dataset.id, { category: el.value }),
@@ -12858,6 +13065,7 @@ function mAccountSheet() {
   <div style="width:38px;height:4px;border-radius:999px;background:#d5d2df;margin:0 auto 18px;"></div>
   <div style="font-family:var(--font-heading);font-weight:700;font-size:23px;color:#16131f;">${esc(state.displayName || 'Your account')}</div>
   ${email ? `<p style="margin:4px 0 18px;font-size:13.5px;color:#756f88;">${esc(email)}</p>` : '<div style="height:18px;"></div>'}
+  <button class="btn btn-secondary" data-act="todo-open" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">To Do${todoOpenCount() ? ` · ${todoOpenCount()}` : ''}</button>
   <button class="btn btn-secondary" data-act="m-classic" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">Full view</button>
   <button class="btn btn-secondary" data-act="team-open" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">${state.team && state.team.team ? esc(state.team.team.name) : 'Start a team'}</button>
   <button class="btn btn-secondary" data-act="prefs-open" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">Preferences</button>
@@ -12893,6 +13101,7 @@ function mobileApp() {
   ${s.screen === 'detail' ? mDetail() : ''}
   ${tabbed ? mTabs() + mTopButton() : ''}
   ${s.accountOpen ? mAccountSheet() : ''}
+  ${todoSheet()}
   ${s.donateOpen ? mDonateSheet() : ''}
   ${mCalSheet()}
   ${mTimeDialog()}
@@ -13894,6 +14103,20 @@ root.addEventListener('click', (ev) => {
   scheduleRender();
 });
 
+/* And for the pad, which is a panel rather than a dialog: nothing dims behind
+   it, so the page underneath is still there to be clicked, and a click on it
+   means "not now". The column is excluded whole — the button that opens the
+   pad lives in it, and closing from here would fight its own toggle. An armed
+   delete is disarmed on the way out. */
+root.addEventListener('click', (ev) => {
+  if (!state.todoOpen || isPhone()) return;
+  if (ev.target.closest('.fabs')) return;
+  state.todoOpen = false;
+  state.todoArm = '';
+  todoTidy();
+  scheduleRender();
+});
+
 root.addEventListener('click', (ev) => {
   const el = ev.target.closest('[data-act]');
   if (!el || !root.contains(el)) return;
@@ -13968,6 +14191,23 @@ root.addEventListener('input', (ev) => {
 // Text fields feed state without re-rendering, so typing is never interrupted.
 root.addEventListener('input', (ev) => {
   const el = ev.target;
+  /* A note writes into its own row rather than through setDeep, and never
+     re-renders: rebuilding the pad on every keystroke would put a new textarea
+     under the caret. The box grows with what is in it, the store is written on
+     a debounce, and the push waits for a pause in the typing. */
+  if (el.dataset && el.dataset.todoText) {
+    const row = findRow('todos', el.dataset.todoText);
+    if (row) {
+      row.text = el.value;
+      touch('todos', row);
+      if (el.hasAttribute('data-todo-grow')) {
+        el.style.height = 'auto';
+        el.style.height = `${Math.max(24, el.scrollHeight)}px`;
+      }
+      queueTodoSave();
+    }
+    return;
+  }
   if (!el.dataset || !el.dataset.sync) return;
   setDeep(el.dataset.sync, el.value);
 
@@ -14030,6 +14270,7 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && String(state.searchQuery || '').trim()) { ACTIONS['search-clear'](); return; }
   if (ev.key === 'Escape' && state.notePrompt) { closeFollowUp(false); return; }
   if (ev.key === 'Escape' && state.donateOpen) { state.donateOpen = false; render(); return; }
+  if (ev.key === 'Escape' && state.todoOpen) { ACTIONS['todo-close'](); return; }
   if (ev.key === 'Escape' && state.menuOpen) { state.menuOpen = false; render(); return; }
   if (ev.key === 'Escape' && state.legalOpen) { state.legalOpen = null; render(); return; }
   if (ev.key === 'Escape' && state.authOpen && state.authMode !== 'reset') { state.authOpen = false; render(); return; }
@@ -14210,6 +14451,8 @@ root.addEventListener('scroll', (ev) => {
      time, because by then the tree that held it is already gone. */
   if (track.matches && track.matches('.deck-body')) { deckScroll = track.scrollTop; return; }
   // Same reasoning, for the team dialog's drawer. See paintTeamDrawer().
+  // Same reasoning again, for the to-do pad. See paintTodo().
+  if (track.matches && track.matches('[data-todo-list]')) { todoScroll = track.scrollTop; return; }
   if (track.matches && track.matches('[data-tm-drawer]')) {
     teamDrawerScroll = track.scrollTop;
     const more = track.scrollHeight - track.clientHeight - track.scrollTop > 4;

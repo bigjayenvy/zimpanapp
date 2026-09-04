@@ -168,6 +168,28 @@ CREATE TABLE IF NOT EXISTS money_entries (
   CONSTRAINT fk_money_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- The to-do pad. A note is a line of text and a status and nothing else: no
+-- dates, no assignee, no ownership beyond the person who wrote it. Client-minted
+-- ids and a tombstone column, so it syncs on exactly the terms everything else
+-- does — written offline, merged on the stamp, deleted for good on every device.
+--
+-- `status` is text rather than an ENUM so adding one is a client change instead
+-- of a migration, and `created_at` is kept apart from `updated_at` because the
+-- pad is ordered by when a note was written: ordering by the edit stamp would
+-- shuffle the list under the reader every time a word was typed.
+CREATE TABLE IF NOT EXISTS todos (
+  user_id    INT UNSIGNED NOT NULL,
+  id         VARCHAR(64)  NOT NULL,
+  body       VARCHAR(500) NOT NULL,
+  status     VARCHAR(16)  NOT NULL DEFAULT 'pending',
+  created_at BIGINT       NOT NULL,
+  updated_at BIGINT       NOT NULL,
+  deleted    TINYINT(1)   NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, id),
+  KEY idx_todos_updated (user_id, updated_at),
+  CONSTRAINT fk_todos_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Recorded by hand from the payment provider's statement, because the donate
 -- link is a plain PayPal checkout that reports nothing back. `recorded_by` is
 -- kept so an entered figure can always be traced to whoever entered it, and

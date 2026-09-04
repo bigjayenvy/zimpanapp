@@ -61,11 +61,13 @@ const list = (v, field) => {
 };
 
 export const CURRENCIES = ['PHP', 'AED', 'USD', 'EUR', 'SGD', 'HKD'];
+// Kept in step with TODO_STATUSES in app.js, which owns the labels and colours.
+export const TODO_STATUSES = ['pending', 'doing', 'done', 'stuck'];
 
 /* ── pull ── */
 
 export async function changesSince(userId, since) {
-  const [entries, money, categories, purposes, user] = await Promise.all([
+  const [entries, money, categories, purposes, todos, user] = await Promise.all([
     query(`SELECT id, date, activity, category, project_id, from_min, to_min, note, updated_at, deleted
              FROM entries WHERE user_id = ? AND updated_at > ?`, [userId, since]),
     query(`SELECT id, date, activity, purpose, amount_in, amount_out, off_budget, note, updated_at, deleted
@@ -74,6 +76,8 @@ export async function changesSince(userId, since) {
              FROM categories WHERE user_id = ? AND updated_at > ?`, [userId, since]),
     query(`SELECT name, color, position, updated_at, deleted
              FROM purposes WHERE user_id = ? AND updated_at > ?`, [userId, since]),
+    query(`SELECT id, body, status, created_at, updated_at, deleted
+             FROM todos WHERE user_id = ? AND updated_at > ?`, [userId, since]),
     one(`SELECT currency, weight_kg, sleep_min, steps_json, ai_cache_json, tracks_json,
                 timer_start, timer_cat, timer_activity, display_name, updated_at
            FROM users WHERE id = ?`, [userId])
@@ -105,6 +109,11 @@ export async function changesSince(userId, since) {
     })),
     categories: named(categories),
     purposes: named(purposes),
+    todos: todos.map((r) => ({
+      id: r.id, text: r.body || '', status: r.status || 'pending',
+      createdAt: Number(r.created_at),
+      updatedAt: Number(r.updated_at), deleted: !!r.deleted
+    })),
     currency: user && Number(user.updated_at) > since
       ? { value: user.currency, updatedAt: Number(user.updated_at) }
       : null,
@@ -161,6 +170,13 @@ const UPSERT_MONEY = `
   VALUES (?,?,?,?,?,?,?,?,?,?,?)
   ON DUPLICATE KEY UPDATE
     ${['date', 'activity', 'purpose', 'amount_in', 'amount_out', 'off_budget', 'note', 'deleted'].map(guard).join(',\n    ')},
+    updated_at = GREATEST(updated_at, VALUES(updated_at))`;
+
+const UPSERT_TODO = `
+  INSERT INTO todos (user_id, id, body, status, created_at, updated_at, deleted)
+  VALUES (?,?,?,?,?,?,?)
+  ON DUPLICATE KEY UPDATE
+    ${['body', 'status', 'created_at', 'deleted'].map(guard).join(',\n    ')},
     updated_at = GREATEST(updated_at, VALUES(updated_at))`;
 
 const upsertNamed = (table) => `
@@ -223,6 +239,24 @@ export async function applyChanges(userId, changes) {
       cash(e.in ?? 0, `${at}.in`, 1e12), cash(e.out ?? 0, `${at}.out`, 1e12),
       e.offBudget ? 1 : 0,
       str(e.note ?? '', `${at}.note`, 500, { allowEmpty: true }),
+      when, 0];
+  });
+
+  /* A note carries its own text and nothing else. The status is checked against
+     the list rather than stored as sent: it is the one field the server reads
+     back to every device, and an unknown value would paint a chip with no
+     colour and no label on all of them. */
+  const todos = list(c.todos, 'todos').map((t, i) => {
+    const at = `todos[${i}]`;
+    const id = str(t.id, `${at}.id`, 64);
+    const when = stamp(t.updatedAt, `${at}.updatedAt`);
+    if (t.deleted) return [userId, id, '', 'pending', 0, when, 1];
+    const status = str(t.status ?? 'pending', `${at}.status`, 16);
+    if (!TODO_STATUSES.includes(status)) fail(`${at}.status must be one of ${TODO_STATUSES.join(', ')}`);
+    return [userId, id,
+      str(t.text ?? '', `${at}.text`, 500, { allowEmpty: true }),
+      status,
+      stamp(t.createdAt, `${at}.createdAt`),
       when, 0];
   });
 
@@ -349,6 +383,7 @@ export async function applyChanges(userId, changes) {
     await run(UPSERT_MONEY, money);
     await run(upsertNamed('categories'), categories);
     await run(upsertNamed('purposes'), purposes);
+    await run(UPSERT_TODO, todos);
     if (currency) {
       await conn.execute('UPDATE users SET currency = ?, updated_at = ? WHERE id = ? AND updated_at <= ?',
         [currency[0], currency[1], userId, currency[1]]);
@@ -417,7 +452,7 @@ export async function applyChanges(userId, changes) {
     }
   });
 
-  return { entries: entries.length, money: money.length, categories: categories.length, purposes: purposes.length };
+  return { entries: entries.length, money: money.length, categories: categories.length, purposes: purposes.length, todos: todos.length };
 }
 
 export { Invalid };
