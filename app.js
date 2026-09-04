@@ -636,10 +636,14 @@ const pathForRoute = (route, slug) => (
 
 function goRoute(route, slug) {
   const want = slug || '';
-  /* Reached from the header menu as often as from a link now, and a menu left
-     hanging over the page it just moved you to is a menu that failed to act. */
-  const shut = state.menuOpen;
+  /* Reached from a menu as often as from a link now, and a menu left hanging
+     over the page it just moved you to is a menu that failed to act. The
+     phone's account sheet is the same menu in a different shape: it is not
+     drawn on the blog route, so leaving it open would spring it back on the
+     way home. */
+  const shut = state.menuOpen || !!(state.m && state.m.accountOpen);
   state.menuOpen = false;
+  if (state.m) state.m.accountOpen = false;
   if (state.route === route && (state.blogSlug || '') === want) {
     if (shut) render();
     scrollToAnchor(null);
@@ -12147,28 +12151,92 @@ function mDeductSheet() {
    nothing behind them at all — the same figure with no way to ask what it was
    made of. Everything it used to read off the phone's own state is a parameter,
    so the two layouts cannot end up describing different meals. */
+/* Shares of a whole, rounded so they still add up to it.
+
+   Rounding each share on its own leaves the rows a few short of the total
+   printed above them, and a reader who adds up what is on screen is entitled
+   to arrive at that number. The remainder goes to the largest fractions, one
+   each, which is the ordinary way and the only one that cannot hand a row more
+   than it is owed. */
+function apportion(parts, whole) {
+  const sum = parts.reduce((a, n) => a + n, 0);
+  if (!sum || !whole) return parts.map(() => 0);
+  const exact = parts.map((n) => (n * whole) / sum);
+  const out = exact.map((n) => Math.floor(n));
+  let left = Math.round(whole) - out.reduce((a, n) => a + n, 0);
+  exact
+    .map((n, i) => [n - Math.floor(n), i])
+    .sort((a, b) => b[0] - a[0])
+    .forEach(([, i]) => { if (left > 0) { out[i] += 1; left -= 1; } });
+  return out;
+}
+
 function calBreakdown(kind, dates, report, scope, closeAct) {
   if (kind !== 'burn' && kind !== 'food') return '';
-  const items = mCalItems(dates, kind);
+  const read = mCalItems(dates, kind);
   const food = kind === 'food';
   const tone = food ? '#e9a13b' : '#0e9f6e';
-  const localTotal = items.reduce((a, r) => a + r.kcal, 0);
-  const counted = items.filter((r) => !r.vague).length;
+  const localTotal = read.reduce((a, r) => a + r.kcal, 0);
+  const counted = read.filter((r) => !r.vague).length;
   /* Grams for the window. When an AI estimate exists it replaces the local
      reading here exactly as it does on the dial — the two showing different
      totals for the same meals is not a second opinion, it is a question the
      reader cannot answer. The local figure stays, named, underneath. */
   const ai = report && report.ai;
-  const total = ai ? ai.kcal : localTotal;
-  const macroTotal = food && counted
-    ? (ai
-      ? { protein: ai.protein, carbs: ai.carbs, fat: ai.fat }
-      : items.reduce((a, r) => ({
+
+  /* This panel is a breakdown of the figure on the dial, so that is the figure
+     it adds up to. Everything below shares it out.
+
+     It did not. The header showed the day's estimate and every meal under it
+     showed a separate reading, so a day estimated at 3,073 was itemised as
+     three meals adding to 4,622 — two answers to one question, on one screen,
+     with a footnote admitting it. Two things caused that, and both are fixed
+     by the same rule:
+
+     A calibration is asked for a day's worth of text in one request, so what
+     it knows is the day's total. The rows kept the table's reading while the
+     header took the model's, and the entry cards in the log — which had
+     already been taught to apportion — agreed with neither.
+
+     And even with no calibration the two disagreed, because the header prices
+     every meal as one piece of text while the rows price each meal alone, and
+     a table read twice over does not give the same answer both times.
+
+     So the rows are shares of the headline, in proportion to what each one
+     weighed when read on its own. Each macro is shared on its own ratio, since
+     a model redistributes protein and fat rather than merely scaling them. */
+  const headline = food && report ? Math.max(0, Math.round(report.kcal)) : localTotal;
+  const total = headline;
+  const grams = ai
+    ? { protein: ai.protein, carbs: ai.carbs, fat: ai.fat }
+    : (report && report.local
+      ? { protein: report.local.protein, carbs: report.local.carbs, fat: report.local.fat }
+      : read.reduce((a, r) => ({
         protein: a.protein + ((r.macros && r.macros.protein) || 0),
         carbs: a.carbs + ((r.macros && r.macros.carbs) || 0),
         fat: a.fat + ((r.macros && r.macros.fat) || 0)
-      }), { protein: 0, carbs: 0, fat: 0 }))
-    : null;
+      }), { protein: 0, carbs: 0, fat: 0 }));
+  const macroTotal = food && counted ? grams : null;
+
+  const priced = read.filter((r) => !r.vague);
+  const items = !food || !report || !priced.length || !localTotal || !headline ? read : (() => {
+    const kcals = apportion(priced.map((r) => r.kcal), headline);
+    const shares = ['protein', 'carbs', 'fat'].reduce((acc, key) => {
+      acc[key] = apportion(priced.map((r) => (r.macros && r.macros[key]) || 0), grams[key] || 0);
+      return acc;
+    }, {});
+    let i = -1;
+    return read.map((r) => {
+      if (r.vague) return r;
+      i += 1;
+      return Object.assign({}, r, {
+        kcal: kcals[i],
+        macros: r.macros ? Object.assign({}, r.macros, {
+          protein: shares.protein[i], carbs: shares.carbs[i], fat: shares.fat[i]
+        }) : r.macros
+      });
+    });
+  })();
 
   /* Offered on a single day only, which is the same rule the desktop follows:
      across a week the text handed over is every meal of every day run
@@ -12241,7 +12309,7 @@ function calBreakdown(kind, dates, report, scope, closeAct) {
   ${refine}
   <p style="margin:14px 0 0;font-size:11.5px;line-height:1.5;color:#9995ab;">
     ${food
-      ? `Calories and grams are read from what you wrote in each entry, against a table of typical servings. An entry with nothing written down cannot be priced, which is what “not read” means.${ai ? ' The totals above came from the AI estimate; the figures on each meal are the local reading.' : ''}`
+      ? `Calories and grams are read from what you wrote in each entry, against a table of typical servings. An entry with nothing written down cannot be priced, which is what “not read” means. The day is read as a whole${ai ? ' — by AI, from what you wrote —' : ''} and shared across the meals in proportion to what each one weighs, so the figures here add up to the total above.`
       : 'Priced from the activity and how long it ran, against your weight. Overlapping entries are counted once.'}
   </p>`;
 }
@@ -13252,6 +13320,7 @@ function mAccountSheet() {
   <button class="btn btn-secondary" data-act="m-classic" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">Full view</button>
   <button class="btn btn-secondary" data-act="team-open" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">${state.team && state.team.team ? esc(state.team.team.name) : 'Start a team'}</button>
   <button class="btn btn-secondary" data-act="prefs-open" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">Preferences</button>
+  <button class="btn btn-secondary" data-act="go-blogs" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">Blog</button>
   <!-- The phone app had no route to either of these at all, which is not a
        thing to ship an app to strangers without. -->
   <div style="display:flex;gap:16px;justify-content:center;margin:14px 0 10px;">
