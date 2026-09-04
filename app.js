@@ -976,6 +976,8 @@ const state = {
      take away something written. */
   todoOpen: false,
   todoArm: '',
+  // The "why is this stuck" dialog: which note, and what has been typed.
+  todoWhy: null,
 
   // The header menu, and the close-account confirmation it opens.
   menuOpen: false,
@@ -1042,13 +1044,13 @@ function serialise(kind, r) {
      treats it as the thing an admin cannot see. */
   if (kind === 'entries') return { id: r.id, date: r.date, activity: r.activity, category: r.category, project: r.project || undefined, from: r.from, to: r.to, note: r.note || '', updatedAt: r.updatedAt || 0 };
   if (kind === 'money') return { id: r.id, date: r.date, activity: r.activity, purpose: r.purpose, in: Number(r.in) || 0, out: Number(r.out) || 0, note: r.note || '', updatedAt: r.updatedAt || 0 };
-  if (kind === 'todos') return { id: r.id, text: r.text || '', status: r.status || 'pending', createdAt: r.createdAt || 0, updatedAt: r.updatedAt || 0 };
+  if (kind === 'todos') return { id: r.id, text: r.text || '', status: r.status || 'pending', blocked: r.blocked || undefined, createdAt: r.createdAt || 0, updatedAt: r.updatedAt || 0 };
   return { name: r.name, color: r.color, position: r.position || 0, updatedAt: r.updatedAt || 0 };
 }
 function deserialise(kind, r) {
   if (kind === 'entries') return { id: r.id, date: r.date, activity: r.activity, category: r.category, project: r.project || undefined, from: r.from, to: r.to, note: r.note || '', updatedAt: r.updatedAt };
   if (kind === 'money') return { id: r.id, date: r.date, activity: r.activity, purpose: r.purpose, in: r.in, out: r.out, note: r.note || '', updatedAt: r.updatedAt };
-  if (kind === 'todos') return { id: r.id, text: r.text || '', status: r.status || 'pending', createdAt: r.createdAt || 0, updatedAt: r.updatedAt };
+  if (kind === 'todos') return { id: r.id, text: r.text || '', status: r.status || 'pending', blocked: r.blocked || undefined, createdAt: r.createdAt || 0, updatedAt: r.updatedAt };
   return { name: r.name, color: r.color, position: r.position, updatedAt: r.updatedAt };
 }
 
@@ -3973,19 +3975,27 @@ function backToTop() {
    written on and glanced at. Nothing here is shown to anyone else — a team
    admin sees hours against projects and never this. */
 const TODO_STATUSES = [
-  { key: 'pending', label: 'Pending', tone: '#6b6580', tint: '#efedf5' },
-  { key: 'doing', label: 'In progress', tone: '#5f3ac9', tint: '#f2eefe' },
-  { key: 'done', label: 'Complete', tone: '#0e7a5c', tint: '#e3f5ed' },
-  { key: 'stuck', label: 'Stuck', tone: '#8a2f4a', tint: '#fdecf1' }
+  { key: 'pending', label: 'Pending', tone: '#6b6580', tint: '#efedf5', rank: 1 },
+  { key: 'doing', label: 'In progress', tone: '#5f3ac9', tint: '#f2eefe', rank: 0 },
+  { key: 'done', label: 'Complete', tone: '#0e7a5c', tint: '#e3f5ed', rank: 2 },
+  { key: 'stuck', label: 'Stuck', tone: '#8a2f4a', tint: '#fdecf1', rank: 3 }
 ];
 const TODO_MAX = 500;
 const todoStatus = (k) => TODO_STATUSES.find((s) => s.key === k) || TODO_STATUSES[0];
 
-/* Newest first, and it stays that way whatever the statuses do. Sinking the
-   complete ones to the bottom would move a note the moment it was marked —
-   the list would rearrange itself under the hand that just touched it, and the
-   next click would land on something else. */
-const todoRows = () => state.todos.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+/* Grouped by status, in the order the pad is read: what is being worked on
+   first, then what is waiting, then what is finished, and what is blocked at
+   the bottom where it can be looked at deliberately rather than scrolled past.
+   Newest first inside each group, so a group behaves like the pad did.
+
+   Marking a note therefore moves it, which is the point — the list is a
+   picture of where things stand, and it is worth rearranging to keep that
+   true. The chip and the rank come from one table, so the two cannot disagree
+   about where a status belongs. */
+const todoRows = () => state.todos.slice().sort((a, b) => (
+  todoStatus(a.status).rank - todoStatus(b.status).rank
+  || (b.createdAt || 0) - (a.createdAt || 0)
+));
 const todoOpenCount = () => state.todos.filter((t) => t.status !== 'done').length;
 
 /* Client-minted, like every other id in this app, and checked for a collision
@@ -4001,11 +4011,19 @@ function newTodoId() {
 function todoNote(t) {
   const st = todoStatus(t.status);
   const armed = state.todoArm === t.id;
+  /* Only while it is stuck. The reason is kept when a note moves off stuck —
+     something blocked twice is usually blocked on the same thing — but showing
+     it under a note that is running again would be a lie about the present. */
+  const why = t.status === 'stuck' ? String(t.blocked || '').trim() : '';
   return `
   <div class="todo-note" style="--tone:${st.tone};--tint:${st.tint};">
     <textarea class="todo-text" rows="1" maxlength="${TODO_MAX}"
       data-k="todo-${esc(t.id)}" data-todo-text="${esc(t.id)}" data-todo-grow
       placeholder="What needs doing?" aria-label="Note">${esc(t.text || '')}</textarea>
+    ${t.status === 'stuck' ? `
+    <button class="todo-why" data-act="todo-why" data-id="${esc(t.id)}">
+      ${why ? `<span class="todo-why-mark">Stuck:</span> ${esc(why)}` : 'Say why this is stuck'}
+    </button>` : ''}
     <div class="todo-foot">
       <select class="todo-status" data-change="todo-status" data-id="${esc(t.id)}" aria-label="Status">
         ${TODO_STATUSES.map((o) => `<option value="${o.key}"${o.key === st.key ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}
@@ -4037,28 +4055,73 @@ function todoBody() {
 /* Two surfaces, one for each shape of screen. The phone gets a sheet because a
    panel pinned to the bottom-right of a phone is the whole screen anyway, and
    a sheet is the gesture the rest of the phone app already uses. */
+/* The entrance runs on the way in and never again.
+
+   Every render replaces the whole tree, so the pad is a new element each time —
+   and an animation declared on the class replayed on every one of them. A sync
+   landing behind an open pad made it drop to nothing and slide back up, which
+   is not an entrance, it is a flicker. `is-new` is on only for the render that
+   puts the pad on screen; paintTodo clears it once it is there, and sets it
+   again when the pad has gone, so the next opening still arrives. */
+let todoFresh = true;
+
 const todoPad = () => (!state.todoOpen || isPhone() ? '' : `
-  <div class="todo-pad" role="dialog" aria-label="To Do">${todoBody()}</div>`);
+  <div class="todo-pad${todoFresh ? ' is-new' : ''}" role="dialog" aria-label="To Do">${todoBody()}</div>`);
 
 const todoSheet = () => (!state.todoOpen || !isPhone() ? '' : `
-  <div class="todo-scrim" data-backdrop="todo-close">
+  <div class="todo-scrim${todoFresh ? ' is-new' : ''}" data-backdrop="todo-close">
     <div class="todo-drawer" role="dialog" aria-label="To Do">
       <div class="todo-grab" aria-hidden="true"></div>
       ${todoBody()}
     </div>
   </div>`);
 
+/* Asked when a note is marked stuck, and reachable afterwards from the line
+   under it. Skippable on purpose: "stuck" is worth recording even when there
+   is no time to say why, and a dialog that will not let go of the pad until it
+   is fed would stop people marking things honestly. */
+function todoWhyDialog() {
+  const w = state.todoWhy;
+  if (!w) return '';
+  const row = findRow('todos', w.id);
+  if (!row) return '';
+  const had = String(row.blocked || '').trim();
+  return lightbox({
+    icon: 'history',
+    tone: '#8a2f4a',
+    kicker: row.text ? `“${String(row.text).slice(0, 60)}”` : 'This note',
+    title: 'What is holding this up?',
+    body: `
+      <p style="margin:0 0 10px;font-size:12.5px;color:var(--color-neutral-600);">
+        Optional, and only for you — a line now is what makes this readable in a week.</p>
+      <textarea class="input" data-k="todo-why-draft" data-sync="todoWhy.draft" rows="3" maxlength="500"
+        placeholder="e.g. waiting on the bank to confirm the transfer"
+        style="width:100%;resize:vertical;min-height:78px;font:inherit;font-size:14px;line-height:1.5;padding:10px 12px;">${esc(w.draft)}</textarea>`,
+    closeAct: 'todo-why-skip',
+    actions: `
+      ${had ? `<button class="btn btn-ghost" data-act="todo-why-clear" style="color:#8a2f4a;">Remove</button>` : ''}
+      <button class="btn btn-ghost" data-act="todo-why-skip">Not now</button>
+      <button class="btn btn-primary" data-act="todo-why-save">Save</button>`
+  });
+}
+
 /* The list keeps its place across a render, and every note is sized to its own
    text. Both have to happen after the tree is replaced: the textareas are new
    elements with no height of their own, and the scroller is a new scroller. */
 let todoScroll = 0;
 function paintTodo() {
+  const list = root.querySelector('[data-todo-list]');
+  /* Nothing on screen: the next one to open is a new one, and starts at its
+     own top rather than where the last one was left. */
+  if (!list) { todoScroll = 0; todoFresh = true; return; }
+  todoFresh = false;
+  /* Sized here rather than by rows, because a note is as tall as what is
+     written in it. Done before the frame is painted, in the same task as the
+     tree that was just built, so no half-height box is ever shown. */
   root.querySelectorAll('[data-todo-grow]').forEach((el) => {
     el.style.height = 'auto';
     el.style.height = `${Math.max(24, el.scrollHeight)}px`;
   });
-  const list = root.querySelector('[data-todo-list]');
-  if (!list) { todoScroll = 0; return; }
   list.scrollTop = todoScroll;
 }
 
@@ -8594,6 +8657,7 @@ function render() {
   ${closeAccountDialog()}
   ${backToTop()}
   ${todoSheet()}
+  ${todoWhyDialog()}
   ${mobileNav(v)}
 </div>`;
 
@@ -10180,6 +10244,35 @@ const ACTIONS = {
     render();
   },
 
+  // The line under a stuck note, which is the way back into the same question.
+  'todo-why': (el) => {
+    const row = findRow('todos', el.dataset.id);
+    if (!row) return;
+    state.todoWhy = { id: row.id, draft: String(row.blocked || '') };
+    state.focusField = 'todo-why-draft';
+    render();
+  },
+  'todo-why-skip': () => { state.todoWhy = null; render(); },
+  'todo-why-save': () => {
+    const w = state.todoWhy;
+    const row = w && findRow('todos', w.id);
+    if (!row) { state.todoWhy = null; render(); return; }
+    const said = String(w.draft || '').trim();
+    // Saving nothing is the same as not saying, rather than an empty reason.
+    if (said) row.blocked = said.slice(0, 500);
+    else delete row.blocked;
+    touch('todos', row);
+    state.todoWhy = null;
+    save(); queueSync(0); render();
+  },
+  'todo-why-clear': () => {
+    const w = state.todoWhy;
+    const row = w && findRow('todos', w.id);
+    if (row) { delete row.blocked; touch('todos', row); save(); queueSync(0); }
+    state.todoWhy = null;
+    render();
+  },
+
   'todo-add': () => {
     const row = touch('todos', { id: newTodoId(), text: '', status: 'pending', createdAt: Date.now() });
     state.todos = state.todos.concat([row]);
@@ -10854,8 +10947,17 @@ const CHANGES = {
     row.status = want;
     touch('todos', row);
     state.todoArm = '';
+    /* The status is set either way — the question is asked after the fact, not
+       as a toll on the way through. Only when there is nothing on file: a note
+       that goes back to being stuck for the reason it already names does not
+       need asking again, and the line under it is there to edit. */
+    if (want === 'stuck' && !String(row.blocked || '').trim()) {
+      state.todoWhy = { id: row.id, draft: '' };
+      state.focusField = 'todo-why-draft';
+    }
     save(); queueSync(0); render();
   },
+
   'entry-activity': (el) => updateEntry(el.dataset.id, { activity: el.value }),
   'log-filter': (el) => { state.logFilter = el.value || ''; render(); },
   'entry-category': (el) => updateEntry(el.dataset.id, { category: el.value }),
@@ -13102,6 +13204,7 @@ function mobileApp() {
   ${tabbed ? mTabs() + mTopButton() : ''}
   ${s.accountOpen ? mAccountSheet() : ''}
   ${todoSheet()}
+  ${todoWhyDialog()}
   ${s.donateOpen ? mDonateSheet() : ''}
   ${mCalSheet()}
   ${mTimeDialog()}
@@ -14111,6 +14214,8 @@ root.addEventListener('click', (ev) => {
 root.addEventListener('click', (ev) => {
   if (!state.todoOpen || isPhone()) return;
   if (ev.target.closest('.fabs')) return;
+  // The stuck question is the pad's own dialog, wherever it happens to sit.
+  if (state.todoWhy || ev.target.closest('.lb-back')) return;
   state.todoOpen = false;
   state.todoArm = '';
   todoTidy();
@@ -14270,6 +14375,7 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && String(state.searchQuery || '').trim()) { ACTIONS['search-clear'](); return; }
   if (ev.key === 'Escape' && state.notePrompt) { closeFollowUp(false); return; }
   if (ev.key === 'Escape' && state.donateOpen) { state.donateOpen = false; render(); return; }
+  if (ev.key === 'Escape' && state.todoWhy) { state.todoWhy = null; render(); return; }
   if (ev.key === 'Escape' && state.todoOpen) { ACTIONS['todo-close'](); return; }
   if (ev.key === 'Escape' && state.menuOpen) { state.menuOpen = false; render(); return; }
   if (ev.key === 'Escape' && state.legalOpen) { state.legalOpen = null; render(); return; }

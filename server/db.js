@@ -215,6 +215,18 @@ async function alterExisting() {
     await pool.query('ALTER TABLE money_entries ADD COLUMN off_budget TINYINT(1) NOT NULL DEFAULT 0 AFTER amount_out');
   }
 
+  /* Why a to-do is stuck. Added after the pad shipped, so an install that
+     already has the table needs the column rather than the table. */
+  const [why] = await pool.query(
+    'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+    [CONFIG.database, 'todos', 'blocked']);
+  if (!why.length) {
+    const [t] = await pool.query(
+      'SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?',
+      [CONFIG.database, 'todos']);
+    if (t.length) await pool.query('ALTER TABLE todos ADD COLUMN blocked VARCHAR(500) NULL AFTER status');
+  }
+
   for (const table of ['entries', 'money_entries']) {
     const [c] = await pool.query(
       'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',

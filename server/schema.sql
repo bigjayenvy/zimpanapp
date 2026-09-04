@@ -182,6 +182,10 @@ CREATE TABLE IF NOT EXISTS todos (
   id         VARCHAR(64)  NOT NULL,
   body       VARCHAR(500) NOT NULL,
   status     VARCHAR(16)  NOT NULL DEFAULT 'pending',
+  -- Why a note is stuck, asked for when it is marked so. Null on every other
+  -- status, and kept rather than cleared when one moves off stuck: a note that
+  -- goes back to being blocked is usually blocked on the same thing.
+  blocked    VARCHAR(500) NULL,
   created_at BIGINT       NOT NULL,
   updated_at BIGINT       NOT NULL,
   deleted    TINYINT(1)   NOT NULL DEFAULT 0,

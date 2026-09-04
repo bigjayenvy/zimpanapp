@@ -76,7 +76,7 @@ export async function changesSince(userId, since) {
              FROM categories WHERE user_id = ? AND updated_at > ?`, [userId, since]),
     query(`SELECT name, color, position, updated_at, deleted
              FROM purposes WHERE user_id = ? AND updated_at > ?`, [userId, since]),
-    query(`SELECT id, body, status, created_at, updated_at, deleted
+    query(`SELECT id, body, status, blocked, created_at, updated_at, deleted
              FROM todos WHERE user_id = ? AND updated_at > ?`, [userId, since]),
     one(`SELECT currency, weight_kg, sleep_min, steps_json, ai_cache_json, tracks_json,
                 timer_start, timer_cat, timer_activity, display_name, updated_at
@@ -111,6 +111,8 @@ export async function changesSince(userId, since) {
     purposes: named(purposes),
     todos: todos.map((r) => ({
       id: r.id, text: r.body || '', status: r.status || 'pending',
+      // Sent only when there is one, like offBudget and project above.
+      blocked: r.blocked || undefined,
       createdAt: Number(r.created_at),
       updatedAt: Number(r.updated_at), deleted: !!r.deleted
     })),
@@ -173,10 +175,10 @@ const UPSERT_MONEY = `
     updated_at = GREATEST(updated_at, VALUES(updated_at))`;
 
 const UPSERT_TODO = `
-  INSERT INTO todos (user_id, id, body, status, created_at, updated_at, deleted)
-  VALUES (?,?,?,?,?,?,?)
+  INSERT INTO todos (user_id, id, body, status, blocked, created_at, updated_at, deleted)
+  VALUES (?,?,?,?,?,?,?,?)
   ON DUPLICATE KEY UPDATE
-    ${['body', 'status', 'created_at', 'deleted'].map(guard).join(',\n    ')},
+    ${['body', 'status', 'blocked', 'created_at', 'deleted'].map(guard).join(',\n    ')},
     updated_at = GREATEST(updated_at, VALUES(updated_at))`;
 
 const upsertNamed = (table) => `
@@ -250,12 +252,14 @@ export async function applyChanges(userId, changes) {
     const at = `todos[${i}]`;
     const id = str(t.id, `${at}.id`, 64);
     const when = stamp(t.updatedAt, `${at}.updatedAt`);
-    if (t.deleted) return [userId, id, '', 'pending', 0, when, 1];
+    if (t.deleted) return [userId, id, '', 'pending', null, 0, when, 1];
     const status = str(t.status ?? 'pending', `${at}.status`, 16);
     if (!TODO_STATUSES.includes(status)) fail(`${at}.status must be one of ${TODO_STATUSES.join(', ')}`);
+    const blocked = t.blocked == null || t.blocked === ''
+      ? null : str(t.blocked, `${at}.blocked`, 500);
     return [userId, id,
       str(t.text ?? '', `${at}.text`, 500, { allowEmpty: true }),
-      status,
+      status, blocked,
       stamp(t.createdAt, `${at}.createdAt`),
       when, 0];
   });

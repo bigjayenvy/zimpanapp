@@ -972,8 +972,10 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     background: #fffdf2; border: 1px solid #ece2bd; border-radius: 18px;
     box-shadow: 0 18px 44px color-mix(in srgb, #2b2b2d 26%, transparent);
     padding: 12px 12px 14px; margin-bottom: 4px;
-    animation: zStep .18s ease both;
   }
+  /* Only on the render that opens it. See todoFresh in app.js: the class is on
+     for one render, so a sync landing behind an open pad cannot replay this. */
+  .todo-pad.is-new { animation: zStep .18s ease both; }
   .todo-head { display: flex; align-items: center; gap: 8px; padding: 0 2px 10px; }
   .todo-name {
     font-family: var(--font-heading); font-weight: 700; font-size: 16px; color: #4a3f0d;
@@ -1012,6 +1014,17 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .todo-text:focus { outline: 0; }
   .todo-text::placeholder { color: #a8a2b8; }
+  /* The reason a note is stuck, under the note and above its status. A button
+     because it is the way back into the question, but drawn as a line of text:
+     it is something to read, and only occasionally something to press. */
+  .todo-why {
+    display: block; width: 100%; text-align: left; border: 0; cursor: pointer;
+    background: var(--tint); border-radius: 9px; padding: 6px 9px; margin: 0 0 8px;
+    font: inherit; font-size: 12px; line-height: 1.45; color: var(--tone);
+  }
+  .todo-why:hover { background: color-mix(in srgb, var(--tone) 14%, transparent); }
+  .todo-why-mark { font-weight: 700; }
+
   .todo-foot { display: flex; align-items: center; gap: 8px; }
   .todo-status {
     flex: 1 1 auto; min-width: 0; -webkit-appearance: none; appearance: none;
@@ -1039,9 +1052,10 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .todo-drawer {
     background: #fffdf2; border-radius: 28px 28px 0 0; padding: 12px 16px 22px;
-    box-shadow: 0 -18px 44px rgba(47, 28, 102, .24); animation: zStep .26s ease both;
+    box-shadow: 0 -18px 44px rgba(47, 28, 102, .24);
     display: flex; flex-direction: column; max-height: calc(100dvh - 60px);
   }
+  .todo-scrim.is-new .todo-drawer { animation: zStep .26s ease both; }
   .todo-drawer .todo-list { max-height: 60vh; }
   .todo-grab { width: 38px; height: 4px; border-radius: 999px; background: #e0d5a8; margin: 2px auto 12px; }
 
