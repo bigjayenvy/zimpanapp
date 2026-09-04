@@ -7357,8 +7357,8 @@ function addEntryCard(v) {
                siblings they split across lines the moment the row runs out of
                width, which reads as two unrelated fields. -->
           <div style="display: flex; gap: 10px; flex: 1 1 246px; min-width: 216px;">
-            <div class="field" style="flex: 1 1 0; min-width: 0;"><label>From</label><input class="input" type="time" data-k="form-from" data-sync="form.from" data-live-dur value="${esc(state.form.from)}"></div>
-            <div class="field" style="flex: 1 1 0; min-width: 0;"><label>To</label><input class="input" type="time" data-k="form-to" data-sync="form.to" data-live-dur value="${esc(state.form.to)}"></div>
+            <div class="field" style="flex: 1 1 0; min-width: 0;"><label>From</label><input class="input" type="time" required data-k="form-from" data-sync="form.from" data-live-dur value="${esc(state.form.from)}"${state.formError.entry && !String(state.form.from || '').trim() ? ' aria-invalid="true"' : ''}></div>
+            <div class="field" style="flex: 1 1 0; min-width: 0;"><label>To</label><input class="input" type="time" required data-k="form-to" data-sync="form.to" data-live-dur value="${esc(state.form.to)}"${state.formError.entry && !String(state.form.to || '').trim() ? ' aria-invalid="true"' : ''}></div>
           </div>
           <div class="field" style="flex: 0 1 100px; min-width: 92px;"><label>Time spent</label><div data-form-duration style="height: 36px; display: flex; align-items: center; font-size: 14px; font-variant-numeric: tabular-nums; color: var(--color-accent-700);">${esc(v.formDuration)}</div></div>
           <button class="btn btn-primary" data-act="add-entry" style="height: 36px;">Add entry</button>
@@ -8952,6 +8952,13 @@ function scheduleRender() {
   setTimeout(() => { renderQueued = false; render(); }, 0);
 }
 
+/* A time field that has been emptied rather than changed. See the note on the
+   entry-from/entry-to handlers. */
+function editEntryTime(el, key) {
+  if (!String(el.value || '').trim()) { scheduleRender(); return; }
+  updateEntry(el.dataset.id, { [key]: parseHm(el.value) });
+}
+
 function updateEntry(id, patch) {
   /* A row moved to another category moves to that category's project, and off
      a project entirely if the new category is not one — which is how a member
@@ -9069,7 +9076,8 @@ function toggleTimer() {
 }
 
 function addEntry() {
-  const f = parseHm(state.form.from), t = parseHm(state.form.to);
+  const from = String(state.form.from || '').trim();
+  const to = String(state.form.to || '').trim();
   /* Both refusals used to be a silent `return`, which looked like the button
      was broken rather than like the form was incomplete. */
   if (!state.form.activity.trim()) {
@@ -9078,6 +9086,22 @@ function addEntry() {
     render();
     return;
   }
+  /* An empty time is not a time. parseHm reads a blank field as 0, which is
+     midnight, so a missing To turned "washed the car at 9am" into fifteen
+     hours ending at midnight and dated the following day — saved without a
+     word, because a to-before-from is exactly how an overnight entry is
+     written. Both are required, and the caret goes to whichever is missing. */
+  if (!from || !to) {
+    state.formError.entry = !from && !to
+      ? 'From and To are required — say when it started and when it ended.'
+      : !from
+        ? 'From is required — say when it started.'
+        : 'To is required — say when it ended.';
+    state.focusField = !from ? 'form-from' : 'form-to';
+    render();
+    return;
+  }
+  const f = parseHm(from), t = parseHm(to);
   if (t === f) {
     state.formError.entry = 'From and To are the same time.';
     render();
@@ -10018,7 +10042,8 @@ function mTimeDialog() {
     kicker: 'When was that?',
     title: 'Type the times',
     closeAct: 'm-time-close',
-    body: `<div style="display:flex;gap:12px;margin-top:4px;">${field('from', 'Started')}${field('to', 'Ended')}</div>`,
+    body: `<div style="display:flex;gap:12px;margin-top:4px;">${field('from', 'Started')}${field('to', 'Ended')}</div>
+      ${t.error ? `<p style="margin:10px 0 0;font-size:13px;color:#8a2f4a;">${esc(t.error)}</p>` : ''}`,
     actions: `
       <button class="btn btn-secondary" data-act="m-time-close">Cancel</button>
       <button class="btn btn-primary" data-act="m-time-save">Set them</button>`,
@@ -10784,10 +10809,18 @@ const ACTIONS = {
   'm-time-save': () => {
     const t = state.m.timeEdit;
     if (!t) return;
-    /* A cleared field is not a time. Rather than reading it as midnight — which
-       is what parseHm would do with an empty string — the dialog simply stays
-       open with what is still in it. */
-    if (!t.from || !t.to) return;
+    /* A cleared field is not a time — parseHm would read it as midnight. The
+       dialog stays open, and now says which one it is waiting for: a button
+       that does nothing is indistinguishable from a broken one. */
+    if (!t.from || !t.to) {
+      state.m.timeEdit = Object.assign({}, t, {
+        error: !t.from && !t.to ? 'Both times are needed.'
+          : !t.from ? 'Say when it started.' : 'Say when it ended.'
+      });
+      state.focusField = `m-time-${!t.from ? 'from' : 'to'}`;
+      render();
+      return;
+    }
     const start = Math.max(0, Math.min(1439, parseHm(t.from)));
     const span = ((parseHm(t.to) - start) + 1440) % 1440;
     state.m.startMin = start;
@@ -11015,12 +11048,18 @@ const CHANGES = {
     else render();
   },
   'team-edit-activity': (el) => teamEdit(el.dataset.id, { activity: el.value }),
-  'team-edit-from': (el) => teamEdit(el.dataset.id, { from: parseHm(el.value) }),
-  'team-edit-to': (el) => teamEdit(el.dataset.id, { to: parseHm(el.value) }),
+  /* Clearing the box on a row that exists is the same mistake as leaving it
+     blank on a new one, and would write midnight over a real time. The row
+     keeps what it had; the re-render puts the old value back in the field,
+     which is the only answer a cleared box needs. */
+  'team-edit-from': (el) => (String(el.value || '').trim()
+    ? teamEdit(el.dataset.id, { from: parseHm(el.value) }) : scheduleRender()),
+  'team-edit-to': (el) => (String(el.value || '').trim()
+    ? teamEdit(el.dataset.id, { to: parseHm(el.value) }) : scheduleRender()),
   'team-edit-project': (el) => teamEdit(el.dataset.id, { project: el.value }),
 
-  'entry-from': (el) => updateEntry(el.dataset.id, { from: parseHm(el.value) }),
-  'entry-to': (el) => updateEntry(el.dataset.id, { to: parseHm(el.value) }),
+  'entry-from': (el) => editEntryTime(el, 'from'),
+  'entry-to': (el) => editEntryTime(el, 'to'),
   'money-activity': (el) => updateMoney(el.dataset.id, { activity: el.value }),
   'money-purpose': (el) => updateMoney(el.dataset.id, { purpose: el.value }),
   'money-in': (el) => updateMoney(el.dataset.id, { in: money2(el.value) }),
