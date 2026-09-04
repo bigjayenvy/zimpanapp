@@ -13,7 +13,7 @@ import {
   hashPassword, verifyPassword, createSession, userForToken, destroySession,
   parseCookies, setSessionCookie, clearSessionCookie, rateLimit, retryLabel, COOKIE
 } from './auth.js';
-import { changesSince, applyChanges, Invalid, CURRENCIES } from './sync.js';
+import { changesSince, applyChanges, Invalid, CURRENCIES, watermark } from './sync.js';
 import { verifyGoogleIdToken } from './google.js';
 import { sendResetEmail, sendInviteEmail, sendTicketEmails, sendSignupEmail, mailerConfigured, mailerProblem } from './mail.js';
 import {
@@ -420,7 +420,11 @@ app.post('/api/reset', wrap(async (req, res) => {
 app.get('/api/sync', requireUser, wrap(async (req, res) => {
   const since = Number(req.query.since) || 0;
   touchSeen(req.user.id, req.user.lastSeenAt).catch(() => {});
-  res.json({ serverTime: now(), changes: await changesSince(req.user.id, since) });
+  /* The mark is taken before the read, and held a little behind the clock —
+     see watermark(). Both halves matter: taken after, a row written during the
+     read would be stamped below a mark the client is about to adopt. */
+  const mark = watermark();
+  res.json({ serverTime: mark, changes: await changesSince(req.user.id, since) });
 }));
 
 app.post('/api/sync', requireUser, wrap(async (req, res) => {
@@ -430,7 +434,8 @@ app.post('/api/sync', requireUser, wrap(async (req, res) => {
     const applied = await applyChanges(req.user.id, req.body && req.body.changes);
     // Read after the write, so the client sees its own rows echoed back and can
     // settle on one canonical version.
-    res.json({ serverTime: now(), applied, changes: await changesSince(req.user.id, since) });
+    const mark = watermark();
+    res.json({ serverTime: mark, applied, changes: await changesSince(req.user.id, since) });
   } catch (err) {
     if (err instanceof Invalid) return res.status(400).json({ error: err.message });
     throw err;

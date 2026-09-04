@@ -215,6 +215,39 @@ async function alterExisting() {
     await pool.query('ALTER TABLE money_entries ADD COLUMN off_budget TINYINT(1) NOT NULL DEFAULT 0 AFTER amount_out');
   }
 
+  /* The server's own clock on each synced row, and what a pull is measured
+     against from now on. See the note by `categories` in schema.sql.
+
+     Backfilled to the moment of the migration rather than from updated_at.
+     Copying updated_at would preserve the fault for every row already written
+     — a row stamped by a slow clock stays behind the other device's mark, and
+     stays undeliverable for good. One shared stamp, later than every watermark
+     any device is holding, offers the whole account to every device once. They
+     merge it onto what they already have and settle; the cost is a single
+     re-read of a history they mostly have, which is the same work a new device
+     does on its first sync.
+
+     The index matters: this column is the WHERE of every pull. */
+  const settled = Date.now();
+  for (const table of ['entries', 'money_entries', 'categories', 'purposes', 'todos', 'users']) {
+    const [t] = await pool.query(
+      'SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?',
+      [CONFIG.database, table]);
+    if (!t.length) continue;
+    const [c] = await pool.query(
+      'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+      [CONFIG.database, table, 'server_at']);
+    if (c.length) continue;
+    await pool.query(`ALTER TABLE ${table} ADD COLUMN server_at BIGINT NOT NULL DEFAULT 0`);
+    await pool.query(`UPDATE ${table} SET server_at = ?`, [settled]);
+    if (table !== 'users') {
+      const [k] = await pool.query(
+        'SELECT INDEX_NAME AS name FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND INDEX_NAME = ?',
+        [CONFIG.database, table, `idx_${table}_server`]);
+      if (!k.length) await pool.query(`ALTER TABLE ${table} ADD KEY idx_${table}_server (user_id, server_at)`);
+    }
+  }
+
   /* Why a to-do is stuck. Added after the pad shipped, so an install that
      already has the table needs the column rather than the table. */
   const [why] = await pool.query(

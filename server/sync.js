@@ -61,25 +61,51 @@ const list = (v, field) => {
 };
 
 export const CURRENCIES = ['PHP', 'AED', 'USD', 'EUR', 'SGD', 'HKD'];
+
+/* The watermark a client is sent away with, held a few seconds behind the
+   clock on purpose.
+
+   A push stamps its rows before its transaction commits, so there is a moment
+   where a row exists with a stamp but is not yet visible to anyone else. A
+   reader arriving in that moment would see nothing, take the current time as
+   its mark, and never look that far back again — the same permanent loss the
+   column was added to prevent, in a narrower window.
+
+   Handing back a slightly stale mark closes it. The cost is that anything
+   written in the last few seconds is delivered twice, which the client merges
+   onto itself without noticing. */
+const SETTLE_MS = 5000;
+export const watermark = () => Math.max(0, now() - SETTLE_MS);
 // Kept in step with TODO_STATUSES in app.js, which owns the labels and colours.
 export const TODO_STATUSES = ['pending', 'doing', 'review', 'done', 'stuck'];
 
 /* ── pull ── */
 
+/* Everything the server has stamped since the caller's watermark.
+
+   `server_at`, not `updated_at`. The two used to be the same column, and that
+   quietly lost rows: a device whose clock ran behind the server wrote rows
+   already older than another device's watermark, and a watermark only moves
+   forward, so that device never asked for anything that old again. The rows
+   were on the server, complete and correct, and delivered to nobody.
+
+   updated_at still decides conflicts — an edit made offline yesterday must
+   lose to one made online today, which is a question about when a person
+   typed, not about when a packet arrived. server_at only decides delivery. */
 export async function changesSince(userId, since) {
   const [entries, money, categories, purposes, todos, user] = await Promise.all([
     query(`SELECT id, date, activity, category, project_id, from_min, to_min, note, updated_at, deleted
-             FROM entries WHERE user_id = ? AND updated_at > ?`, [userId, since]),
+             FROM entries WHERE user_id = ? AND server_at > ?`, [userId, since]),
     query(`SELECT id, date, activity, purpose, amount_in, amount_out, off_budget, note, updated_at, deleted
-             FROM money_entries WHERE user_id = ? AND updated_at > ?`, [userId, since]),
+             FROM money_entries WHERE user_id = ? AND server_at > ?`, [userId, since]),
     query(`SELECT name, color, position, updated_at, deleted
-             FROM categories WHERE user_id = ? AND updated_at > ?`, [userId, since]),
+             FROM categories WHERE user_id = ? AND server_at > ?`, [userId, since]),
     query(`SELECT name, color, position, updated_at, deleted
-             FROM purposes WHERE user_id = ? AND updated_at > ?`, [userId, since]),
+             FROM purposes WHERE user_id = ? AND server_at > ?`, [userId, since]),
     query(`SELECT id, body, status, blocked, created_at, updated_at, deleted
-             FROM todos WHERE user_id = ? AND updated_at > ?`, [userId, since]),
+             FROM todos WHERE user_id = ? AND server_at > ?`, [userId, since]),
     one(`SELECT currency, weight_kg, sleep_min, steps_json, ai_cache_json, tracks_json,
-                timer_start, timer_cat, timer_activity, display_name, updated_at
+                timer_start, timer_cat, timer_activity, display_name, updated_at, server_at
            FROM users WHERE id = ?`, [userId])
   ]);
 
@@ -116,19 +142,19 @@ export async function changesSince(userId, since) {
       createdAt: Number(r.created_at),
       updatedAt: Number(r.updated_at), deleted: !!r.deleted
     })),
-    currency: user && Number(user.updated_at) > since
+    currency: user && Number(user.server_at) > since
       ? { value: user.currency, updatedAt: Number(user.updated_at) }
       : null,
-    weightKg: user && Number(user.updated_at) > since
+    weightKg: user && Number(user.server_at) > since
       ? { value: user.weight_kg == null ? null : Number(user.weight_kg), updatedAt: Number(user.updated_at) }
       : null,
-    sleepMin: user && Number(user.updated_at) > since
+    sleepMin: user && Number(user.server_at) > since
       ? { value: user.sleep_min == null ? null : Number(user.sleep_min), updatedAt: Number(user.updated_at) }
       : null,
-    name: user && Number(user.updated_at) > since
+    name: user && Number(user.server_at) > since
       ? { value: user.display_name || '', updatedAt: Number(user.updated_at) }
       : null,
-    tracks: user && Number(user.updated_at) > since && user.tracks_json
+    tracks: user && Number(user.server_at) > since && user.tracks_json
       ? { value: typeof user.tracks_json === 'string' ? JSON.parse(user.tracks_json) : user.tracks_json,
           updatedAt: Number(user.updated_at) }
       : null,
@@ -160,32 +186,39 @@ export async function changesSince(userId, since) {
 
 const guard = (col) => `${col} = IF(VALUES(updated_at) >= updated_at, VALUES(${col}), ${col})`;
 
+/* server_at is assigned on every push, guarded by nothing. Even a write that
+   changes no column has to move it: the row was offered, and the point of the
+   column is that another device is told to look again. */
 const UPSERT_ENTRY = `
-  INSERT INTO entries (user_id, id, team_id, date, activity, category, project_id, from_min, to_min, note, updated_at, deleted)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+  INSERT INTO entries (user_id, id, team_id, date, activity, category, project_id, from_min, to_min, note, updated_at, server_at, deleted)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
   ON DUPLICATE KEY UPDATE
     ${['team_id', 'date', 'activity', 'category', 'project_id', 'from_min', 'to_min', 'note', 'deleted'].map(guard).join(',\n    ')},
+    server_at = VALUES(server_at),
     updated_at = GREATEST(updated_at, VALUES(updated_at))`;
 
 const UPSERT_MONEY = `
-  INSERT INTO money_entries (user_id, id, date, activity, purpose, amount_in, amount_out, off_budget, note, updated_at, deleted)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?)
+  INSERT INTO money_entries (user_id, id, date, activity, purpose, amount_in, amount_out, off_budget, note, updated_at, server_at, deleted)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
   ON DUPLICATE KEY UPDATE
     ${['date', 'activity', 'purpose', 'amount_in', 'amount_out', 'off_budget', 'note', 'deleted'].map(guard).join(',\n    ')},
+    server_at = VALUES(server_at),
     updated_at = GREATEST(updated_at, VALUES(updated_at))`;
 
 const UPSERT_TODO = `
-  INSERT INTO todos (user_id, id, body, status, blocked, created_at, updated_at, deleted)
-  VALUES (?,?,?,?,?,?,?,?)
+  INSERT INTO todos (user_id, id, body, status, blocked, created_at, updated_at, server_at, deleted)
+  VALUES (?,?,?,?,?,?,?,?,?)
   ON DUPLICATE KEY UPDATE
     ${['body', 'status', 'blocked', 'created_at', 'deleted'].map(guard).join(',\n    ')},
+    server_at = VALUES(server_at),
     updated_at = GREATEST(updated_at, VALUES(updated_at))`;
 
 const upsertNamed = (table) => `
-  INSERT INTO ${table} (user_id, name, color, position, updated_at, deleted)
-  VALUES (?,?,?,?,?,?)
+  INSERT INTO ${table} (user_id, name, color, position, updated_at, server_at, deleted)
+  VALUES (?,?,?,?,?,?,?)
   ON DUPLICATE KEY UPDATE
     ${['color', 'position', 'deleted'].map(guard).join(',\n    ')},
+    server_at = VALUES(server_at),
     updated_at = GREATEST(updated_at, VALUES(updated_at))`;
 
 /* Validates everything before touching the database, then applies the lot in a
@@ -201,6 +234,12 @@ export async function applyChanges(userId, changes) {
      belongs to; it cannot say which team it belongs to, and it cannot name a
      project that is not its team's. Both would be a way to write a row into
      somebody else's records. */
+  /* One reading of the server's clock for the whole request, so every row in
+     it lands on the same watermark and a pull cannot fall between two of them.
+     Not called `at`: that name is already the field path a row reports its
+     errors against, and this is a time. */
+  const stampedAt = now();
+
   const membership = await membershipFor(userId);
   const teamId = membership ? membership.teamId : null;
   const ownProjects = teamId
@@ -219,7 +258,7 @@ export async function applyChanges(userId, changes) {
     const at = `entries[${i}]`;
     const id = str(e.id, `${at}.id`, 64);
     const when = stamp(e.updatedAt, `${at}.updatedAt`);
-    if (e.deleted) return [userId, id, null, '1970-01-01', '', '', null, 0, 0, null, when, 1];
+    if (e.deleted) return [userId, id, null, '1970-01-01', '', '', null, 0, 0, null, when, stampedAt, 1];
     const project = projectOf(e, at);
     return [userId, id, project ? teamId : null, isoDate(e.date, `${at}.date`),
       str(e.activity, `${at}.activity`, 200, { allowEmpty: true }),
@@ -227,21 +266,21 @@ export async function applyChanges(userId, changes) {
       project,
       int(e.from, `${at}.from`, 0, 1440), int(e.to, `${at}.to`, 0, 1440),
       str(e.note ?? '', `${at}.note`, 500, { allowEmpty: true }),
-      when, 0];
+      when, stampedAt, 0];
   });
 
   const money = list(c.money, 'money').map((e, i) => {
     const at = `money[${i}]`;
     const id = str(e.id, `${at}.id`, 64);
     const when = stamp(e.updatedAt, `${at}.updatedAt`);
-    if (e.deleted) return [userId, id, '1970-01-01', '', '', 0, 0, 0, null, when, 1];
+    if (e.deleted) return [userId, id, '1970-01-01', '', '', 0, 0, 0, null, when, stampedAt, 1];
     return [userId, id, isoDate(e.date, `${at}.date`),
       str(e.activity, `${at}.activity`, 200, { allowEmpty: true }),
       str(e.purpose, `${at}.purpose`, 60),
       cash(e.in ?? 0, `${at}.in`, 1e12), cash(e.out ?? 0, `${at}.out`, 1e12),
       e.offBudget ? 1 : 0,
       str(e.note ?? '', `${at}.note`, 500, { allowEmpty: true }),
-      when, 0];
+      when, stampedAt, 0];
   });
 
   /* A note carries its own text and nothing else. The status is checked against
@@ -252,7 +291,7 @@ export async function applyChanges(userId, changes) {
     const at = `todos[${i}]`;
     const id = str(t.id, `${at}.id`, 64);
     const when = stamp(t.updatedAt, `${at}.updatedAt`);
-    if (t.deleted) return [userId, id, '', 'pending', null, 0, when, 1];
+    if (t.deleted) return [userId, id, '', 'pending', null, 0, when, stampedAt, 1];
     const status = str(t.status ?? 'pending', `${at}.status`, 16);
     if (!TODO_STATUSES.includes(status)) fail(`${at}.status must be one of ${TODO_STATUSES.join(', ')}`);
     const blocked = t.blocked == null || t.blocked === ''
@@ -261,16 +300,16 @@ export async function applyChanges(userId, changes) {
       str(t.text ?? '', `${at}.text`, 500, { allowEmpty: true }),
       status, blocked,
       stamp(t.createdAt, `${at}.createdAt`),
-      when, 0];
+      when, stampedAt, 0];
   });
 
   const named = (key) => list(c[key], key).map((r, i) => {
     const at = `${key}[${i}]`;
     const name = str(r.name, `${at}.name`, 60);
     const when = stamp(r.updatedAt, `${at}.updatedAt`);
-    if (r.deleted) return [userId, name, '#000000', 0, when, 1];
+    if (r.deleted) return [userId, name, '#000000', 0, when, stampedAt, 1];
     return [userId, name, color(r.color, `${at}.color`),
-      int(r.position ?? 0, `${at}.position`, 0, 10000), when, 0];
+      int(r.position ?? 0, `${at}.position`, 0, 10000), when, stampedAt, 0];
   });
   const categories = named('categories');
   const purposes = named('purposes');
@@ -389,28 +428,28 @@ export async function applyChanges(userId, changes) {
     await run(upsertNamed('purposes'), purposes);
     await run(UPSERT_TODO, todos);
     if (currency) {
-      await conn.execute('UPDATE users SET currency = ?, updated_at = ? WHERE id = ? AND updated_at <= ?',
-        [currency[0], currency[1], userId, currency[1]]);
+      await conn.execute('UPDATE users SET currency = ?, updated_at = ?, server_at = ? WHERE id = ? AND updated_at <= ?',
+        [currency[0], currency[1], stampedAt, userId, currency[1]]);
     }
     if (weight) {
-      await conn.execute('UPDATE users SET weight_kg = ?, updated_at = ? WHERE id = ? AND updated_at <= ?',
-        [weight[0], weight[1], userId, weight[1]]);
+      await conn.execute('UPDATE users SET weight_kg = ?, updated_at = ?, server_at = ? WHERE id = ? AND updated_at <= ?',
+        [weight[0], weight[1], stampedAt, userId, weight[1]]);
     }
     if (sleep) {
-      await conn.execute('UPDATE users SET sleep_min = ?, updated_at = ? WHERE id = ? AND updated_at <= ?',
-        [sleep[0], sleep[1], userId, sleep[1]]);
+      await conn.execute('UPDATE users SET sleep_min = ?, updated_at = ?, server_at = ? WHERE id = ? AND updated_at <= ?',
+        [sleep[0], sleep[1], stampedAt, userId, sleep[1]]);
     }
     if (name) {
-      await conn.execute('UPDATE users SET display_name = ?, updated_at = ? WHERE id = ? AND updated_at <= ?',
-        [name[0], name[1], userId, name[1]]);
+      await conn.execute('UPDATE users SET display_name = ?, updated_at = ?, server_at = ? WHERE id = ? AND updated_at <= ?',
+        [name[0], name[1], stampedAt, userId, name[1]]);
     }
     if (tracks) {
-      await conn.execute('UPDATE users SET tracks_json = ?, updated_at = ? WHERE id = ? AND updated_at <= ?',
-        [tracks[0], tracks[1], userId, tracks[1]]);
+      await conn.execute('UPDATE users SET tracks_json = ?, updated_at = ?, server_at = ? WHERE id = ? AND updated_at <= ?',
+        [tracks[0], tracks[1], stampedAt, userId, tracks[1]]);
     }
     if (timer) {
-      await conn.execute('UPDATE users SET timer_start = ?, timer_cat = ?, timer_activity = ?, updated_at = ? WHERE id = ? AND updated_at <= ?',
-        [timer[0], timer[1], timer[2], timer[3], userId, timer[3]]);
+      await conn.execute('UPDATE users SET timer_start = ?, timer_cat = ?, timer_activity = ?, updated_at = ?, server_at = ? WHERE id = ? AND updated_at <= ?',
+        [timer[0], timer[1], timer[2], timer[3], stampedAt, userId, timer[3]]);
     }
     /* Merged here rather than overwritten. A device only sends the days it
        knows about, so writing its map wholesale would erase any day recorded
@@ -437,8 +476,8 @@ export async function applyChanges(userId, changes) {
         ks.sort((a, b) => (merged[a].at || 0) - (merged[b].at || 0))
           .slice(0, ks.length - 400).forEach((k) => { delete merged[k]; });
       }
-      await conn.execute('UPDATE users SET ai_cache_json = ?, updated_at = GREATEST(updated_at, ?) WHERE id = ?',
-        [JSON.stringify(merged), Date.now(), userId]);
+      await conn.execute('UPDATE users SET ai_cache_json = ?, updated_at = GREATEST(updated_at, ?), server_at = ? WHERE id = ?',
+        [JSON.stringify(merged), stampedAt, stampedAt, userId]);
     }
     if (steps) {
       const [[row]] = await conn.execute('SELECT steps_json FROM users WHERE id = ? FOR UPDATE', [userId]);
@@ -451,8 +490,8 @@ export async function applyChanges(userId, changes) {
         // Ties keep what is already stored; there is nothing to choose between them.
         if (!mine || Number(incoming.t) > Number(mine.t)) merged[date] = incoming;
       }
-      await conn.execute('UPDATE users SET steps_json = ?, updated_at = GREATEST(updated_at, ?) WHERE id = ?',
-        [JSON.stringify(merged), Date.now(), userId]);
+      await conn.execute('UPDATE users SET steps_json = ?, updated_at = GREATEST(updated_at, ?), server_at = ? WHERE id = ?',
+        [JSON.stringify(merged), stampedAt, stampedAt, userId]);
     }
   });
 

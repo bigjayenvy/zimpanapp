@@ -67,6 +67,9 @@ CREATE TABLE IF NOT EXISTS users (
   donated_click_at BIGINT    NULL,
   created_at    BIGINT       NOT NULL,
   updated_at    BIGINT       NOT NULL,
+  -- The server's clock on the last push that touched any of the settings above.
+  -- See the note by `categories`: this is what a pull is measured against.
+  server_at     BIGINT       NOT NULL DEFAULT 0,
   PRIMARY KEY (id),
   UNIQUE KEY uq_users_email (email),
   UNIQUE KEY uq_users_google (google_sub)
@@ -99,6 +102,16 @@ CREATE TABLE IF NOT EXISTS password_resets (
   CONSTRAINT fk_resets_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- server_at is the server's own clock, written on every push, and it is what
+-- "what changed since" is measured against. updated_at stays the client's, and
+-- stays the thing conflicts are resolved on — an edit made offline yesterday
+-- must still lose to one made online today.
+--
+-- They were the same column, and that was a silent way to lose rows: a device
+-- whose clock ran a few minutes behind the server wrote rows already older than
+-- another device's watermark, and that device never asked for anything that old
+-- again. The rows sat on the server, delivered to nobody.
+
 -- Categories and purposes are keyed by name because that is what the entries
 -- reference, and what the user actually types.
 CREATE TABLE IF NOT EXISTS categories (
@@ -107,8 +120,10 @@ CREATE TABLE IF NOT EXISTS categories (
   color      VARCHAR(32)  NOT NULL,
   position   INT          NOT NULL DEFAULT 0,
   updated_at BIGINT       NOT NULL,
+  server_at  BIGINT       NOT NULL DEFAULT 0,
   deleted    TINYINT(1)   NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, name),
+  KEY idx_categories_server (user_id, server_at),
   CONSTRAINT fk_categories_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -118,8 +133,10 @@ CREATE TABLE IF NOT EXISTS purposes (
   color      VARCHAR(32)  NOT NULL,
   position   INT          NOT NULL DEFAULT 0,
   updated_at BIGINT       NOT NULL,
+  server_at  BIGINT       NOT NULL DEFAULT 0,
   deleted    TINYINT(1)   NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, name),
+  KEY idx_purposes_server (user_id, server_at),
   CONSTRAINT fk_purposes_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -137,10 +154,12 @@ CREATE TABLE IF NOT EXISTS entries (
   -- was, what was eaten. Always optional.
   note       VARCHAR(500)      NULL,
   updated_at BIGINT            NOT NULL,
+  server_at  BIGINT            NOT NULL DEFAULT 0,
   deleted    TINYINT(1)        NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, id),
   KEY idx_entries_date (user_id, date),
   KEY idx_entries_updated (user_id, updated_at),
+  KEY idx_entries_server (user_id, server_at),
   CONSTRAINT fk_entries_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -161,10 +180,12 @@ CREATE TABLE IF NOT EXISTS money_entries (
   off_budget TINYINT(1)   NOT NULL DEFAULT 0,
   note       VARCHAR(500) NULL,
   updated_at BIGINT       NOT NULL,
+  server_at  BIGINT       NOT NULL DEFAULT 0,
   deleted    TINYINT(1)   NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, id),
   KEY idx_money_date (user_id, date),
   KEY idx_money_updated (user_id, updated_at),
+  KEY idx_money_server (user_id, server_at),
   CONSTRAINT fk_money_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -188,9 +209,11 @@ CREATE TABLE IF NOT EXISTS todos (
   blocked    VARCHAR(500) NULL,
   created_at BIGINT       NOT NULL,
   updated_at BIGINT       NOT NULL,
+  server_at  BIGINT       NOT NULL DEFAULT 0,
   deleted    TINYINT(1)   NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, id),
   KEY idx_todos_updated (user_id, updated_at),
+  KEY idx_todos_server (user_id, server_at),
   CONSTRAINT fk_todos_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
