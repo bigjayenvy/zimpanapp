@@ -259,7 +259,7 @@ const FOLLOW_UPS = [
   },
   {
     key: 'workout',
-    re: /workout|exercise|gym|treadmill|jog|jogging|running|\brun\b|sport|swim|bike|cycl|yoga|stretch|hike|lift|weights|cardio|crossfit|pilates|zumba|badminton|basketball/,
+    re: /workout|exercise|gym|treadmill|jog|jogging|running|\brun\b|\bsports?\b|swim|bike|cycl|yoga|stretch|hike|lift|weights|cardio|crossfit|pilates|zumba|badminton|basketball/,
     title: 'What kind of workout was that?',
     hint: 'Sets, distance, how it felt — whatever you would want to read back later.',
     placeholder: 'e.g. 5 km treadmill, 30 min, steady pace'
@@ -2544,24 +2544,30 @@ function moneySeries(dates, money) {
 
 /* MET values — energy cost relative to sitting still. Burn is
    MET × kilograms × hours, the standard approximation. */
+/* Matched against what was written, so every rule is anchored to a word.
+   Without the boundaries a stem is a substring: "spin" found spinach, "run"
+   found brunch, "row" found throw and "sport" found passport — each one
+   quietly priced a meal as exercise. Stems that only ever begin a word keep
+   their open ends (\w*) so inflections still land; the ones that are also
+   short common syllables are spelled out in full. */
 const METS = [
-  { re: /jump ?rope|skipping rope/, met: 12.0 },
-  { re: /boxing|muay thai|martial art|karate|taekwondo|\bmma\b|jiu-?jitsu/, met: 10.0 },
-  { re: /run|jog|sprint/, met: 9.8 },
-  { re: /climb|bouldering/, met: 8.0 },
-  { re: /crossfit|hiit|zumba|circuit/, met: 8.0 },
-  { re: /treadmill/, met: 7.0 },
-  { re: /swim/, met: 7.0 },
-  { re: /row(?:ing|er)?\b/, met: 7.0 },
-  { re: /bike|cycl|spin/, met: 7.5 },
-  { re: /basketball|football|soccer|badminton|tennis|padel|pickleball|volleyball|sport/, met: 6.5 },
-  { re: /hike/, met: 6.0 },
-  { re: /dance|dancing|aerobics/, met: 5.5 },
-  { re: /elliptical|cross ?trainer|stair|calisthenic|push-?ups?|sit-?ups?|planks?/, met: 5.0 },
-  { re: /gym|weights|lift|strength/, met: 5.0 },
-  { re: /pilates|stretch/, met: 3.0 },
-  { re: /yoga/, met: 2.5 },
-  { re: /walk|lakad|stroll/, met: 3.5 },
+  { re: /\bjump ?ropes?\b|\bskipping rope\b/, met: 12.0 },
+  { re: /\bboxing\b|\bmuay thai\b|\bmartial arts?\b|\bkarate\b|\btaekwondo\b|\bmma\b|\bjiu-?jitsu\b/, met: 10.0 },
+  { re: /\bruns?\b|\brunning\b|\bran\b|\bjogs?\b|\bjogg\w*|\bsprint\w*/, met: 9.8 },
+  { re: /\bclimb\w*|\bbouldering\b/, met: 8.0 },
+  { re: /\bcrossfit\b|\bhiit\b|\bzumba\b|\bcircuits?\b/, met: 8.0 },
+  { re: /\btreadmill\b/, met: 7.0 },
+  { re: /\bswim\w*/, met: 7.0 },
+  { re: /\brow(?:s|ing|er|ed)?\b/, met: 7.0 },
+  { re: /\bbikes?\b|\bbiking\b|\bcycl\w*|\bspins?\b|\bspinning\b/, met: 7.5 },
+  { re: /\bbasketball\b|\bfootball\b|\bsoccer\b|\bbadminton\b|\btennis\b|\bpadel\b|\bpickleball\b|\bvolleyball\b|\bsports?\b/, met: 6.5 },
+  { re: /\bhikes?\b|\bhiking\b|\bhiked\b/, met: 6.0 },
+  { re: /\bdanc\w*|\baerobics\b/, met: 5.5 },
+  { re: /\belliptical\b|\bcross ?trainer\b|\b(?:up|down)?stairs?\b|\bcalisthenics?\b|\bpush-?ups?\b|\bsit-?ups?\b|\bplanks?\b|\bplanking\b/, met: 5.0 },
+  { re: /\bgym\b|\bweights\b|\blift\w*|\bstrength\b/, met: 5.0 },
+  { re: /\bpilates\b|\bstretch\w*/, met: 3.0 },
+  { re: /\byoga\b/, met: 2.5 },
+  { re: /\bwalk\w*|\blakad\b|\bstroll\w*/, met: 3.5 },
 
   /* Domestic effort. Housework is work — it is hours on your feet carrying
      things — and filing it as nothing made a Saturday of chores read as a day
@@ -2571,28 +2577,45 @@ const METS = [
 
      Below the sport rules on purpose. "Cleaning the bike" is still filed as
      cycling by the rule above, which is the reading most people intend. */
-  { re: /garden|halaman|mowing|lawn|yard work/, met: 4.0 },
-  { re: /car ?wash|wash(?:ing)? the car|hugas kotse/, met: 3.5 },
-  { re: /chores|housework|cleaning|clean the|maglinis|sweeping|\bsweep\b|mopping|\bmop\b|vacuum|laundry|labada|wash(?:ing)? (?:the )?dishes|hugas pinggan|iron(?:ing)? clothes|tidy/, met: 3.3 },
+  { re: /\bgarden\w*|\bhalaman\b|\bmowing\b|\blawn\b|\byard work\b/, met: 4.0 },
+  { re: /\bcar ?wash\w*|\bwash(?:ing)? the car\b|\bhugas kotse\b/, met: 3.5 },
+  { re: /\bchores?\b|\bhousework\b|\bcleaning\b|\bclean the\b|\bmaglinis\b|\bsweep\w*|\bmops?\b|\bmopping\b|\bvacuum\w*|\blaundry\b|\blabada\b|\bwash(?:ing)? (?:the )?dishes\b|\bhugas pinggan\b|\biron(?:ing)? clothes\b|\btidy\w*/, met: 3.3 },
   /* The act, not the food. Bare "cook" would take "home cooked lunch" off the
-     eaten side of the ledger and file the meal as exercise — METS is matched
-     before the food reading, so a rule that is loose here silently deletes
-     calories eaten. Gerunds only, and "cooked" on its own stays a description
-     of what was served. */
-  { re: /cooking|cooked for|nagluto|magluto|meal ?prep|baking(?! soda)/, met: 2.5 },
-  { re: /grocer|palengke|errand/, met: 2.3 },
+     eaten side of the ledger and file the meal as exercise. Gerunds only, and
+     "cooked" on its own stays a description of what was served. */
+  { re: /\bcooking\b|\bcooked for\b|\bnagluto\b|\bmagluto\b|\bmeal ?prep\w*|\bbaking\b(?! soda)/, met: 2.5 },
+  { re: /\bgrocer\w*|\bpalengke\b|\berrands?\b/, met: 2.3 },
   // Floor for anything filed as exercise but not named: the category is in the
   // text being matched, so a Workout entry is never worth nothing.
-  { re: /workout|exercise|cardio|training/, met: 5.0 }
+  { re: /\bworkouts?\b|\bexercis\w*|\bcardio\b|\btraining\b/, met: 5.0 }
 ];
+
+/* The table's reading for one entry, or nothing at all.
+
+   In one place, because three callers ran the match themselves — the chip on
+   the card, the day's burn figure, and the list behind it — and a rule fixed
+   in one stayed wrong in the other two.
+
+   A row the follow-up filed as food is never priced as effort, whatever the
+   words in it. The table is matched against the note as well as the activity,
+   and the note is exactly where a meal gets described: a breakfast whose note
+   read "cheese spinach sandwich" was priced as a spin class, so the card said
+   95 kcal burned while the block above it said 829 eaten. When the words and
+   the category disagree, the category the person chose wins. */
+const metHit = (e) => {
+  if (isEatenRow(e)) return null;
+  const text = `${e.activity || ''} ${e.category || ''} ${e.note || ''}`.toLowerCase();
+  return METS.find((m) => m.re.test(text)) || null;
+};
 
 const DEFAULT_WEIGHT_KG = 70;
 
 /* What a single entry did to the day's calorie ledger, for the chip on its
-   card. Exercise is checked first: METS only ever matches activity verbs, so a
-   meal cannot be mistaken for a workout, but an entry naming both should read
-   as the effort it was. Returns nothing for the great majority of entries,
-   which are neither. */
+   card. Effort is checked first — an entry naming both a workout and what was
+   eaten after it should read as the effort it was — but metHit has already
+   refused anything the follow-up filed as food, so a meal cannot reach the
+   burn branch. Returns nothing for the great majority of entries, which are
+   neither. */
 function entryEnergy(e) {
   /* Not this product's subject, and this is where the chip on every card comes
      from — gating the blocks above left the rows themselves still pricing a
@@ -2601,8 +2624,7 @@ function entryEnergy(e) {
   const mins = span(e);
   if (!mins) return null;
 
-  const text = `${e.activity || ''} ${e.category || ''} ${e.note || ''}`.toLowerCase();
-  const met = METS.find((m) => m.re.test(text));
+  const met = metHit(e);
   if (met) {
     const kg = Number(state.weightKg) || DEFAULT_WEIGHT_KG;
     /* A refined reading replaces the table's, exactly as it does for food: two
@@ -2737,8 +2759,7 @@ function burnFor(entries, weightKg, days, dates) {
   const effMins = effective(resolveSpans(entries));
   let kcal = 0, minutes = 0;
   entries.forEach((e) => {
-    const text = `${e.activity || ''} ${e.category || ''} ${e.note || ''}`.toLowerCase();
-    const hit = METS.find((m) => m.re.test(text));
+    const hit = metHit(e);
     if (!hit) return;
     const mins = effMins(e);
     if (!mins) return;
@@ -11700,7 +11721,7 @@ function mCalItems(dates, kind) {
   const effMins = effective(resolveSpans(rows));
   const out = [];
   rows.forEach((e) => {
-    const hit = METS.find((m) => m.re.test(`${e.activity || ''} ${e.category || ''} ${e.note || ''}`.toLowerCase()));
+    const hit = metHit(e);
     if (!hit) return;
     const mins = effMins(e);
     if (!mins) return;
