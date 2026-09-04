@@ -15,7 +15,7 @@ import {
 } from './auth.js';
 import { changesSince, applyChanges, Invalid, CURRENCIES } from './sync.js';
 import { verifyGoogleIdToken } from './google.js';
-import { sendResetEmail, sendInviteEmail, sendTicketEmails, mailerConfigured, mailerProblem } from './mail.js';
+import { sendResetEmail, sendInviteEmail, sendTicketEmails, sendSignupEmail, mailerConfigured, mailerProblem } from './mail.js';
 import {
   BlogError, listPosts, readPost, publishedSlugs,
   adminList, adminRead, createPost, updatePost, deletePost
@@ -209,6 +209,22 @@ function readCredentials(body) {
   return { email, password };
 }
 
+/* Somebody is told when an account appears.
+
+   Deliberately not awaited. The account exists the moment the row is written,
+   and whether a notice about it reached a mailbox is no business of the reply
+   the person signing up is waiting on — so this runs beside the response and
+   swallows its own failures, which is also what stops a slow SMTP handshake
+   from holding up a sign-up.
+
+   The count is read here rather than kept, because it is only ever wanted at
+   this moment and a stored tally is a thing that can be wrong. */
+function noteSignup(account) {
+  one('SELECT COUNT(*) AS n FROM users')
+    .then((row) => sendSignupEmail(Object.assign({ total: row && Number(row.n) }, account)))
+    .catch((err) => console.error(`[zimpan] sign-up notice failed: ${err.message}`));
+}
+
 app.post('/api/register', wrap(async (req, res) => {
   const limited = rateLimit({ key: `reg:${clientIp(req)}`, limit: 5, windowMs: 60 * 60 * 1000 });
   if (!limited.ok) return res.status(429).json({ error: `Too many sign-ups from here. Try again ${retryLabel(limited.retryAfterMs)}.` });
@@ -241,6 +257,7 @@ app.post('/api/register', wrap(async (req, res) => {
 
   const { token, expiresAt } = await createSession(result.insertId);
   setSessionCookie(res, token, expiresAt, PROD);
+  noteSignup({ email: creds.email, kind, how: 'password', at: t });
   res.status(201).json({ user: { id: result.insertId, email: creds.email, currency: DEFAULT_CURRENCY, kind }, fresh: true });
 }));
 
@@ -472,6 +489,7 @@ app.post('/api/auth/google', wrap(async (req, res) => {
         [claims.email, null, claims.sub, claims.name, DEFAULT_CURRENCY, wantKind, t, t]);
       user = { id: result.insertId, email: claims.email, currency: DEFAULT_CURRENCY, kind: wantKind };
       fresh = true;
+      noteSignup({ email: claims.email, kind: wantKind, how: 'google', name: claims.name, at: t });
     } catch (err) {
       // Two sign-ins racing on the same address: whoever lost just re-reads.
       if (err.code !== 'ER_DUP_ENTRY') throw err;

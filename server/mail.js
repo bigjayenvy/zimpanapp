@@ -232,6 +232,71 @@ export async function sendTicketEmails(to, ticket) {
   return { delivered: true };
 }
 
+/* ── a new account, to whoever runs this ──
+
+   Not a receipt and not marketing: an operational notice, so somebody knows
+   the product is being signed up for without watching the dashboard. It goes
+   to the same mailbox the help tickets do unless a separate one is named.
+
+   Never throws, and is never awaited by the route that triggers it. A sign-up
+   that succeeded must not be reported as a failure — or made to wait — because
+   a notification about it could not be sent. */
+export const SIGNUP_TO = (process.env.SIGNUP_EMAIL || process.env.SUPPORT_EMAIL || 'admin@bigcavestudios.com').trim();
+
+const PRODUCT = (kind) => (kind === 'work' ? 'Zimpan for Teams' : 'Zimpan (personal)');
+const HOW = (how) => (how === 'google' ? 'Google' : 'email and password');
+
+const SIGNUP_TEXT = (a) => `A new account was created on Zimpan.
+
+Address   ${a.email}
+Product   ${PRODUCT(a.kind)}
+Signed up with ${HOW(a.how)}${a.name ? `\nName      ${a.name}` : ''}
+When      ${a.when}${a.total ? `\n\nThat makes ${a.total} account${a.total === 1 ? '' : 's'} in total.` : ''}
+
+Nothing needs doing. This is a notice, not a request.`;
+
+const SIGNUP_HTML = (a) => SHELL(`
+  <p style="margin:0 0 14px;">A new account was created on Zimpan.</p>
+  <table style="border-collapse:collapse;font-size:14px;">
+    <tr><td style="padding:3px 16px 3px 0;color:#7a7a7d;">Address</td><td style="padding:3px 0;"><strong>${escapeHtml(a.email)}</strong></td></tr>
+    <tr><td style="padding:3px 16px 3px 0;color:#7a7a7d;">Product</td><td style="padding:3px 0;">${escapeHtml(PRODUCT(a.kind))}</td></tr>
+    <tr><td style="padding:3px 16px 3px 0;color:#7a7a7d;">Signed up with</td><td style="padding:3px 0;">${escapeHtml(HOW(a.how))}</td></tr>
+    ${a.name ? `<tr><td style="padding:3px 16px 3px 0;color:#7a7a7d;">Name</td><td style="padding:3px 0;">${escapeHtml(a.name)}</td></tr>` : ''}
+    <tr><td style="padding:3px 16px 3px 0;color:#7a7a7d;">When</td><td style="padding:3px 0;">${escapeHtml(a.when)}</td></tr>
+  </table>
+  ${a.total ? `<p style="color:#5d5d60;font-size:13px;margin:16px 0 0;">That makes <strong>${a.total}</strong> account${a.total === 1 ? '' : 's'} in total.</p>` : ''}
+  <p style="color:#8a8a8d;font-size:12px;margin:18px 0 0;">Nothing needs doing. This is a notice, not a request.</p>`);
+
+export async function sendSignupEmail(account) {
+  const a = {
+    email: String(account.email || ''),
+    kind: account.kind === 'work' ? 'work' : 'personal',
+    how: account.how === 'google' ? 'google' : 'password',
+    name: account.name ? String(account.name) : '',
+    total: Number(account.total) || 0,
+    when: new Date(Number(account.at) || Date.now()).toUTCString()
+  };
+  if (!mailerConfigured()) {
+    if (!PROD) console.log(`\n[zimpan] mail is not configured — new ${a.kind} account: ${a.email} (${HOW(a.how)})\n`);
+    return { delivered: false, reason: mailerProblem() };
+  }
+  try {
+    await transport().sendMail({
+      from: FROM,
+      to: SIGNUP_TO,
+      // So a reply goes to the person who signed up rather than into the void.
+      replyTo: a.email,
+      subject: `New ${a.kind === 'work' ? 'team' : 'personal'} sign-up — ${a.email}`,
+      text: SIGNUP_TEXT(a),
+      html: SIGNUP_HTML(a)
+    });
+  } catch (err) {
+    console.error(`[zimpan] sign-up notice for ${a.email} failed: ${err.message}`);
+    return { delivered: false, reason: err.message };
+  }
+  return { delivered: true };
+}
+
 export async function sendResetEmail(to, link) {
   if (!mailerConfigured()) {
     if (PROD) throw new Error('Mail is not configured on this server.');
