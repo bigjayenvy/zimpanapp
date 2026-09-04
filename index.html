@@ -1262,33 +1262,84 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 
   .am-drop {
     position: absolute; top: calc(100% + 8px); right: 0; z-index: 40;
-    min-width: 236px; padding: 6px;
+    width: 288px; padding: 14px 14px 16px;
     background: var(--color-bg); border: 1px solid var(--color-divider);
-    border-radius: 14px; box-shadow: var(--shadow-lg); text-align: left;
+    border-radius: 18px; box-shadow: var(--shadow-lg); text-align: left;
   }
-  .am-who {
-    display: flex; align-items: center; gap: 8px;
-    padding: 8px 12px 10px; font-size: 12px; color: var(--color-neutral-600);
-    border-bottom: 1px solid var(--color-divider); margin-bottom: 6px;
-  }
-  /* A disc rather than a bare glyph: the address wraps over two lines on a long
-     domain, and a round mark holds the left edge where a loose icon drifts. */
+
+  /* — the menus —
+     One layout in two frames: a panel under the hamburger, a sheet up from the
+     bottom of a phone. Who you are at the top, the places you can go as a list
+     of plain rows, and the two ways out at the foot with the irreversible one
+     drawn quietest. Everything below is shared by both; only the frame differs. */
+  .am-who { display: flex; align-items: center; gap: 12px; padding: 2px 2px 14px; }
   .am-face {
-    flex: none; width: 26px; height: 26px; border-radius: 50%;
+    flex: none; width: 46px; height: 46px; border-radius: 50%;
     display: grid; place-items: center;
     background: var(--color-accent-100, #f2eefe); color: var(--color-accent-700);
+    font-family: var(--font-heading); font-weight: 700; font-size: 21px; line-height: 1;
   }
-  .am-mail { min-width: 0; word-break: break-all; }
-  .am-item {
-    display: block; width: 100%; text-align: left; border: 0; background: transparent;
-    padding: 9px 12px; border-radius: 9px; cursor: pointer;
-    font: inherit; font-size: 14px; color: var(--color-text); text-decoration: none;
+  .am-id { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .am-name {
+    font-family: var(--font-heading); font-weight: 700; font-size: 17px;
+    line-height: 1.1; color: var(--color-text);
   }
-  .am-item:hover { background: var(--color-neutral-100, #f4f2f9); }
-  .am-strong { font-weight: 600; color: var(--color-accent-700); }
-  .am-danger { color: #8a2f4a; }
-  .am-danger:hover { background: color-mix(in srgb, #8a2f4a 8%, transparent); }
-  .am-rule { height: 1px; background: var(--color-divider); margin: 6px 4px; }
+  .am-mail { font-size: 13px; color: var(--color-neutral-600); word-break: break-all; line-height: 1.3; }
+
+  /* Hairlines between the rows rather than around them: a list of destinations
+     reads as one thing, and a border on each would make five boxes of it. */
+  .mn-list { border-top: 1px solid var(--color-divider); margin-bottom: 14px; }
+  .mn-row {
+    display: flex; align-items: center; gap: 14px; width: 100%;
+    padding: 13px 4px; border: 0; border-bottom: 1px solid var(--color-divider);
+    background: transparent; cursor: pointer; text-align: left; text-decoration: none;
+    font: inherit; font-size: 15px; color: var(--color-text);
+  }
+  .mn-row:hover { background: var(--color-neutral-100, #f4f2f9); }
+  .mn-ico { flex: none; display: grid; place-items: center; color: var(--color-neutral-700); }
+  .mn-row:hover .mn-ico { color: var(--color-accent-700); }
+  .mn-label { flex: 1 1 auto; min-width: 0; }
+  .mn-badge {
+    flex: none; min-width: 24px; height: 24px; padding: 0 7px; border-radius: 8px;
+    background: var(--color-accent-700); color: #fff;
+    font-size: 12.5px; font-weight: 700; display: grid; place-items: center;
+  }
+
+  .mn-out {
+    display: block; width: 100%; min-height: 46px; margin-top: 4px;
+    border: 1px solid rgba(138, 47, 74, .32); border-radius: 999px;
+    background: transparent; color: #8a2f4a; cursor: pointer;
+    font: inherit; font-size: 15px; font-weight: 700;
+  }
+  .mn-out:hover { background: rgba(138, 47, 74, .06); }
+  .mn-kill {
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+    width: 100%; min-height: 40px; margin-top: 4px; border: 0; background: transparent;
+    color: #8a2f4a; cursor: pointer; font: inherit; font-size: 13.5px; font-weight: 600;
+  }
+  .mn-kill:hover { text-decoration: underline; }
+  .mn-kill svg { display: block; }
+
+  /* The phone's frame: a grab handle, the wordmark and a way to shut it. */
+  .mn-grab { width: 38px; height: 4px; border-radius: 999px; background: #d5d2df; margin: 2px auto 14px; }
+  .mn-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+  .mn-x {
+    flex: none; border: 0; background: transparent; cursor: pointer;
+    font-size: 20px; color: var(--color-neutral-700);
+    min-width: 40px; min-height: 40px; border-radius: 10px;
+  }
+  .mn-x:hover { background: var(--color-neutral-100, #f4f2f9); }
+
+  .mn-legal {
+    display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+    gap: 4px 8px; margin-top: 16px;
+  }
+  .mn-legal button {
+    border: 0; background: transparent; cursor: pointer; padding: 4px 2px;
+    font-family: var(--font-body); font-size: 12.5px; color: var(--color-neutral-600);
+  }
+  .mn-legal button:hover { color: var(--color-accent-700); }
+  .mn-legal i { width: 1px; height: 12px; background: var(--color-divider); display: block; }
 
   /* The one button in the app that deletes something permanently. */
   .btn-danger {

@@ -4203,10 +4203,50 @@ function header(v) {
 
    The address is the first line rather than a control — it answers "whose app
    is this" without being a button that does nothing when pressed. */
+/* The initial in the disc, and the name beside it. A display name if there is
+   one — it is what the person calls themselves — with the address underneath,
+   which is what identifies the account. */
+const menuInitial = () => {
+  const from = String(state.displayName || (state.auth && state.auth.email) || '?').trim();
+  return (from[0] || '?').toUpperCase();
+};
+
+/* One row of a menu: a glyph, a label, and sometimes a count. Shared by the
+   drop-down and the phone's sheet, because they are the same menu in two
+   shapes and had already drifted once. */
+function menuRow(o) {
+  const inner = `
+    <span class="mn-ico" aria-hidden="true">${nodeIcon(o.icon, 19)}</span>
+    <span class="mn-label">${esc(o.label)}</span>
+    ${o.badge ? `<span class="mn-badge">${esc(String(o.badge))}</span>` : ''}`;
+  const cls = `mn-row${o.extra ? ` ${o.extra}` : ''}`;
+  return o.href
+    ? `<a class="${cls}" href="${esc(o.href)}"${o.blank ? ' target="_blank" rel="noopener noreferrer"' : ''}${o.donate ? ' data-donate' : ''} role="menuitem">${inner}</a>`
+    : `<button class="${cls}" data-act="${esc(o.act)}" role="menuitem">${inner}</button>`;
+}
+
+/* Who is signed in, drawn the same way in both menus. */
+const menuWho = () => `
+  <div class="am-who">
+    <span class="am-face" aria-hidden="true">${esc(menuInitial())}</span>
+    <span class="am-id">
+      ${state.displayName ? `<span class="am-name">${esc(state.displayName)}</span>` : ''}
+      <span class="am-mail">${esc((state.auth && state.auth.email) || '')}</span>
+    </span>
+  </div>`;
+
+/* The way out of an account, in both menus: signing out as an outlined
+   control, and below it — quieter, and never a button that looks the same —
+   the one that cannot be undone. */
+const menuExit = () => `
+  <button class="mn-out" data-act="sign-out">Sign out</button>
+  <button class="mn-kill" data-act="close-account">
+    <span aria-hidden="true">${nodeIcon('trash', 15)}</span><span>Delete my account</span>
+  </button>`;
+
 function appbarMenu() {
   if (!state.auth) return '';
-  const item = (act, label, extra) => `
-    <button class="am-item${extra ? ` ${extra}` : ''}" data-act="${esc(act)}">${esc(label)}</button>`;
+  const open = todoOpenCount();
 
   return `
   <div class="appbar-menu">
@@ -4215,24 +4255,20 @@ function appbarMenu() {
     </button>
     ${state.menuOpen ? `
     <div class="am-drop" role="menu">
-      <div class="am-who">
-        <span class="am-face" aria-hidden="true">${nodeIcon('person', 15)}</span>
-        <span class="am-mail">${esc(state.auth.email)}</span>
+      ${menuWho()}
+      <div class="mn-list">
+        ${menuRow({ act: 'open-report', icon: 'insights', label: 'Your Report Cards' })}
+        ${workMode()
+          ? menuRow({ act: 'team-open', icon: 'people', label: 'Your Team' })
+          : menuRow({ act: 'prefs-open', icon: 'sliders', label: 'Preferences' })}
+        ${adminRole() ? menuRow({ href: '/admin', icon: 'shield', label: 'Admin dashboard' }) : ''}
+        ${menuRow({ act: 'todo-open', icon: 'todo', label: 'To Do', badge: open || '' })}
+        ${menuRow({ act: 'go-blogs', icon: 'article', label: 'Blog' })}
+        ${menuRow({ act: 'legal-faq', icon: 'question', label: 'FAQs' })}
+        ${menuRow({ act: 'help-open', icon: 'support', label: 'Help' })}
+        ${workMode() ? '' : menuRow({ href: DONATE_URL, icon: 'heart', label: 'Donate', blank: true, donate: true })}
       </div>
-
-      ${item('open-report', 'Your Report Cards', 'am-strong')}
-      ${workMode() ? item('team-open', 'Your Team') : item('prefs-open', 'Preferences')}
-      ${adminRole() ? `<a class="am-item" href="/admin" role="menuitem">Admin dashboard</a>` : ''}
-      ${item('todo-open', 'To Do')}
-      ${item('go-blogs', 'Blog')}
-      ${item('legal-faq', 'FAQs')}
-      ${item('help-open', 'Help')}
-      ${workMode() ? '' : `
-      <a class="am-item" href="${DONATE_URL}" data-donate target="_blank" rel="noopener noreferrer" role="menuitem">Donate</a>`}
-
-      <div class="am-rule"></div>
-      ${item('sign-out', 'Sign out')}
-      ${item('close-account', 'Delete my account', 'am-danger')}
+      ${menuExit()}
     </div>` : ''}
   </div>`;
 }
@@ -4650,10 +4686,28 @@ const ICON_PATHS = {
      the rest so it reads as one of the set rather than an avatar. */
   person: '<circle cx="12" cy="8.3" r="3.5"/>'
     + '<path d="M5.6 19.9a6.4 6.4 0 0 1 12.8 0"/>',
-  /* The to-do pad. A page with lines on it and a tick, so it reads as a list
-     of things to do rather than as another note field. */
-  todo: '<rect x="4.3" y="3.5" width="15.4" height="17" rx="3"/>'
-    + '<path d="M8 9.1h8M8 12.7h8M8 16.3h4.6"/>',
+  /* The menus. Each one is the thing itself rather than a symbol for it: a
+     clipboard with a tick for the pad, a page of lines for the blog, a pane
+     with a sidebar for the full layout, two figures for a team. Same 1.7
+     stroke and currentColor as the rest, so a row of them reads as one set. */
+  todo: '<rect x="5.4" y="4.6" width="13.2" height="15.8" rx="2.6"/>'
+    + '<path d="M9 4.6a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 4.6v1.1H9Z" stroke-linejoin="round"/>'
+    + '<path d="m9.2 13.1 2 2 3.6-4.2"/>',
+  article: '<rect x="3.6" y="4.8" width="16.8" height="14.4" rx="2.6"/>'
+    + '<path d="M6.8 9h6.4M6.8 12.4h6.4M6.8 15.6h4"/>'
+    + '<path d="M16.2 9h1.2v3.4h-1.2z" fill="currentColor" stroke="none" opacity=".35"/>',
+  layout: '<rect x="3.4" y="4.8" width="17.2" height="14.4" rx="2.6"/>'
+    + '<path d="M3.4 9h17.2M9.2 9v10.2"/>',
+  people: '<circle cx="9.4" cy="8.6" r="3.1"/>'
+    + '<path d="M3.8 19.4a5.7 5.7 0 0 1 11.2 0"/>'
+    + '<path d="M15.6 6.1a3 3 0 0 1 0 5.6"/><path d="M17.2 14.4a5 5 0 0 1 3 4.6"/>',
+  question: '<circle cx="12" cy="12" r="9.1"/>'
+    + '<path d="M9.6 9.5a2.5 2.5 0 1 1 3.2 2.6c-.6.2-.9.7-.9 1.4v.4"/>'
+    + '<circle cx="11.9" cy="16.6" r="1.2" fill="currentColor" stroke="none"/>',
+  support: '<circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="12" r="3.4"/>'
+    + '<path d="m6 6 3.6 3.6M18 6l-3.6 3.6M6 18l3.6-3.6M18 18l-3.6-3.6"/>',
+  exit: '<path d="M14.2 4.8H6.6a1.8 1.8 0 0 0-1.8 1.8v10.8a1.8 1.8 0 0 0 1.8 1.8h7.6"/>'
+    + '<path d="M15.6 8.4 19.2 12l-3.6 3.6M19.2 12H9.4"/>',
   scales: '<path d="M12 4.5v15.3M7.7 19.8h8.6M4.3 8.6h15.4"/>'
     + '<path d="M4.3 8.6 2.2 13.3a2.3 2.3 0 0 0 4.2 0Z" stroke-linejoin="round"/>'
     + '<path d="M19.7 8.6l-2.1 4.7a2.3 2.3 0 0 0 4.2 0Z" stroke-linejoin="round"/>'
@@ -10279,7 +10333,13 @@ const ACTIONS = {
   'note-edit': (el) => editNote(el.dataset.kind, el.dataset.id),
 
   'auth-submit': submitAuth,
-  'sign-out': signOut,
+  'sign-out': () => {
+    state.menuOpen = false;
+    if (state.m) state.m.accountOpen = false;
+    // The phone flow re-runs its own first paint on the next sign-in.
+    mBooted = false;
+    signOut();
+  },
   'scroll-top': () => window.scrollTo({ top: 0, behavior: 'smooth' }),
   'scroll-features': () => scrollToAnchor('features'),
   'scroll-pricing': () => scrollToAnchor('pricing'),
@@ -13311,32 +13371,31 @@ function mDonateSheet() {
    nine screens have no other home for: signing out, and getting back to the
    full layout on a phone. */
 function mAccountSheet() {
-  const email = (state.auth && state.auth.email) || '';
+  const open = todoOpenCount();
+  const team = state.team && state.team.team;
   return mSheet(`
-  <div style="width:38px;height:4px;border-radius:999px;background:#d5d2df;margin:0 auto 18px;"></div>
-  <div style="font-family:var(--font-heading);font-weight:700;font-size:23px;color:#16131f;">${esc(state.displayName || 'Your account')}</div>
-  ${email ? `<p style="margin:4px 0 18px;font-size:13.5px;color:#756f88;">${esc(email)}</p>` : '<div style="height:18px;"></div>'}
-  <button class="btn btn-secondary" data-act="todo-open" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">To Do${todoOpenCount() ? ` · ${todoOpenCount()}` : ''}</button>
-  <button class="btn btn-secondary" data-act="m-classic" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">Full view</button>
-  <button class="btn btn-secondary" data-act="team-open" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">${state.team && state.team.team ? esc(state.team.team.name) : 'Start a team'}</button>
-  <button class="btn btn-secondary" data-act="prefs-open" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">Preferences</button>
-  <button class="btn btn-secondary" data-act="go-blogs" style="width:100%;min-height:48px;font-size:15px;margin-bottom:8px;">Blog</button>
-  <!-- The phone app had no route to either of these at all, which is not a
-       thing to ship an app to strangers without. -->
-  <div style="display:flex;gap:16px;justify-content:center;margin:14px 0 10px;">
-    <button data-act="legal-privacy" style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;color:#756f88;padding:6px;">Privacy</button>
-    <button data-act="legal-terms" style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;color:#756f88;padding:6px;">Terms of Use</button>
-    <button data-act="legal-faq" style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;color:#756f88;padding:6px;">FAQs</button>
-    <button data-act="help-open" style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:13px;font-weight:600;color:#756f88;padding:6px;">Help</button>
+  <div class="mn-grab" aria-hidden="true"></div>
+  <div class="mn-top">
+    ${wordmark(26, 19)}
+    <button class="mn-x" data-act="m-sheet-close" aria-label="Close">✕</button>
   </div>
-  <button class="btn" data-act="m-sign-out"
-    style="width:100%;min-height:48px;font-size:15px;color:#8a2f4a;background:#fff;border:1px solid rgba(138,47,74,.3);margin-bottom:8px;">Sign out</button>
-  <!-- Below signing out, and quieter than it: they are next to each other in
-       the list of ways to leave, and only one of them is reversible. -->
-  <button class="btn" data-act="close-account"
-    style="width:100%;min-height:44px;font-size:13.5px;color:#756f88;background:transparent;border:0;">Delete my account</button>
-  <button data-act="m-sheet-close"
-    style="width:100%;min-height:42px;border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;color:#756f88;">Close</button>`, '24px 22px 30px');
+  ${menuWho()}
+  <div class="mn-list">
+    ${menuRow({ act: 'todo-open', icon: 'todo', label: 'To Do', badge: open || '' })}
+    ${menuRow({ act: 'm-classic', icon: 'layout', label: 'Full view' })}
+    ${menuRow({ act: 'team-open', icon: 'people', label: team ? team.name : 'Start a team' })}
+    ${menuRow({ act: 'prefs-open', icon: 'sliders', label: 'Preferences' })}
+    ${menuRow({ act: 'go-blogs', icon: 'article', label: 'Blog' })}
+  </div>
+  ${menuExit()}
+  <!-- The phone app had no route to any of these at all, which is not a thing
+       to ship to strangers. Kept at the foot, as one line of small print. -->
+  <div class="mn-legal">
+    <button data-act="legal-privacy">Privacy</button><i></i>
+    <button data-act="legal-terms">Terms of Use</button><i></i>
+    <button data-act="legal-faq">FAQs</button><i></i>
+    <button data-act="help-open">Help</button>
+  </div>`, '14px 20px 26px');
 }
 
 /* The whole phone experience, assembled. */
@@ -13747,8 +13806,6 @@ const M_ACTIONS = {
   },
   'm-classic': () => { state.mClassic = true; state.m.accountOpen = false; save(); render(); },
   'm-mobile': () => { state.mClassic = false; save(); render(); },
-  // The next account to sign in gets its own answer about setup.
-  'm-sign-out': () => { state.m.accountOpen = false; mBooted = false; signOut(); },
 
   /* the flow */
   /* Opening the flow from a day you are reading defaults the draft to that
