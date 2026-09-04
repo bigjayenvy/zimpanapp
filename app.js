@@ -8586,9 +8586,19 @@ function restoreFocus(f) {
   if (f.sel && f.sel.s != null) { try { el.setSelectionRange(f.sel.s, f.sel.e); } catch (err) { /* ignore */ } }
 }
 
+/* Which phone screen the last paint drew, so the next one can tell whether it
+   is a new page or the same one again. See the note in render(). */
+let mPaintedScreen = '';
+
 function render() {
   // Bumped so per-render memos (dayFood) know their answers are stale.
   renderSeq += 1;
+  /* Read and cleared together: cleared here so every path that paints
+     something other than the phone app — the blog, the desktop layout, the
+     splash — leaves nothing behind, and coming back to the phone counts as
+     arriving rather than as staying. Only the phone branch below sets it. */
+  const lastScreen = mPaintedScreen;
+  mPaintedScreen = '';
   const f = captureFocus();
   /* Every render replaces the whole tree, which collapses the document to
      nothing for an instant and takes the scroll position with it — switching
@@ -8692,7 +8702,22 @@ function render() {
       state.m.screen = 'home';
     }
     root.innerHTML = `<div id="zimpan-progress" class="topbar" style="display:none"><i></i></div>${mobileApp()}${legalSheet()}${helpDialog()}${closeAccountDialog()}`;
-    if (scrollY && window.scrollY !== scrollY) window.scrollTo(0, scrollY);
+    /* A new screen begins at its own beginning.
+
+       Every render puts the scroll position back, which is right for a render
+       nobody asked for — a sync landing, a timer ticking — and wrong for a
+       render that changed the page underneath it. Reading to the bottom of
+       Home and tapping Insights left you at the bottom of Insights, looking at
+       a footer and having to scroll up to find out where you were.
+
+       Decided here rather than in the actions that navigate, because there are
+       a dozen of them — the tab bar, the log flow, an entry, gap review, the
+       way back from each — and one of them would eventually be written without
+       it. The rule is about screens, so it lives where screens are painted. */
+    const movedScreen = state.m.screen !== lastScreen;
+    mPaintedScreen = state.m.screen;
+    if (movedScreen) window.scrollTo(0, 0);
+    else if (scrollY && window.scrollY !== scrollY) window.scrollTo(0, scrollY);
     restoreFocus(f);
     paintBusy();
     if (state.focusField) {
