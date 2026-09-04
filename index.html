@@ -42,10 +42,15 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 <meta name="twitter:description" content="See where your time and money actually go. Free forever.">
 <meta name="twitter:image" content="https://zimpan.com/ds/og-image.jpg">
 
-<link rel="icon" type="image/svg+xml" href="ds/favicon.svg">
-<link rel="apple-touch-icon" href="ds/favicon.svg">
+<!-- Rooted, not relative. This document is served at four addresses, and one
+     of them is two segments deep: at /blogs/a-post a relative "app.js" resolves
+     to /blogs/app.js, which the server answers with this same document, so the
+     browser is handed HTML where it expected a script and paints nothing. Every
+     asset here is absolute for that reason. -->
+<link rel="icon" type="image/svg+xml" href="/ds/favicon.svg">
+<link rel="apple-touch-icon" href="/ds/favicon.svg">
 <meta name="theme-color" content="#5f3ac9">
-<link rel="stylesheet" href="ds/styles.css">
+<link rel="stylesheet" href="/ds/styles.css">
 <style>
   body { margin: 0; }
   input, select, button { font-family: inherit; }
@@ -671,7 +676,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .landing::before {
     content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
     background:
-      url('ds/home-bg.jpg') center right / cover no-repeat,
+      url('/ds/home-bg.jpg') center right / cover no-repeat,
       radial-gradient(1100px 620px at 88% -8%, color-mix(in srgb, #4a2458 18%, transparent), transparent 62%),
       radial-gradient(760px 520px at 6% 4%, color-mix(in srgb, #2a8b7d 12%, transparent), transparent 60%),
       var(--color-bg);
@@ -789,7 +794,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     .landing::before {
       background:
         linear-gradient(180deg, color-mix(in srgb, #f8f7fb 74%, transparent) 0%, color-mix(in srgb, #f8f7fb 90%, transparent) 52%, #f8f7fb 78%),
-        url('ds/home-bg.jpg') center right / cover no-repeat,
+        url('/ds/home-bg.jpg') center right / cover no-repeat,
         var(--color-bg);
     }
 
@@ -3179,6 +3184,6 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 <!-- End Google Tag Manager (noscript) -->
 
 <div id="app"></div>
-<script src="app.js"></script>
+<script src="/app.js"></script>
 </body>
 </html>

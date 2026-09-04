@@ -509,7 +509,7 @@ function blogBlock() {
       <td><span class="ad-pill ${p.status === 'published' ? 'live' : ''}">${esc(p.status)}</span></td>
       <td class="ad-num">${esc(postWhen(p))}</td>
       <td class="ad-right">
-        ${p.status === 'published'
+        ${p.status === 'published' && Number(p.publishedAt) && Number(p.publishedAt) <= Date.now()
           ? `<a class="ad-mini" href="/blogs/${esc(p.slug)}" target="_blank" rel="noopener">View</a>` : ''}
         <button class="ad-mini" data-act="post-edit" data-id="${esc(String(p.id))}">Edit</button>
         <button class="ad-mini danger" data-act="post-delete" data-id="${esc(String(p.id))}" data-title="${esc(p.title)}">Delete</button>

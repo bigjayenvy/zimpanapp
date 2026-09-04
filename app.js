@@ -4682,7 +4682,7 @@ const LANDING_FEATURES = [
 
 /* Replace with the photograph when it lands: put the file in ds/ — everything
    there is copied on deploy — and name it here. Nothing else has to change. */
-const TEAM_HERO = 'ds/team-hero.svg';
+const TEAM_HERO = '/ds/team-hero.svg';
 
 // Matches TRIAL_DAYS in server/teams.js, where it is actually enforced.
 const TEAM_TRIAL_DAYS = 14;
@@ -11698,7 +11698,7 @@ function mSignin() {
   const art = `
   <div aria-hidden="true" style="position:fixed;inset:0;z-index:0;pointer-events:none;background:
     linear-gradient(180deg,rgba(248,247,251,.74) 0%,rgba(248,247,251,.9) 52%,#f8f7fb 78%),
-    url('ds/home-bg.jpg') center right / cover no-repeat,
+    url('/ds/home-bg.jpg') center right / cover no-repeat,
     radial-gradient(1100px 620px at 88% -8%,rgba(74,36,88,.18),transparent 62%),
     radial-gradient(760px 520px at 6% 4%,rgba(42,139,125,.12),transparent 60%),
     #f8f7fb;"></div>`;
