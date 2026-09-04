@@ -430,7 +430,7 @@ function save() {
     localStorage.setItem(STORE_KEY, JSON.stringify({
       entries: state.entries, money: state.money,
       categories: state.categories, purposes: state.purposes,
-      todos: state.todos,
+      todos: state.todos, todosRequeued: state.todosRequeued,
       currency: state.currency, currencyUpdatedAt: state.currencyUpdatedAt,
       steps: state.steps, stepsAt: state.stepsAt,
       deckRange: state.deckRange,
@@ -976,6 +976,8 @@ const state = {
      take away something written. */
   todoOpen: false,
   todoArm: '',
+  // Whether this browser has re-offered its notes. See requeueTodos().
+  todosRequeued: stored.todosRequeued === true,
   // The "why is this stuck" dialog: which note, and what has been typed.
   todoWhy: null,
 
@@ -1204,8 +1206,23 @@ function mergeChanges(changes) {
 
 /* Clears the outbox only for rows untouched since they were collected — an
    edit made while the request was in flight has to stay queued. */
-function clearPushed(sent) {
+/* What the outbox may forget, given what the server said it did with it.
+
+   `applied` is the server's own count per kind. A server running code older
+   than a kind answers 200, ignores the field it does not know, and reports no
+   count for it — and clearing the outbox on that 200 loses the rows silently:
+   they stay on the device that wrote them, marked clean, and never go up
+   again even after the server catches up. That is precisely what a static
+   deploy without a restart looks like from here.
+
+   So a kind is only forgotten when the server counted it. Anything else is
+   kept and tried again, which costs one repeated request until the server is
+   current and then settles by itself. A reply with no `applied` at all is not
+   evidence either way, so it is treated as it always was. */
+function clearPushed(sent, applied) {
+  const counted = applied && typeof applied === 'object';
   KINDS.forEach((kind) => {
+    if (counted && (sent[kind] || []).length && typeof applied[kind] !== 'number') return;
     (sent[kind] || []).forEach((row) => {
       const key = String(row[KEY_OF[kind]]);
       const live = findRow(kind, key);
@@ -1547,7 +1564,7 @@ async function syncNow() {
   try {
     const res = await API.push(state.lastSyncAt, sent);
     mergeChanges(res.changes);
-    clearPushed(sent);
+    clearPushed(sent, res.applied);
     state.lastSyncAt = res.serverTime;
     state.syncing = false;
     save();
@@ -1761,7 +1778,26 @@ async function onGoogleCredential(response) {
   }
 }
 
+/* Notes written while the server did not yet know about them.
+
+   Until clearPushed learned to check what the server counted, a push to a
+   server running older code came back 200 with the notes quietly dropped, and
+   the outbox was emptied on that answer. Those notes are still here, still
+   correct, and marked as though they had been delivered — so nothing would
+   ever send them, and they would sit on one device forever.
+
+   Queued again, once per browser, and remembered so it is not done twice. A
+   re-push costs nothing: the rows carry their own stamps and the server takes
+   the newer of the two, so a note that did land is written back as itself. */
+function requeueTodos() {
+  if (state.todosRequeued) return;
+  state.todosRequeued = true;
+  state.todos.forEach((t) => markDirty('todos', t.id));
+  save();
+}
+
 async function boot() {
+  requeueTodos();
   const params = new URLSearchParams(location.search);
 
   // A reset link lands here with ?reset=<token>; that screen wins over
@@ -3975,10 +4011,16 @@ function backToTop() {
    written on and glanced at. Nothing here is shown to anyone else — a team
    admin sees hours against projects and never this. */
 const TODO_STATUSES = [
-  { key: 'pending', label: 'Pending', tone: '#6b6580', tint: '#efedf5', rank: 1 },
+  /* Listed in the order the picker offers them, which is the order a piece of
+     work moves through. `rank` is where the note then sits in the pad, and the
+     two differ in one place: For review outranks Pending, because something
+     waiting on a person is nearer being finished than something not started,
+     and it is the one that needs chasing. */
+  { key: 'pending', label: 'Pending', tone: '#6b6580', tint: '#efedf5', rank: 2 },
   { key: 'doing', label: 'In progress', tone: '#5f3ac9', tint: '#f2eefe', rank: 0 },
-  { key: 'done', label: 'Complete', tone: '#0e7a5c', tint: '#e3f5ed', rank: 2 },
-  { key: 'stuck', label: 'Stuck', tone: '#8a2f4a', tint: '#fdecf1', rank: 3 }
+  { key: 'review', label: 'For review', tone: '#9a6b12', tint: '#fdf1de', rank: 1 },
+  { key: 'done', label: 'Complete', tone: '#0e7a5c', tint: '#e3f5ed', rank: 3 },
+  { key: 'stuck', label: 'Stuck', tone: '#8a2f4a', tint: '#fdecf1', rank: 4 }
 ];
 const TODO_MAX = 500;
 const todoStatus = (k) => TODO_STATUSES.find((s) => s.key === k) || TODO_STATUSES[0];

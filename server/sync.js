@@ -62,7 +62,7 @@ const list = (v, field) => {
 
 export const CURRENCIES = ['PHP', 'AED', 'USD', 'EUR', 'SGD', 'HKD'];
 // Kept in step with TODO_STATUSES in app.js, which owns the labels and colours.
-export const TODO_STATUSES = ['pending', 'doing', 'done', 'stuck'];
+export const TODO_STATUSES = ['pending', 'doing', 'review', 'done', 'stuck'];
 
 /* ── pull ── */
 
