@@ -4986,8 +4986,10 @@ function blogIndex() {
     ${blogBar()}
     <section class="blog-head">
       <span class="strip-kicker">The ZIMPAN blog</span>
-      <h1 class="blog-h1">On time, money, and what they cost you</h1>
-      <p class="blog-sub">Notes on tracking, habits and the readings behind the app.</p>
+      <h1 class="blog-h1">Where your hours and your money actually go</h1>
+      <p class="blog-sub">Plain writing on productivity, financial freedom, and running your
+        time and money like they belong to you — because the day you can account for
+        is the day you can change.</p>
     </section>
     <section class="blog-wrap">${body}</section>
     ${blogFoot()}
@@ -11541,6 +11543,9 @@ function mGroupedList(dates) {
 
 const mLoggedMins = (dates) => mTimeRows(dates).reduce((a, e) => a + span(e), 0);
 const mOutToday = (dates) => mSumCents(mMoneyRows(dates), 'out') / 100;
+// The other half of the same window. Out is the number a day is judged by, so
+// it keeps the headline; in is what makes out mean anything.
+const mInToday = (dates) => mSumCents(mMoneyRows(dates), 'in') / 100;
 
 /* The day-split bar. One segment per category sized by its minutes, tinted at
    descending opacity largest-first, and whatever is left of the day as a faint
@@ -12655,6 +12660,16 @@ function mHome() {
         <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;opacity:.78;">${workMode() ? 'Projects' : 'Money out'}</div>
         <div style="font-family:var(--font-heading);font-weight:700;font-size:32px;line-height:1.1;margin-top:4px;">${
           workMode() ? String(new Set(list.map((e) => e.category).filter(Boolean)).size) : esc(mMoney(mOutToday(dates)))}</div>
+        <!-- Under the figure it belongs to rather than above the label: a
+             heading, its number, then the smaller fact about it reads down in
+             one line of sight. Money in is a slower number than money out —
+             a salary lands once, lunch is bought every day — so it is the
+             footnote and not the headline, but it is on the card, because
+             spending with nothing to weigh it against is half a sentence. -->
+        ${workMode() ? '' : `
+        <div style="font-size:12px;margin-top:5px;opacity:.85;white-space:nowrap;">
+          <span style="opacity:.8;">In</span> ${esc(mMoney(mInToday(dates)))}
+        </div>`}
       </div>
     </div>
     <div style="display:flex;gap:3px;margin-top:16px;height:9px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.22);">
@@ -12678,7 +12693,8 @@ function mHome() {
       if (!st.inCents && !st.asideCents) return '';
       return `<div style="display:flex;gap:8px;margin-top:8px;padding-top:9px;border-top:1px solid rgba(255,255,255,.22);font-size:12px;opacity:.92;">
         <span style="flex:none;letter-spacing:.08em;text-transform:uppercase;font-size:10.5px;opacity:.8;padding-top:1px;">Balance</span>
-        <span>${esc(st.short)}${st.asideCents ? ` · ${esc(amount(st.asideCents / 100))} aside` : ''}</span>
+        <span>${esc(st.tone === 'left' ? `${amount(st.leftCents / 100)} left` : st.short)}${
+          st.asideCents ? ` · ${esc(amount(st.asideCents / 100))} aside` : ''}</span>
       </div>`;
     })()}
   </div>
@@ -12740,9 +12756,32 @@ function mHome() {
 const M_FLOW_COPY = {
   1: ['What are you logging?', 'Pick one — you can add the details next.'],
   2: { time: ['What were you doing?', 'Choose a category, then the activity.'], money: ['How much?', 'Tap the amount. No keyboard needed.'] },
-  3: { time: ['When was that?', 'Drag either end of the bar, or tap the times to type them.'], money: ['What was it for?', 'Purpose keeps the weekly split honest.'] },
+  /* Money going out and money coming in are the same question asked in
+     opposite directions, and one wording cannot do both: asking what a salary
+     was "for" reads as an accusation, and "purpose" is not what anybody calls
+     where their money came from. The list underneath is the same list — it is
+     the vocabulary the balance is split by, whichever way the money moved. */
+  3: {
+    time: ['When was that?', 'Drag either end of the bar, or tap the times to type them.'],
+    money: ['What was it for?', 'Purpose keeps the weekly split honest.'],
+    moneyIn: ['Where did it come from?', 'The source is what makes the balance readable.']
+  },
   4: ['Look right?', 'Tap anything to change it.']
 };
+
+/* Which of those to show. Steps 1 and 4 ask the same thing either way, step 2
+   only splits time from money, and step 3 splits all three. */
+const mFlowCopy = (step, money, dir) => {
+  const at = M_FLOW_COPY[step];
+  if (!at) return ['', ''];
+  if (Array.isArray(at)) return at;
+  if (!money) return at.time;
+  return (dir === 'in' && at.moneyIn) || at.money;
+};
+
+/* What the middle field is called, in each direction. Purposes on the money
+   side, categories on the time side; a source when the money is arriving. */
+const mVocabWord = (money, dir) => (money ? (dir === 'in' ? 'source' : 'purpose') : 'category');
 
 // What the entry will be called: what was typed beats what was tapped, and the
 // category stands in for both rather than saving something called "Untitled".
@@ -12900,7 +12939,7 @@ function mFlowCategory() {
   const rows = mVocab(money);
   const acts = s.cat ? mActs(s.cat, money) : [];
   const open = state.pickOpen === 'm-cat';
-  const label = money ? 'purpose' : 'category';
+  const label = mVocabWord(money, s.dir);
   return `
 <div class="pick-field m-pick" data-pick-field="m-cat" style="margin-bottom:22px;">
   <div class="pick-anchor">
@@ -12954,7 +12993,7 @@ function mFlowCategory() {
   <div class="pick-shade" data-backdrop="pick-close"></div>` : ''}
   </div>
 </div>
-${mLabel(s.cat ? `${s.cat} — usual ones` : 'Pick a category first')}
+${mLabel(s.cat ? `${s.cat} — usual ones` : `Pick a ${label} first`)}
 <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
   ${acts.map((a) => `
     <button data-act="m-act" data-name="${esc(a)}" aria-pressed="${s.activity === a}"
@@ -12965,7 +13004,7 @@ ${mLabel(s.cat ? `${s.cat} — usual ones` : 'Pick a category first')}
 </div>
 ${s.typing ? `
 <input class="input" type="text" data-k="m-activity" data-sync="m.activityText" value="${esc(s.activityText)}"
-  placeholder="What was it?"
+  placeholder="${money && s.dir === 'in' ? 'Where from?' : 'What was it?'}"
   style="min-height:46px;padding:10px 14px;font-size:15px;border:1.5px solid #7856f5;border-radius:14px;box-shadow:0 0 0 3px rgba(120,86,245,.18);">` : ''}`;
 }
 
@@ -13080,7 +13119,7 @@ function mFlowReview() {
   const money = mIsMoney();
   const rows = money
     ? [['What', mDraftLabel() || 'Untitled', 3], ['Amount', (s.dir === 'in' ? '+' : '−') + mMoney(s.amount), 2],
-      ['Purpose', s.cat || '—', 3], ['When', mDayChipLabel(), 1]]
+      [s.dir === 'in' ? 'Source' : 'Purpose', s.cat || '—', 3], ['When', mDayChipLabel(), 1]]
     : [['What', mDraftLabel() || 'Untitled', 2], ['Category', s.cat || '—', 2],
       ['Time', mRange(s.startMin, s.durMin), 3], ['When', mDayChipLabel(), 1]];
   return `
@@ -13126,9 +13165,7 @@ function mFlowBody() {
 function mFlow() {
   const s = state.m;
   const money = mIsMoney();
-  const copy = s.step >= 5 ? ['', ''] : (s.step === 2 || s.step === 3
-    ? M_FLOW_COPY[s.step][money ? 'money' : 'time']
-    : M_FLOW_COPY[s.step]);
+  const copy = s.step >= 5 ? ['', ''] : mFlowCopy(s.step, money, s.dir);
   const can = mCanAdvance();
   const done = s.step === 5;
   const seq = mFlowSteps();
@@ -13208,7 +13245,7 @@ function mDetail() {
   const dir = money ? (mCents(row.in) > 0 ? 'in' : 'out') : '';
   const amt = money ? (dir === 'in' ? Number(row.in) : Number(row.out)) : 0;
   const rows = money
-    ? [['Purpose', cat], ['Direction', dir === 'in' ? 'Money in' : 'Money out'],
+    ? [[dir === 'in' ? 'Source' : 'Purpose', cat], ['Direction', dir === 'in' ? 'Money in' : 'Money out'],
       ['Date', mLongDate(row.date)], ['Note', row.note || '—']]
     : [['Category', cat], ['Started', mClock(Number(row.from) || 0)],
       ['Ended', mClock(Number(row.to) || 0)], ['Date', mLongDate(row.date)], ['Note', row.note || '—']];

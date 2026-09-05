@@ -877,7 +877,24 @@ app.get('/index.html', sendRoot('index.html'));
    own. Named explicitly, like everything else here: this is an allowlist, and
    a route that is not in it is the 404 below however real the page is. */
 app.get('/teams', sendRoot('index.html'));
-app.get('/blogs', sendRoot('index.html'));
+app.get('/blogs', wrap(async (req, res) => {
+  const file = join(ROOT, 'index.html');
+  let html;
+  try { html = await readFile(file, 'utf8'); } catch (err) { return res.sendFile(file); }
+  const title = 'Where your hours and your money actually go — the ZIMPAN blog';
+  const desc = 'Plain writing on productivity, financial freedom, and running your time '
+    + 'and money like they belong to you.';
+  const head = [
+    `<title>${htmlAttr(title)}</title>`,
+    `<meta name="description" content="${htmlAttr(desc)}">`,
+    `<link rel="canonical" href="https://zimpan.com/blogs">`,
+    `<meta property="og:type" content="website">`,
+    `<meta property="og:title" content="${htmlAttr(title)}">`,
+    `<meta property="og:description" content="${htmlAttr(desc)}">`,
+    `<meta property="og:url" content="https://zimpan.com/blogs">`
+  ].join('\n  ');
+  res.type('html').send(html.replace(/<title>[\s\S]*?<\/title>/i, head));
+}));
 
 /* A post's own page, with its own title and description written into the HTML
    before it is sent.
