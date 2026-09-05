@@ -431,6 +431,7 @@ function save() {
       entries: state.entries, money: state.money,
       categories: state.categories, purposes: state.purposes,
       todos: state.todos, todosRequeued: state.todosRequeued,
+      aiRequeued: state.aiRequeued,
       currency: state.currency, currencyUpdatedAt: state.currencyUpdatedAt,
       steps: state.steps, stepsAt: state.stepsAt,
       deckRange: state.deckRange,
@@ -982,6 +983,8 @@ const state = {
   todoArm: '',
   // Whether this browser has re-offered its notes. See requeueTodos().
   todosRequeued: stored.todosRequeued === true,
+  // And its estimates. See requeueAi().
+  aiRequeued: stored.aiRequeued === true,
   // The "why is this stuck" dialog: which note, and what has been typed.
   todoWhy: null,
 
@@ -1399,6 +1402,15 @@ async function askEstimate(detail, key, scope) {
     capAiCache();
     state.dirty.ai = true;
     writeJson(AI_CACHE_KEY, state.aiCache);
+    /* The estimate is written to its own store; this writes the note saying it
+       has not gone up yet. Without it the outbox flag lived only in memory, so
+       a push that did not land before the tab closed — a restart, a dropped
+       connection, a sync already blocked on something else — took with it the
+       only record that anything was owed. The estimate stayed on the device
+       that asked for it and never reached the others, which reads exactly like
+       calibration not syncing. Every other flag in the outbox is saved beside
+       the thing it describes; these two were not. */
+    save();
     queueSync(0);
     flash(`Estimated · ${res.estimate.kcal.toLocaleString('en-US')} kcal`);
   } catch (err) {
@@ -1800,8 +1812,21 @@ function requeueTodos() {
   save();
 }
 
+/* Estimates stranded the same way, for the same reason, and recovered on the
+   same terms: offered once more per browser and remembered, so a calibration
+   made before the flag was durable still reaches the other devices. The map
+   goes up whole and the server merges it entry by entry on each stamp, so
+   offering one it already holds costs a request and changes nothing. */
+function requeueAi() {
+  if (state.aiRequeued) return;
+  state.aiRequeued = true;
+  if (Object.keys(state.aiCache || {}).length) state.dirty.ai = true;
+  save();
+}
+
 async function boot() {
   requeueTodos();
+  requeueAi();
   const params = new URLSearchParams(location.search);
 
   // A reset link lands here with ?reset=<token>; that screen wins over
@@ -2758,6 +2783,15 @@ async function refineBurn(id) {
     capAiCache();
     state.dirty.ai = true;
     writeJson(AI_CACHE_KEY, state.aiCache);
+    /* The estimate is written to its own store; this writes the note saying it
+       has not gone up yet. Without it the outbox flag lived only in memory, so
+       a push that did not land before the tab closed — a restart, a dropped
+       connection, a sync already blocked on something else — took with it the
+       only record that anything was owed. The estimate stayed on the device
+       that asked for it and never reached the others, which reads exactly like
+       calibration not syncing. Every other flag in the outbox is saved beside
+       the thing it describes; these two were not. */
+    save();
     queueSync(0);
     flash(`Estimated · ${res.estimate.kcal.toLocaleString('en-US')} kcal burned`);
   } catch (err) {
