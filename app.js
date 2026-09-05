@@ -4986,7 +4986,7 @@ function blogIndex() {
     ${blogBar()}
     <section class="blog-head">
       <span class="strip-kicker">The ZIMPAN blog</span>
-      <h1 class="blog-h1">Where your hours and your money actually go</h1>
+      <h1 class="blog-h1">Read articles about time, money, tasks, and self management</h1>
       <p class="blog-sub">Plain writing on productivity, financial freedom, and running your
         time and money like they belong to you — because the day you can account for
         is the day you can change.</p>
@@ -12668,7 +12668,7 @@ function mHome() {
              spending with nothing to weigh it against is half a sentence. -->
         ${workMode() ? '' : `
         <div style="font-size:12px;margin-top:5px;opacity:.85;white-space:nowrap;">
-          <span style="opacity:.8;">In</span> ${esc(mMoney(mInToday(dates)))}
+          <span style="opacity:.8;">Money in</span> ${esc(mMoney(mInToday(dates)))}
         </div>`}
       </div>
     </div>

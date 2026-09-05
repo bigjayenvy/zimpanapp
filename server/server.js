@@ -881,7 +881,7 @@ app.get('/blogs', wrap(async (req, res) => {
   const file = join(ROOT, 'index.html');
   let html;
   try { html = await readFile(file, 'utf8'); } catch (err) { return res.sendFile(file); }
-  const title = 'Where your hours and your money actually go — the ZIMPAN blog';
+  const title = 'Read articles about time, money, tasks, and self management — the ZIMPAN blog';
   const desc = 'Plain writing on productivity, financial freedom, and running your time '
     + 'and money like they belong to you.';
   const head = [
