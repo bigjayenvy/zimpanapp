@@ -68,7 +68,9 @@
   .ad-tile.is-lead span, .ad-tile.is-lead em { color: color-mix(in srgb, #fff 78%, transparent); }
 
   /* — charts — */
-  .ad-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+  /* min() so the ideal width gives way on a screen narrower than it. Without
+     it the column stays 340px on a 360px phone and pushes the page sideways. */
+  .ad-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); }
   .ad-card {
     background: var(--color-surface); border: 1px solid var(--color-divider);
     border-radius: var(--radius-md); padding: 18px 20px 20px;
@@ -165,6 +167,16 @@
   /* The gifts table has room to breathe, so its addresses do not need to wrap
      at all — the column simply takes what it needs. */
   .ad-gifts td:first-child { width: 45%; word-break: normal; }
+
+  /* — a post, in the list —
+     The title carries the row and the address under it is how you tell two
+     drafts of the same idea apart, so it wraps rather than being clipped. */
+  .ad-name { font-weight: 600; line-height: 1.35; }
+  td .ad-sub {
+    margin-top: 2px; font-size: 12px; color: var(--color-neutral-600);
+    line-height: 1.4; word-break: break-word;
+  }
+  .ad-right { text-align: right; }
 
   .ad-pill {
     display: inline-block; font-size: 10.5px; font-weight: 600; padding: 3px 9px;
@@ -280,6 +292,32 @@
     .ad-shell { padding: 0 14px 60px; }
     .ad-who { width: 100%; margin-left: 0; }
     .ad-tile b { font-size: 25px; }
+
+    /* — the posts, on a phone —
+       A four-column table on a 390px screen is a table you read by dragging,
+       and this is the list an admin actually works from. So each row becomes
+       a block: the title and its address on their own line, the status and
+       the date together underneath, and the three buttons across the bottom
+       where a thumb can hit them. Nothing is hidden — the header row goes
+       because a stacked row labels itself. */
+    .ad-table.ad-posts { min-width: 0; display: block; }
+    .ad-table.ad-posts thead { display: none; }
+    .ad-table.ad-posts tbody { display: block; }
+    .ad-table.ad-posts tr {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+      padding: 14px 2px; border-bottom: 1px solid var(--color-neutral-200);
+    }
+    .ad-table.ad-posts tr:last-child { border-bottom: 0; }
+    .ad-table.ad-posts td { display: block; padding: 0; border: 0; }
+    .ad-table.ad-posts td:first-child { flex: 1 1 100%; }
+    .ad-table.ad-posts td.ad-num { text-align: left; font-size: 12px; color: var(--color-neutral-600); }
+    .ad-table.ad-posts td.ad-right { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 8px; }
+    .ad-table.ad-posts .ad-mini { min-height: 34px; padding: 0 12px; display: inline-flex; align-items: center; }
+
+    /* The one control on a ticket, given room to be tapped. */
+    .ad-ticket-foot { padding-left: 0; }
+    .ad-ticket-when { margin-left: 0; }
+    .ad-status { min-height: 38px; }
   }
 
   /* — the product column —

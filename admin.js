@@ -506,7 +506,7 @@ function blogBlock() {
         <div class="ad-name">${esc(p.title)}</div>
         <div class="ad-sub">/blogs/${esc(p.slug)}</div>
       </td>
-      <td><span class="ad-pill ${p.status === 'published' ? 'live' : ''}">${esc(p.status)}</span></td>
+      <td><span class="ad-pill ${p.status === 'published' ? 'live' : 'off'}">${esc(p.status)}</span></td>
       <td class="ad-num">${esc(postWhen(p))}</td>
       <td class="ad-right">
         ${p.status === 'published' && Number(p.publishedAt) && Number(p.publishedAt) <= Date.now()
@@ -524,9 +524,11 @@ function blogBlock() {
       </div>
       ${state.blogMsg ? `<p class="ad-msg ${state.blogMsg.tone === 'bad' ? 'bad' : 'good'}">${esc(state.blogMsg.text)}</p>` : ''}
       ${rows
-        ? `<table class="ad-table"><thead><tr>
-             <th>Post</th><th>Status</th><th>When</th><th class="ad-right">…</th>
-           </tr></thead><tbody>${rows}</tbody></table>`
+        ? `<div class="ad-scroll" style="border:0;background:transparent;">
+             <table class="ad-table ad-posts"><thead><tr>
+               <th>Post</th><th>Status</th><th>When</th><th class="ad-right">…</th>
+             </tr></thead><tbody>${rows}</tbody></table>
+           </div>`
         : '<div class="ad-empty">Nothing written yet.</div>'}
     </div>`;
 }
