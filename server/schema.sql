@@ -217,6 +217,36 @@ CREATE TABLE IF NOT EXISTS todos (
   CONSTRAINT fk_todos_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- The money tracker's own pad: what is coming out that has not gone out yet.
+-- A to-do says what needs doing; a line here says what needs paying, and
+-- carries the figure with it so the pad can add itself up.
+--
+-- Separate from money_entries on purpose. A plan is not a transaction: it has
+-- no date it happened on, it may never happen at all, and letting one into the
+-- ledger would put money that was never spent into every total the app draws.
+-- Paying a line writes a real row in money_entries and marks this one paid.
+CREATE TABLE IF NOT EXISTS plans (
+  user_id    INT UNSIGNED NOT NULL,
+  id         VARCHAR(64)  NOT NULL,
+  body       VARCHAR(500) NOT NULL,
+  -- DECIMAL for the same reason money_entries is: these figures are added up
+  -- and read against a bank balance, and a float that drifts by a cent is
+  -- worse than no figure at all.
+  amount     DECIMAL(15,2) NOT NULL DEFAULT 0,
+  -- Which purpose the spend will be filed under when it is paid. Null while
+  -- undecided, so a line can be written down before it is classified.
+  purpose    VARCHAR(60)  NULL,
+  status     VARCHAR(16)  NOT NULL DEFAULT 'planned',
+  created_at BIGINT       NOT NULL,
+  updated_at BIGINT       NOT NULL,
+  server_at  BIGINT       NOT NULL DEFAULT 0,
+  deleted    TINYINT(1)   NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, id),
+  KEY idx_plans_updated (user_id, updated_at),
+  KEY idx_plans_server (user_id, server_at),
+  CONSTRAINT fk_plans_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Recorded by hand from the payment provider's statement, because the donate
 -- link is a plain PayPal checkout that reports nothing back. `recorded_by` is
 -- kept so an entered figure can always be traced to whoever entered it, and

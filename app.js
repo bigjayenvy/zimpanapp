@@ -413,7 +413,7 @@ function seedTaxonomy() {
 
    View, range and timer stay per-session, as before. */
 
-const EMPTY_KEYED = () => ({ entries: {}, money: {}, categories: {}, purposes: {}, todos: {} });
+const EMPTY_KEYED = () => ({ entries: {}, money: {}, categories: {}, purposes: {}, todos: {}, plans: {} });
 
 function load() {
   try {
@@ -431,6 +431,7 @@ function save() {
       entries: state.entries, money: state.money,
       categories: state.categories, purposes: state.purposes,
       todos: state.todos, todosRequeued: state.todosRequeued,
+      plans: state.plans,
       aiRequeued: state.aiRequeued,
       currency: state.currency, currencyUpdatedAt: state.currencyUpdatedAt,
       steps: state.steps, stepsAt: state.stepsAt,
@@ -749,6 +750,9 @@ const state = {
   /* The to-do pad. Absent from any store written before it existed, hence the
      guard: load() only vouches for entries and money. */
   todos: Array.isArray(stored.todos) ? stored.todos : [],
+  /* The money tracker's pad, on the same terms as the to-do one above: absent
+     from every store written before it existed. */
+  plans: Array.isArray(stored.plans) ? stored.plans : [],
   currency: CURRENCIES.some((c) => c.code === stored.currency) ? stored.currency : DEFAULT_CURRENCY,
   /* Steps walked, keyed by date. Travels with everything else now, merged a
      day at a time on the stamps in `stepsAt` below. */
@@ -985,6 +989,11 @@ const state = {
      take away something written. */
   todoOpen: false,
   todoArm: '',
+  /* The money tracker's pad, and which of its lines has its delete armed. Held
+     apart from the to-do pad's pair rather than shared: the two open from
+     different places and one must not close the other. */
+  planOpen: false,
+  planArm: '',
   // Whether this browser has re-offered its notes. See requeueTodos().
   todosRequeued: stored.todosRequeued === true,
   // And its estimates. See requeueAi().
@@ -1034,8 +1043,8 @@ if (!storedRaw) save();
    knowing: `updatedAt` comes from whichever device made the edit, so a device
    with a badly wrong clock can win or lose exchanges it shouldn't. */
 
-const KINDS = ['entries', 'money', 'categories', 'purposes', 'todos'];
-const KEY_OF = { entries: 'id', money: 'id', categories: 'name', purposes: 'name', todos: 'id' };
+const KINDS = ['entries', 'money', 'categories', 'purposes', 'todos', 'plans'];
+const KEY_OF = { entries: 'id', money: 'id', categories: 'name', purposes: 'name', todos: 'id', plans: 'id' };
 
 const markDirty = (kind, key) => { state.dirty[kind][String(key)] = true; };
 
@@ -1058,12 +1067,14 @@ function serialise(kind, r) {
   if (kind === 'entries') return { id: r.id, date: r.date, activity: r.activity, category: r.category, project: r.project || undefined, from: r.from, to: r.to, note: r.note || '', updatedAt: r.updatedAt || 0 };
   if (kind === 'money') return { id: r.id, date: r.date, activity: r.activity, purpose: r.purpose, in: Number(r.in) || 0, out: Number(r.out) || 0, note: r.note || '', updatedAt: r.updatedAt || 0 };
   if (kind === 'todos') return { id: r.id, text: r.text || '', status: r.status || 'pending', blocked: r.blocked || undefined, createdAt: r.createdAt || 0, updatedAt: r.updatedAt || 0 };
+  if (kind === 'plans') return { id: r.id, text: r.text || '', amount: money2(r.amount), purpose: r.purpose || undefined, status: r.status || 'planned', createdAt: r.createdAt || 0, updatedAt: r.updatedAt || 0 };
   return { name: r.name, color: r.color, position: r.position || 0, updatedAt: r.updatedAt || 0 };
 }
 function deserialise(kind, r) {
   if (kind === 'entries') return { id: r.id, date: r.date, activity: r.activity, category: r.category, project: r.project || undefined, from: r.from, to: r.to, note: r.note || '', updatedAt: r.updatedAt };
   if (kind === 'money') return { id: r.id, date: r.date, activity: r.activity, purpose: r.purpose, in: r.in, out: r.out, note: r.note || '', updatedAt: r.updatedAt };
   if (kind === 'todos') return { id: r.id, text: r.text || '', status: r.status || 'pending', blocked: r.blocked || undefined, createdAt: r.createdAt || 0, updatedAt: r.updatedAt };
+  if (kind === 'plans') return { id: r.id, text: r.text || '', amount: money2(r.amount), purpose: r.purpose || undefined, status: r.status || 'planned', createdAt: r.createdAt || 0, updatedAt: r.updatedAt };
   return { name: r.name, color: r.color, position: r.position, updatedAt: r.updatedAt };
 }
 
@@ -1650,6 +1661,7 @@ function resetLocal() {
   state.entries = [];
   state.money = [];
   state.todos = [];
+  state.plans = [];
   state.categories = tax.categories.map((c) => ({ name: c.name, color: c.color, position: 0, updatedAt: t }));
   state.purposes = tax.purposes.map((p, i) => ({ name: p.name, color: p.color, position: i, updatedAt: t }));
   state.tombstones = EMPTY_KEYED();
@@ -4023,12 +4035,19 @@ function stickyBar(v) {
    the header carries a menu rather than a row of buttons, and Ask Zimpan is not
    there to fall back to. */
 function backToTop() {
-  const open = todoOpenCount();
+  /* One button, carrying whichever pad belongs to the tracker on screen. The
+     to-do pad is about the hours and the money pad is about the money, so
+     showing both at once would be offering a list that has nothing to do with
+     what is being looked at. Teams never reaches the money side at all — see
+     the guard in render() — so the plan pad cannot appear there. */
+  const money = state.app === 'money';
+  const open = money ? planOpenCount() : todoOpenCount();
   return `
   <div class="fabs no-print">
-    ${todoPad()}
-    <button class="fab-todo" data-act="todo-toggle" aria-expanded="${!!state.todoOpen}">
-      ${nodeIcon('todo', 16)}<span>To Do</span>${open ? `<b class="fab-tally">${open}</b>` : ''}
+    ${money ? planPad() : todoPad()}
+    <button class="${money ? 'fab-plan' : 'fab-todo'}" data-act="${money ? 'plan-toggle' : 'todo-toggle'}"
+      aria-expanded="${!!(money ? state.planOpen : state.todoOpen)}">
+      ${nodeIcon(money ? 'scales' : 'todo', 16)}<span>${money ? 'Money Plan' : 'To Do'}</span>${open ? `<b class="fab-tally">${open}</b>` : ''}
     </button>
     ${state.aiEstimates ? `
     <button class="fab-ask" data-act="chat-open">
@@ -4209,6 +4228,217 @@ function paintTodo() {
   list.scrollTop = todoScroll;
 }
 
+/* ── the money pad ──
+
+   The to-do pad answers "what needs doing". On the money tracker the question
+   is a different one — what is coming out that has not gone out yet — so it
+   gets a pad of its own rather than the same one relabelled. The two never
+   share a screen: the button above Ask Zimpan carries whichever belongs to the
+   tracker you are on, and the phone's menu lists both.
+
+   A line is text, a figure, and where it will be filed. The figure is the
+   whole reason this is not simply the to-do pad on another tab: a list of
+   planned spends that does not add itself up is a list you still have to do
+   arithmetic on, and the arithmetic is the question. So the pad totals what is
+   unpaid and says what that leaves of the money already logged.
+
+   Kept out of the ledger until it happens. A plan has no date it occurred on
+   and may never occur at all; letting one into money_entries would put money
+   that was never spent into the balance, the insights and the report. Paying a
+   line writes a real entry and marks the line paid — one direction only, so
+   the ledger stays a record of what happened. */
+const PLAN_STATUSES = [
+  /* Ordered as the picker offers them, which is the order a bill moves
+     through. `rank` is where the line then sits: what is due first, because it
+     is what needs money now; what is dropped at the bottom, kept as a record
+     of a decision rather than as something to act on. */
+  { key: 'due', label: 'Due now', tone: '#8a2f4a', tint: '#fdecf1', rank: 0, owed: true },
+  { key: 'planned', label: 'Planned', tone: '#5f3ac9', tint: '#f2eefe', rank: 1, owed: true },
+  { key: 'paid', label: 'Paid', tone: '#0e7a5c', tint: '#e3f5ed', rank: 2, owed: false },
+  { key: 'dropped', label: 'Dropped', tone: '#6b6580', tint: '#efedf5', rank: 3, owed: false }
+];
+const PLAN_MAX = 500;
+const planStatus = (k) => PLAN_STATUSES.find((s) => s.key === k) || PLAN_STATUSES[1];
+// Whether a line is still money you expect to part with.
+const planOwed = (row) => planStatus(row.status).owed;
+
+const planRows = () => state.plans.slice().sort((a, b) => (
+  planStatus(a.status).rank - planStatus(b.status).rank
+  || (b.createdAt || 0) - (a.createdAt || 0)
+));
+const planOpenCount = () => state.plans.filter(planOwed).length;
+
+function newPlanId() {
+  let id;
+  do { id = `pl${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`; }
+  while (findRow('plans', id));
+  return id;
+}
+
+/* The arithmetic, in minor units all the way through — the same rule
+   moneyBalance follows, and for the same reason: these are figures somebody
+   checks against a bank app, and cents that drift are worse than no figure.
+
+   `left` is the whole log's balance, not the window's: a bill is paid out of
+   what you actually have, not out of what happened to fall inside the range
+   the tracker is showing. */
+function planTotals() {
+  const owedCents = state.plans.reduce((a, r) => a + (planOwed(r) ? mCents(r.amount) : 0), 0);
+  const dueCents = state.plans.reduce((a, r) => a + (r.status === 'due' ? mCents(r.amount) : 0), 0);
+  const leftCents = moneyBalance(moneyAll()).leftCents;
+  return {
+    owedCents, dueCents, leftCents,
+    afterCents: leftCents - owedCents,
+    owed: amount(owedCents / 100),
+    due: amount(dueCents / 100),
+    left: amount(leftCents / 100),
+    after: amount(Math.abs(leftCents - owedCents) / 100),
+    count: state.plans.filter(planOwed).length
+  };
+}
+
+/* The strip at the top of the pad: what is owed, and what paying it leaves.
+
+   Written as two plain sentences rather than a row of stats. "₱4,200 planned"
+   on its own is a number; what somebody actually wants to know is whether it
+   fits, and that is a subtraction they should not have to do in their head
+   while looking at the list. Nothing is hidden when it does not fit — a
+   negative answer is the one worth showing most. */
+function planSumInner() {
+  const t = planTotals();
+  const short = t.afterCents < 0;
+  return `
+    <span class="plan-sum-fig">${esc(t.owed)}</span>
+    <span class="plan-sum-cap">to pay${t.dueCents ? ` · ${esc(t.due)} due now` : ''}</span>
+    <span class="plan-sum-line${short ? ' is-short' : ''}">
+      ${short
+    ? `That is ${esc(t.after)} more than the ${esc(t.left)} you have logged.`
+    : `Leaves ${esc(t.after)} of the ${esc(t.left)} you have logged.`}
+    </span>`;
+}
+
+/* Always in the tree and hidden when there is nothing owed, rather than drawn
+   on demand: typing a figure does not re-render, so what a keystroke changes
+   has to already be there for paintPlanSum to reach it. */
+const planSum = () => `<div class="plan-sum" data-plan-sum${planTotals().count ? '' : ' hidden'}>${planSumInner()}</div>`;
+
+/* The totals, and the two things beside them that a typed figure changes: how
+   many lines are owed, and whether a line has enough on it to be logged. */
+function paintPlanSum() {
+  const box = root.querySelector('[data-plan-sum]');
+  if (!box) return;
+  const t = planTotals();
+  box.hidden = !t.count;
+  box.innerHTML = planSumInner();
+  const chip = root.querySelector('[data-plan-count]');
+  if (chip) {
+    chip.hidden = !t.count;
+    chip.textContent = `${t.count} to pay`;
+  }
+  root.querySelectorAll('[data-plan-log]').forEach((btn) => {
+    const row = findRow('plans', btn.dataset.planLog);
+    btn.hidden = !row || !planOwed(row) || !mCents(row.amount);
+  });
+}
+
+/* One planned spend. The amount is an ordinary number field rather than the
+   phone's tap-pad: this pad is written on with a keyboard already — the line
+   above it is a sentence — so summoning one for the figure changes nothing,
+   where routing through the pad would mean leaving the list to type a number
+   and coming back. */
+function planLine(row) {
+  const st = planStatus(row.status);
+  const armed = state.planArm === row.id;
+  const owed = st.owed;
+  const cents = mCents(row.amount);
+  return `
+  <div class="todo-note plan-note" style="--tone:${st.tone};--tint:${st.tint};">
+    <textarea class="todo-text" rows="1" maxlength="${PLAN_MAX}"
+      data-k="plan-${esc(row.id)}" data-plan-text="${esc(row.id)}" data-todo-grow
+      placeholder="What is coming out?" aria-label="Planned spend">${esc(row.text || '')}</textarea>
+    <div class="plan-row">
+      <label class="plan-amt">
+        <span aria-hidden="true">${esc(currency().symbol)}</span>
+        <input type="text" inputmode="decimal" data-k="plan-amt-${esc(row.id)}" data-plan-amount="${esc(row.id)}"
+          value="${row.amount ? esc(money2(row.amount)) : ''}" placeholder="0.00"
+          aria-label="Amount" autocomplete="off">
+      </label>
+      <select class="plan-pick" data-change="plan-purpose" data-id="${esc(row.id)}" aria-label="Purpose">
+        <option value=""${row.purpose ? '' : ' selected'}>No purpose yet</option>
+        ${state.purposes.map((pp) => `<option value="${esc(pp.name)}"${pp.name === row.purpose ? ' selected' : ''}>${esc(pp.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="todo-foot">
+      <select class="todo-status" data-change="plan-status" data-id="${esc(row.id)}" aria-label="Status">
+        ${PLAN_STATUSES.map((o) => `<option value="${o.key}"${o.key === st.key ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}
+      </select>
+      <button class="todo-del${armed ? ' is-armed' : ''}" data-act="plan-del" data-id="${esc(row.id)}"
+        aria-label="${armed ? 'Delete this line for good' : 'Delete line'}">${armed ? 'Delete?' : nodeIcon('trash', 15)}</button>
+    </div>
+    <button class="plan-log" data-act="plan-log" data-id="${esc(row.id)}" data-plan-log="${esc(row.id)}"
+      ${owed && cents > 0 ? '' : 'hidden'}>Log it as spent today</button>
+  </div>`;
+}
+
+/* Shared by the panel and the sheet, exactly as todoBody is, so the two
+   surfaces cannot drift into being different features. */
+function planBody() {
+  const rows = planRows();
+  return `
+  <div class="todo-head">
+    <span class="todo-name">Money Plan</span>
+    <span class="todo-count" data-plan-count${planOpenCount() ? '' : ' hidden'}>${planOpenCount()} to pay</span>
+    <button class="todo-x" data-act="plan-close" aria-label="Close the pad">✕</button>
+  </div>
+  ${planSum()}
+  <button class="todo-new" data-act="plan-add">+ New line</button>
+  <div class="todo-list" data-plan-list>
+    ${rows.length
+    ? rows.map(planLine).join('')
+    : `<p class="todo-empty">Nothing planned yet. A line is what you owe, how much, and what it is for — the pad adds them up and tells you what that leaves.</p>`}
+  </div>`;
+}
+
+// Same one-render entrance the to-do pad uses. See todoFresh.
+let planFresh = true;
+
+const planPad = () => (!state.planOpen || isPhone() ? '' : `
+  <div class="todo-pad plan-pad${planFresh ? ' is-new' : ''}" role="dialog" aria-label="Money Plan">${planBody()}</div>`);
+
+const planSheet = () => (!state.planOpen || !isPhone() ? '' : `
+  <div class="todo-scrim${planFresh ? ' is-new' : ''}" data-backdrop="plan-close">
+    <div class="todo-drawer" role="dialog" aria-label="Money Plan">
+      <div class="todo-grab" aria-hidden="true"></div>
+      ${planBody()}
+    </div>
+  </div>`);
+
+let planScroll = 0;
+function paintPlan() {
+  const list = root.querySelector('[data-plan-list]');
+  if (!list) { planScroll = 0; planFresh = true; return; }
+  planFresh = false;
+  /* Sized here as well as in paintTodo, rather than left to it: paintTodo
+     returns the moment the to-do list is not on screen, and on the money
+     tracker it never is — so a two-line plan was drawn one line tall. */
+  list.querySelectorAll('[data-todo-grow]').forEach((el) => {
+    el.style.height = 'auto';
+    el.style.height = `${Math.max(24, el.scrollHeight)}px`;
+  });
+  list.scrollTop = planScroll;
+}
+
+/* A line with nothing written on it and nothing owed is not a line. Same tidy
+   the to-do pad does on close, so an accidental "+ New line" does not leave a
+   blank row behind on every device. */
+function planTidy() {
+  const empty = state.plans.filter((r) => !String(r.text || '').trim() && !mCents(r.amount));
+  if (!empty.length) return;
+  state.plans = state.plans.filter((r) => String(r.text || '').trim() || mCents(r.amount));
+  empty.forEach((r) => bury('plans', r.id));
+  save(); queueSync(0);
+}
+
 function header(v) {
   return `
   <div class="appbar">
@@ -4300,7 +4530,9 @@ function appbarMenu() {
           ? menuRow({ act: 'team-open', icon: 'people', label: 'Your Team' })
           : menuRow({ act: 'prefs-open', icon: 'sliders', label: 'Preferences' })}
         ${adminRole() ? menuRow({ href: '/admin', icon: 'shield', label: 'Admin dashboard' }) : ''}
-        ${menuRow({ act: 'todo-open', icon: 'todo', label: 'To Do', badge: open || '' })}
+        ${state.app === 'money'
+          ? menuRow({ act: 'plan-open', icon: 'scales', label: 'Money Plan', badge: planOpenCount() || '' })
+          : menuRow({ act: 'todo-open', icon: 'todo', label: 'To Do', badge: open || '' })}
         ${menuRow({ act: 'go-blogs', icon: 'article', label: 'Blog' })}
         ${menuRow({ act: 'legal-faq', icon: 'question', label: 'FAQs' })}
         ${menuRow({ act: 'help-open', icon: 'support', label: 'Help' })}
@@ -8827,6 +9059,7 @@ function render() {
     paintDeck();
     paintChatLog();
     paintTodo();
+    paintPlan();
     paintTeamDrawer();
     teamLiveWatch();
     return;
@@ -8872,6 +9105,7 @@ function render() {
   ${closeAccountDialog()}
   ${backToTop()}
   ${todoSheet()}
+  ${planSheet()}
   ${todoWhyDialog()}
   ${mobileNav(v)}
 </div>`;
@@ -8885,6 +9119,7 @@ function render() {
   paintScrollChrome();
   paintChatLog();
   paintTodo();
+  paintPlan();
   paintTeamDrawer();
   teamLiveWatch();
   // The dialog exists to be typed in, so put the caret there straight away.
@@ -10568,6 +10803,82 @@ const ACTIONS = {
     save(); queueSync(0); render();
   },
 
+  /* ── the money pad ── Same shape as the to-do actions above, because it is
+     the same object doing a different job. */
+  'plan-open': () => {
+    state.planOpen = true;
+    state.menuOpen = false;
+    if (state.m) state.m.accountOpen = false;
+    render();
+  },
+  'plan-toggle': () => { state.planOpen = !state.planOpen; if (!state.planOpen) planTidy(); state.planArm = ''; render(); },
+  'plan-close': () => {
+    if (!state.planOpen) return;
+    state.planOpen = false;
+    state.planArm = '';
+    planTidy();
+    render();
+  },
+
+  'plan-add': () => {
+    const row = touch('plans', { id: newPlanId(), text: '', amount: 0, status: 'planned', createdAt: Date.now() });
+    state.plans = state.plans.concat([row]);
+    state.planOpen = true;
+    state.planArm = '';
+    // Same rule as todo-add: the caret goes where the writing goes.
+    state.focusField = `plan-${row.id}`;
+    planScroll = 0;
+    save();
+    render();
+  },
+
+  'plan-del': (el) => {
+    const id = String(el.dataset.id || '');
+    const row = findRow('plans', id);
+    if (!row) return;
+    // A line with something on it — words or a figure — takes two presses.
+    if (((row.text || '').trim() || mCents(row.amount)) && state.planArm !== id) {
+      state.planArm = id; render(); return;
+    }
+    state.plans = state.plans.filter((r) => r.id !== id);
+    bury('plans', id);
+    state.planArm = '';
+    save(); queueSync(0); render();
+  },
+
+  /* Paying a line is the one place the pad writes to the ledger, and it writes
+     a plain money-out entry: dated today, named after the line, filed under
+     its purpose. The plan is then marked paid rather than deleted — a paid
+     line is the record that the thing you planned for actually happened, and
+     deleting it would make the pad look like the bill was never there.
+
+     One direction only. Editing the entry afterwards does not reach back into
+     the plan, and un-marking the plan does not remove the entry: the ledger is
+     a record of what happened, and a pad cannot be allowed to rewrite it. */
+  'plan-log': (el) => {
+    const row = findRow('plans', String(el.dataset.id || ''));
+    if (!row) return;
+    const value = money2(row.amount);
+    if (!value) return;
+    const spent = touch('money', {
+      id: 'mn' + Date.now(),
+      date: todayIso,
+      activity: String(row.text || '').trim().slice(0, 200) || 'Planned spend',
+      /* The pad allows a line with no purpose yet and the ledger does not, so
+         an unfiled line lands under the first purpose the account has — the
+         same default the money form opens with. */
+      purpose: row.purpose || (state.purposes[0] || {}).name || 'Other',
+      in: 0, out: value, note: ''
+    });
+    state.money = state.money.concat([spent]);
+    row.status = 'paid';
+    touch('plans', row);
+    state.selectedDate = todayIso;
+    save(); queueSync(0);
+    flash(`Logged · ${amount(value)}`);
+    render();
+  },
+
   'menu-toggle': () => { state.menuOpen = !state.menuOpen; render(); },
   'menu-close': () => { if (state.menuOpen) { state.menuOpen = false; render(); } },
 
@@ -11214,6 +11525,27 @@ const ACTIONS = {
 const CHANGES = {
   /* A select rather than a row of chips: four statuses is more than a toggle
      and less than a menu, it costs one tap, and it opens no keyboard. */
+  /* The money pad's two selects. Status moves the line up or down the pad;
+     purpose is what the spend will be filed under when it is paid, and is
+     allowed to be nothing at all until then. */
+  'plan-status': (el) => {
+    const row = findRow('plans', el.dataset.id);
+    const want = String(el.value || '');
+    if (!row || row.status === want || !PLAN_STATUSES.some((o) => o.key === want)) return;
+    row.status = want;
+    touch('plans', row);
+    state.planArm = '';
+    save(); queueSync(0); render();
+  },
+  'plan-purpose': (el) => {
+    const row = findRow('plans', el.dataset.id);
+    if (!row) return;
+    const want = String(el.value || '');
+    if (want) row.purpose = want; else delete row.purpose;
+    touch('plans', row);
+    save(); queueSync(0); render();
+  },
+
   'todo-status': (el) => {
     const row = findRow('todos', el.dataset.id);
     const want = String(el.value || '');
@@ -13595,6 +13927,10 @@ function mAccountSheet() {
   ${menuWho()}
   <div class="mn-list">
     ${menuRow({ act: 'todo-open', icon: 'todo', label: 'To Do', badge: open || '' })}
+    <!-- Both, because the phone has no tracker to be on: hours and money are
+         one app here, and a pad that appeared only while the money tab of
+         Insights happened to be open would be a pad nobody could find. -->
+    ${workMode() ? '' : menuRow({ act: 'plan-open', icon: 'scales', label: 'Money Plan', badge: planOpenCount() || '' })}
     ${menuRow({ act: 'm-classic', icon: 'layout', label: 'Full view' })}
     ${menuRow({ act: 'team-open', icon: 'people', label: team ? team.name : 'Start a team' })}
     ${menuRow({ act: 'prefs-open', icon: 'sliders', label: 'Preferences' })}
@@ -13626,6 +13962,7 @@ function mobileApp() {
   ${tabbed ? mTabs() + mTopButton() : ''}
   ${s.accountOpen ? mAccountSheet() : ''}
   ${todoSheet()}
+  ${planSheet()}
   ${todoWhyDialog()}
   ${s.donateOpen ? mDonateSheet() : ''}
   ${mCalSheet()}
@@ -14734,6 +15071,39 @@ root.addEventListener('input', (ev) => {
     }
     return;
   }
+  // The money pad's line, on exactly the same terms.
+  if (el.dataset && el.dataset.planText) {
+    const row = findRow('plans', el.dataset.planText);
+    if (row) {
+      row.text = el.value;
+      touch('plans', row);
+      if (el.hasAttribute('data-todo-grow')) {
+        el.style.height = 'auto';
+        el.style.height = `${Math.max(24, el.scrollHeight)}px`;
+      }
+      queueTodoSave();
+    }
+    return;
+  }
+  /* The figure on a line. Read leniently — a stray comma or a currency symbol
+     typed out of habit is not a reason to refuse the number — and stored as a
+     number rather than as what was typed, so the pad's arithmetic and the
+     ledger both get something they can add up.
+
+     Repainted rather than re-rendered: this is the one field in the app whose
+     every keystroke changes a total on screen, and rebuilding the pad under
+     the caret to show it would be the flicker the pad already learned not to
+     do. paintPlanSum redraws the strip and nothing else. */
+  if (el.dataset && el.dataset.planAmount) {
+    const row = findRow('plans', el.dataset.planAmount);
+    if (row) {
+      row.amount = money2(String(el.value || '').replace(/[^0-9.]/g, ''));
+      touch('plans', row);
+      paintPlanSum();
+      queueTodoSave();
+    }
+    return;
+  }
   if (!el.dataset || !el.dataset.sync) return;
   setDeep(el.dataset.sync, el.value);
 
@@ -14981,6 +15351,7 @@ root.addEventListener('scroll', (ev) => {
   // Same reasoning, for the team dialog's drawer. See paintTeamDrawer().
   // Same reasoning again, for the to-do pad. See paintTodo().
   if (track.matches && track.matches('[data-todo-list]')) { todoScroll = track.scrollTop; return; }
+  if (track.matches && track.matches('[data-plan-list]')) { planScroll = track.scrollTop; return; }
   if (track.matches && track.matches('[data-tm-drawer]')) {
     teamDrawerScroll = track.scrollTop;
     const more = track.scrollHeight - track.clientHeight - track.scrollTop > 4;
