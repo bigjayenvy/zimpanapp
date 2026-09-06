@@ -11973,6 +11973,25 @@ function mStepChrome(o) {
 </div>`;
 }
 
+/* The one gate that a keystroke can open, repainted by hand.
+
+   Everything else the footer waits on is settled by a tap, and a tap renders.
+   A typed name is not: text fields feed state without re-rendering so the
+   caret is never rebuilt out from under the typing, which left Continue greyed
+   out over an answer that was already there — the field said one thing and the
+   button said another until some unrelated render caught up. Same treatment as
+   data-live-dur on the desktop form. */
+function mPaintNext() {
+  const btn = root.querySelector('[data-act="m-flow-next"]');
+  if (!btn) return;
+  const can = mCanAdvance() || state.m.step === 5;
+  btn.style.opacity = can ? 1 : 0.42;
+  if (can) btn.removeAttribute('aria-disabled');
+  else btn.setAttribute('aria-disabled', 'true');
+  const hint = root.querySelector('[data-name-hint]');
+  if (hint) hint.hidden = !!mActivityName();
+}
+
 /* The pinned action. Never a hard block: an unmet requirement dims the button
    and makes it do nothing, which says "not yet" without an error message. */
 function mFooter(o) {
@@ -12857,12 +12876,16 @@ const mFlowCopy = (step, money, dir) => {
    side, categories on the time side; a source when the money is arriving. */
 const mVocabWord = (money, dir) => (money ? (dir === 'in' ? 'source' : 'purpose') : 'category');
 
-// What the entry will be called: what was typed beats what was tapped, and the
-// category stands in for both rather than saving something called "Untitled".
-const mDraftLabel = () => {
-  const s = state.m;
-  return s.activityText.trim() || s.activity || s.cat || '';
-};
+/* What was named on step 2: typed beats tapped, because the box is only open
+   when somebody chose to type in it. */
+const mActivityName = () => (state.m.activityText || '').trim() || state.m.activity || '';
+
+/* What the entry will be called. The category still stands in behind it — the
+   money side names a spend after its purpose, and a row from the day review is
+   written straight to the log without walking the flow at all — so the
+   fallback stays where it is rather than letting anything reach the log
+   called "Untitled". */
+const mDraftLabel = () => mActivityName() || state.m.cat || '';
 
 const mIsMoney = () => state.m.kind === 'money';
 
@@ -12877,7 +12900,13 @@ const mStepAt = () => Math.max(0, mFlowSteps().indexOf(state.m.step));
 function mCanAdvance() {
   const s = state.m;
   if (s.step === 1) return !!s.kind;
-  if (s.step === 2) return mIsMoney() ? Number(s.amount) > 0 : !!s.cat;
+  /* A category is not an answer to "what were you doing?". Logging an hour
+     against "Chores" and nothing else saved an entry called Chores, which
+     tells you the shape of the week and nothing about the hour — and it is the
+     hour the estimates, the search and the day review all read. Timing first
+     and naming after is the whole point of the timer handover, so the naming
+     is now required rather than merely offered. */
+  if (s.step === 2) return mIsMoney() ? Number(s.amount) > 0 : !!(s.cat && mActivityName());
   if (s.step === 3) return mIsMoney() ? !!s.cat : s.durMin > 0;
   return true;
 }
@@ -13014,6 +13043,17 @@ function mFlowCategory() {
   const acts = s.cat ? mActs(s.cat, money) : [];
   const open = state.pickOpen === 'm-cat';
   const label = mVocabWord(money, s.dir);
+  /* Held open by the text as well as by the tap. Continuing closes the box —
+     it does not empty it — so coming back to this step from the review used to
+     show an untouched row of chips over an answer that was still there and
+     still counting. Now the answer is on screen wherever it is being read
+     from. No focus is taken by drawing it: only m-type-open asks for that. */
+  const typed = s.typing || !!(s.activityText || '').trim();
+  // Said where the gap is, rather than by a Continue button that stops working.
+  // Drawn whenever the question is being asked and hidden when it is answered,
+  // rather than drawn on demand: typing does not re-render, so what changes on
+  // a keystroke has to already be in the tree for mPaintNext to reach it.
+  const asksName = !money && !!s.cat;
   return `
 <div class="pick-field m-pick" data-pick-field="m-cat" style="margin-bottom:22px;">
   <div class="pick-anchor">
@@ -13072,14 +13112,17 @@ ${mLabel(s.cat ? `${s.cat} — usual ones` : `Pick a ${label} first`)}
   ${acts.map((a) => `
     <button data-act="m-act" data-name="${esc(a)}" aria-pressed="${s.activity === a}"
       style="padding:9px 15px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;${mChip(s.activity === a)}">${esc(a)}</button>`).join('')}
-  ${s.typing ? '' : `
+  ${typed ? '' : `
   <button data-act="m-type-open"
     style="padding:9px 15px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;background:transparent;color:#7450e4;border:1px dashed rgba(120,86,245,.55);">Type it</button>`}
 </div>
-${s.typing ? `
+${typed ? `
 <input class="input" type="text" data-k="m-activity" data-sync="m.activityText" value="${esc(s.activityText)}"
-  placeholder="${money && s.dir === 'in' ? 'Where from?' : 'What was it?'}"
-  style="min-height:46px;padding:10px 14px;font-size:15px;border:1.5px solid #7856f5;border-radius:14px;box-shadow:0 0 0 3px rgba(120,86,245,.18);">` : ''}`;
+  placeholder="${money && s.dir === 'in' ? 'Where from?' : 'What was it?'}"${money ? '' : ' data-live-name'}
+  style="min-height:46px;padding:10px 14px;font-size:15px;border:1.5px solid #7856f5;border-radius:14px;box-shadow:0 0 0 3px rgba(120,86,245,.18);">` : ''}
+${asksName ? `
+<p data-name-hint${mActivityName() ? ' hidden' : ''} style="margin:10px 2px 0;font-size:12.5px;color:#756f88;line-height:1.45;">
+  Tap one or type it — an entry needs a name of its own. “${esc(s.cat)}” says which part of the day it was, not what you did.</p>` : ''}`;
 }
 
 // Money's step 2. Every digit is a tap: the numpad is the whole point, and a
@@ -14705,6 +14748,7 @@ root.addEventListener('input', (ev) => {
   }
   // What you are timing has to survive a reload too, not just the start time.
   if (el.dataset.sync === 'timerActivity') queueTimerSave();
+  if (el.hasAttribute('data-live-name')) mPaintNext();
   if (el.hasAttribute('data-live-dur')) {
     const out = root.querySelector('[data-form-duration]');
     if (out) {
