@@ -9022,6 +9022,10 @@ function render() {
       state.setupDone = true;
       state.m.screen = 'home';
     }
+    /* The draft as it was handed over, taken once per flow: every opener fills
+       the draft in and then renders, so this is the first moment the whole of
+       it is there to photograph. See mFlowDirty(). */
+    if (state.m.screen === 'flow' && !state.m.mark) state.m.mark = mDraftSig();
     root.innerHTML = `<div id="zimpan-progress" class="topbar" style="display:none"><i></i></div>${mobileApp()}${legalSheet()}${helpDialog()}${closeAccountDialog()}`;
     /* A new screen begins at its own beginning.
 
@@ -12166,6 +12170,9 @@ state.m = {
   screen: 'home', step: 1, setupStep: 1,
   // draft
   kind: null, day: 'today', earlierIso: '', calMonth: '', skip: [], timed: false,
+  /* The draft as it was when the flow opened, and whether the way out is being
+     questioned. Both per-session: a draft does not survive a reload. */
+  mark: '', quitAsk: false,
   cat: null, activity: null, typing: false, activityText: '',
   dir: 'out', amount: '', startMin: mDefaultStart(), durMin: 60,
   note: '', noteOpen: false,
@@ -13229,6 +13236,34 @@ const mIsMoney = () => state.m.kind === 'money';
 const mFlowSteps = () => [1, 2, 3, 4].filter((n) => (state.m.skip || []).indexOf(n) < 0);
 const mStepAt = () => Math.max(0, mFlowSteps().indexOf(state.m.step));
 
+/* ── leaving without saving ──
+
+   Everything typed into the flow lives in state.m and nothing reaches the log
+   until the last step, so closing it throws the lot away. That was a single
+   silent tap: the ✕ at the top, or Back off the first step. Worst on a timed
+   entry, where what is discarded is a measurement that cannot be taken again —
+   m-timer-stop clears the running timer the moment it hands over, so there is
+   nothing left to go back to.
+
+   Asked only when there is something to lose. A draft is compared against
+   itself as it was when the flow opened, rather than against an empty one:
+   opening the logger and closing it changes nothing, and neither does opening
+   an entry to edit and thinking better of it. The mark is taken at the first
+   paint, which is after every opener has finished filling the draft in. */
+const M_DRAFT_FIELDS = ['kind', 'cat', 'activity', 'activityText', 'dir', 'amount',
+  'day', 'earlierIso', 'startMin', 'durMin', 'note'];
+const mDraftSig = () => JSON.stringify(M_DRAFT_FIELDS.map((k) => state.m[k]));
+
+function mFlowDirty() {
+  const s = state.m;
+  // Saved already. The draft still differs from its mark, and nothing is at risk.
+  if (s.step === 5) return false;
+  /* A timed draft is dirty from the moment it arrives. The measurement is the
+     work — it was made by waiting, and no amount of retyping brings it back. */
+  if (s.timed) return true;
+  return !!s.mark && s.mark !== mDraftSig();
+}
+
 function mCanAdvance() {
   const s = state.m;
   if (s.step === 1) return !!s.kind;
@@ -13599,6 +13634,43 @@ function mFlowDone() {
   <div style="font-family:var(--font-heading);font-weight:700;font-size:26px;color:#16131f;margin-top:20px;">${money ? 'Money logged' : 'Time logged'}</div>
   <p style="margin:8px 0 0;font-size:14.5px;color:#575168;line-height:1.5;max-width:28ch;">${esc(sub)}</p>
 </div>`;
+}
+
+/* The question on the way out. Yes and no, both named after what they do: a
+   dialog whose buttons are the bare words is one you have to read twice to be
+   sure which way is which, and this one is asked at the moment somebody is
+   already leaving. */
+function mQuitDialog() {
+  const s = state.m;
+  if (!s.quitAsk) return '';
+  const timed = !!s.timed;
+  const editing = !!s.editId;
+  const money = mIsMoney();
+  return lightbox({
+    icon: timed ? 'clock' : 'trash',
+    tone: 'var(--zg-alert)',
+    kicker: timed ? `${esc(mDur(Math.max(1, s.durMin)))} timed` : 'Not saved yet',
+    title: editing ? 'Leave without saving your changes?' : 'Leave without saving this log?',
+    closeAct: 'm-quit-no',
+    body: timed
+      ? `<p>You timed <strong>${esc(mDur(Math.max(1, s.durMin)))}</strong> and have not written it down yet.
+         The clock has already been stopped, so leaving now throws the measurement away — there is no
+         way to take it again.</p>`
+      : editing
+        ? `<p>What you changed here has not been saved. Leaving now keeps the ${money ? 'spend' : 'entry'}
+           exactly as it was.</p>`
+        : `<p>This ${money ? 'spend' : 'entry'} has not been saved. Leaving now discards what you have
+           filled in so far.</p>`,
+    /* No last, which is where the safe answer belongs in both layouts: the
+       action row reverses under 720px so the last button sits on top, right
+       under the thumb that has just missed the ✕. The delete dialogs put the
+       destructive answer there because pressing Delete is already a decision;
+       this one can be reached by a mis-tap, so the default is to keep. */
+    actions: `
+      <button class="btn" data-act="m-quit-yes"
+        style="background:#8a2f4a;color:#fff;border-color:#8a2f4a;">Yes, leave it</button>
+      <button class="btn btn-secondary" data-act="m-quit-no">No, keep it</button>`
+  });
 }
 
 function mFlowBody() {
@@ -13985,6 +14057,7 @@ function mobileApp() {
        and with it the only way to take a note back off an entry. -->
   ${notePromptDialog()}
   ${mealNoteDialog()}
+  ${mQuitDialog()}
   ${state.reportOpen ? reportSheet() : ''}
   ${pickDeleteDialog()}
 </div>`;
@@ -14035,7 +14108,9 @@ function mResetDraft() {
     step: 1, kind: null, day: 'today', earlierIso: '', calMonth: '', skip: [], timed: false,
     cat: null, activity: null, typing: false, activityText: '',
     dir: 'out', amount: '', startMin: mDefaultStart(), durMin: 60,
-    note: '', noteOpen: false, editId: null, editKind: null
+    note: '', noteOpen: false, editId: null, editKind: null,
+    // Retaken at the first paint of the next flow. See mFlowDirty().
+    mark: '', quitAsk: false
   });
 }
 
@@ -14366,12 +14441,21 @@ const M_ACTIONS = {
   'm-flow-open': () => { mResetDraft(); mSet({ screen: 'flow', day: mDraftDayFromRange() }); },
   'm-log-time': () => { mResetDraft(); mSet({ screen: 'flow', kind: 'time', step: 2, skip: [1], day: mDraftDayFromRange() }); },
   'm-log-money': () => { mResetDraft(); mSet({ screen: 'flow', kind: 'money', step: 2, skip: [1], day: mDraftDayFromRange() }); },
-  'm-flow-close': () => { mResetDraft(); mGo('home'); },
+  /* Both ways out of the flow ask first when there is something to lose, and
+     go straight out when there is not. See mFlowDirty(). */
+  'm-flow-close': () => {
+    if (mFlowDirty()) { mSet({ quitAsk: true }); return; }
+    mResetDraft(); mGo('home');
+  },
   'm-flow-back': () => {
     const seq = mFlowSteps(), at = mStepAt();
-    if (at <= 0) { mResetDraft(); mGo('home'); return; }
-    mSet({ step: seq[at - 1], typing: false });
+    if (at > 0) { mSet({ step: seq[at - 1], typing: false }); return; }
+    // Back off the first step is the same door as the ✕.
+    if (mFlowDirty()) { mSet({ quitAsk: true }); return; }
+    mResetDraft(); mGo('home');
   },
+  'm-quit-no': () => mSet({ quitAsk: false }),
+  'm-quit-yes': () => { mResetDraft(); mGo('home'); },
   'm-flow-next': () => {
     const s = state.m;
     if (s.step === 5) { mResetDraft(); mGo('home'); return; }
