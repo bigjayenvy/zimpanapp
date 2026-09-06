@@ -236,6 +236,10 @@ CREATE TABLE IF NOT EXISTS plans (
   -- Which purpose the spend will be filed under when it is paid. Null while
   -- undecided, so a line can be written down before it is classified.
   purpose    VARCHAR(60)  NULL,
+  -- Which way the money is going. Defaults to out because that is what a plan
+  -- usually is and what every row written before this column existed meant;
+  -- 'in' is money you are expecting rather than money you owe.
+  dir        VARCHAR(3)   NOT NULL DEFAULT 'out',
   status     VARCHAR(16)  NOT NULL DEFAULT 'planned',
   created_at BIGINT       NOT NULL,
   updated_at BIGINT       NOT NULL,

@@ -260,6 +260,20 @@ async function alterExisting() {
     if (t.length) await pool.query('ALTER TABLE todos ADD COLUMN blocked VARCHAR(500) NULL AFTER status');
   }
 
+  /* Which way a planned line's money goes. Added after the money pad shipped,
+     so an install that already has the table needs the column rather than the
+     table — and every row already in it is money going out, which is what the
+     default says. */
+  const [way] = await pool.query(
+    'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+    [CONFIG.database, 'plans', 'dir']);
+  if (!way.length) {
+    const [t] = await pool.query(
+      'SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?',
+      [CONFIG.database, 'plans']);
+    if (t.length) await pool.query("ALTER TABLE plans ADD COLUMN dir VARCHAR(3) NOT NULL DEFAULT 'out' AFTER purpose");
+  }
+
   for (const table of ['entries', 'money_entries']) {
     const [c] = await pool.query(
       'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',

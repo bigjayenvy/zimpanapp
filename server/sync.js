@@ -80,6 +80,8 @@ export const watermark = () => Math.max(0, now() - SETTLE_MS);
 export const TODO_STATUSES = ['pending', 'doing', 'review', 'done', 'stuck'];
 // The money pad's own set, kept in step with PLAN_STATUSES in app.js.
 export const PLAN_STATUSES = ['planned', 'due', 'paid', 'dropped'];
+// Which way a planned line's money goes. Same two words the ledger uses.
+export const PLAN_DIRS = ['in', 'out'];
 
 /* ── pull ── */
 
@@ -106,7 +108,7 @@ export async function changesSince(userId, since) {
              FROM purposes WHERE user_id = ? AND server_at > ?`, [userId, since]),
     query(`SELECT id, body, status, blocked, created_at, updated_at, deleted
              FROM todos WHERE user_id = ? AND server_at > ?`, [userId, since]),
-    query(`SELECT id, body, amount, purpose, status, created_at, updated_at, deleted
+    query(`SELECT id, body, amount, purpose, dir, status, created_at, updated_at, deleted
              FROM plans WHERE user_id = ? AND server_at > ?`, [userId, since]),
     one(`SELECT currency, weight_kg, sleep_min, steps_json, ai_cache_json, tracks_json,
                 timer_start, timer_cat, timer_activity, display_name, updated_at, server_at
@@ -150,6 +152,7 @@ export async function changesSince(userId, since) {
       id: r.id, text: r.body || '', amount: Number(r.amount) || 0,
       // Sent only when there is one, like blocked above.
       purpose: r.purpose || undefined,
+      dir: r.dir === 'in' ? 'in' : 'out',
       status: r.status || 'planned',
       createdAt: Number(r.created_at),
       updatedAt: Number(r.updated_at), deleted: !!r.deleted
@@ -226,10 +229,10 @@ const UPSERT_TODO = `
     updated_at = GREATEST(updated_at, VALUES(updated_at))`;
 
 const UPSERT_PLAN = `
-  INSERT INTO plans (user_id, id, body, amount, purpose, status, created_at, updated_at, server_at, deleted)
-  VALUES (?,?,?,?,?,?,?,?,?,?)
+  INSERT INTO plans (user_id, id, body, amount, purpose, dir, status, created_at, updated_at, server_at, deleted)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?)
   ON DUPLICATE KEY UPDATE
-    ${['body', 'amount', 'purpose', 'status', 'created_at', 'deleted'].map(guard).join(',\n    ')},
+    ${['body', 'amount', 'purpose', 'dir', 'status', 'created_at', 'deleted'].map(guard).join(',\n    ')},
     server_at = VALUES(server_at),
     updated_at = GREATEST(updated_at, VALUES(updated_at))`;
 
@@ -330,15 +333,17 @@ export async function applyChanges(userId, changes) {
     const at = `plans[${i}]`;
     const id = str(t.id, `${at}.id`, 64);
     const when = stamp(t.updatedAt, `${at}.updatedAt`);
-    if (t.deleted) return [userId, id, '', 0, null, 'planned', 0, when, stampedAt, 1];
+    if (t.deleted) return [userId, id, '', 0, null, 'out', 'planned', 0, when, stampedAt, 1];
     const status = str(t.status ?? 'planned', `${at}.status`, 16);
     if (!PLAN_STATUSES.includes(status)) fail(`${at}.status must be one of ${PLAN_STATUSES.join(', ')}`);
+    const dir = str(t.dir ?? 'out', `${at}.dir`, 3);
+    if (!PLAN_DIRS.includes(dir)) fail(`${at}.dir must be one of ${PLAN_DIRS.join(', ')}`);
     const purpose = t.purpose == null || t.purpose === ''
       ? null : str(t.purpose, `${at}.purpose`, 60);
     return [userId, id,
       str(t.text ?? '', `${at}.text`, 500, { allowEmpty: true }),
       cash(t.amount ?? 0, `${at}.amount`, 1e12),
-      purpose, status,
+      purpose, dir, status,
       stamp(t.createdAt, `${at}.createdAt`),
       when, stampedAt, 0];
   });

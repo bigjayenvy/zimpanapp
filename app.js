@@ -989,6 +989,8 @@ const state = {
      take away something written. */
   todoOpen: false,
   todoArm: '',
+  // Whether the money rows behind the card's figures are being read.
+  moneyLogOpen: false,
   /* The money tracker's pad, and which of its lines has its delete armed. Held
      apart from the to-do pad's pair rather than shared: the two open from
      different places and one must not close the other. */
@@ -1067,14 +1069,14 @@ function serialise(kind, r) {
   if (kind === 'entries') return { id: r.id, date: r.date, activity: r.activity, category: r.category, project: r.project || undefined, from: r.from, to: r.to, note: r.note || '', updatedAt: r.updatedAt || 0 };
   if (kind === 'money') return { id: r.id, date: r.date, activity: r.activity, purpose: r.purpose, in: Number(r.in) || 0, out: Number(r.out) || 0, note: r.note || '', updatedAt: r.updatedAt || 0 };
   if (kind === 'todos') return { id: r.id, text: r.text || '', status: r.status || 'pending', blocked: r.blocked || undefined, createdAt: r.createdAt || 0, updatedAt: r.updatedAt || 0 };
-  if (kind === 'plans') return { id: r.id, text: r.text || '', amount: money2(r.amount), purpose: r.purpose || undefined, status: r.status || 'planned', createdAt: r.createdAt || 0, updatedAt: r.updatedAt || 0 };
+  if (kind === 'plans') return { id: r.id, text: r.text || '', amount: money2(r.amount), purpose: r.purpose || undefined, dir: r.dir === 'in' ? 'in' : 'out', status: r.status || 'planned', createdAt: r.createdAt || 0, updatedAt: r.updatedAt || 0 };
   return { name: r.name, color: r.color, position: r.position || 0, updatedAt: r.updatedAt || 0 };
 }
 function deserialise(kind, r) {
   if (kind === 'entries') return { id: r.id, date: r.date, activity: r.activity, category: r.category, project: r.project || undefined, from: r.from, to: r.to, note: r.note || '', updatedAt: r.updatedAt };
   if (kind === 'money') return { id: r.id, date: r.date, activity: r.activity, purpose: r.purpose, in: r.in, out: r.out, note: r.note || '', updatedAt: r.updatedAt };
   if (kind === 'todos') return { id: r.id, text: r.text || '', status: r.status || 'pending', blocked: r.blocked || undefined, createdAt: r.createdAt || 0, updatedAt: r.updatedAt };
-  if (kind === 'plans') return { id: r.id, text: r.text || '', amount: money2(r.amount), purpose: r.purpose || undefined, status: r.status || 'planned', createdAt: r.createdAt || 0, updatedAt: r.updatedAt };
+  if (kind === 'plans') return { id: r.id, text: r.text || '', amount: money2(r.amount), purpose: r.purpose || undefined, dir: r.dir === 'in' ? 'in' : 'out', status: r.status || 'planned', createdAt: r.createdAt || 0, updatedAt: r.updatedAt };
   return { name: r.name, color: r.color, position: r.position, updatedAt: r.updatedAt };
 }
 
@@ -4251,12 +4253,22 @@ const PLAN_STATUSES = [
   /* Ordered as the picker offers them, which is the order a bill moves
      through. `rank` is where the line then sits: what is due first, because it
      is what needs money now; what is dropped at the bottom, kept as a record
-     of a decision rather than as something to act on. */
-  { key: 'due', label: 'Due now', tone: '#8a2f4a', tint: '#fdecf1', rank: 0, owed: true },
-  { key: 'planned', label: 'Planned', tone: '#5f3ac9', tint: '#f2eefe', rank: 1, owed: true },
-  { key: 'paid', label: 'Paid', tone: '#0e7a5c', tint: '#e3f5ed', rank: 2, owed: false },
-  { key: 'dropped', label: 'Dropped', tone: '#6b6580', tint: '#efedf5', rank: 3, owed: false }
+     of a decision rather than as something to act on.
+
+     Two labels each, because one word cannot serve both directions: a salary
+     is not "paid" to you and a bill is not "received". The key is the same
+     either way, so the direction changes what a line says and never what the
+     server stores. Planned is the pad's own teal now rather than the app's
+     violet — the shell around it is the money tracker's green, and a violet
+     chip in it read as a visitor from the other tracker. */
+  { key: 'due', label: 'Due now', inLabel: 'Due in', tone: '#8a2f4a', tint: '#fdecf1', rank: 0, owed: true },
+  { key: 'planned', label: 'Planned', tone: '#10756c', tint: '#e6f7f4', rank: 1, owed: true },
+  { key: 'paid', label: 'Paid', inLabel: 'Received', tone: '#0e7a5c', tint: '#e3f5ed', rank: 2, owed: false },
+  { key: 'dropped', label: 'Dropped', inLabel: 'Dropped', tone: '#6b6580', tint: '#efedf5', rank: 3, owed: false }
 ];
+// What a status is called on a line going that way.
+const planStatusLabel = (st, dir) => (dir === 'in' && st.inLabel ? st.inLabel : st.label);
+const planDir = (row) => (row && row.dir === 'in' ? 'in' : 'out');
 const PLAN_MAX = 500;
 const planStatus = (k) => PLAN_STATUSES.find((s) => s.key === k) || PLAN_STATUSES[1];
 // Whether a line is still money you expect to part with.
@@ -4283,17 +4295,26 @@ function newPlanId() {
    what you actually have, not out of what happened to fall inside the range
    the tracker is showing. */
 function planTotals() {
-  const owedCents = state.plans.reduce((a, r) => a + (planOwed(r) ? mCents(r.amount) : 0), 0);
-  const dueCents = state.plans.reduce((a, r) => a + (r.status === 'due' ? mCents(r.amount) : 0), 0);
+  const live = state.plans.filter(planOwed);
+  const out = live.filter((r) => planDir(r) === 'out');
+  const inn = live.filter((r) => planDir(r) === 'in');
+  const owedCents = out.reduce((a, r) => a + mCents(r.amount), 0);
+  const comingCents = inn.reduce((a, r) => a + mCents(r.amount), 0);
+  const dueCents = out.reduce((a, r) => a + (r.status === 'due' ? mCents(r.amount) : 0), 0);
   const leftCents = moneyBalance(moneyAll()).leftCents;
+  /* Money you are expecting counts towards what the bills leave you, which is
+     the whole reason a plan can point inwards: "can I cover this" has a
+     different answer when the salary lands first. It is still a plan and not a
+     receipt — nothing here touches the balance until it is logged. */
+  const afterCents = leftCents + comingCents - owedCents;
   return {
-    owedCents, dueCents, leftCents,
-    afterCents: leftCents - owedCents,
+    owedCents, comingCents, dueCents, leftCents, afterCents,
     owed: amount(owedCents / 100),
+    coming: amount(comingCents / 100),
     due: amount(dueCents / 100),
     left: amount(leftCents / 100),
-    after: amount(Math.abs(leftCents - owedCents) / 100),
-    count: state.plans.filter(planOwed).length
+    after: amount(Math.abs(afterCents) / 100),
+    count: live.length
   };
 }
 
@@ -4307,13 +4328,17 @@ function planTotals() {
 function planSumInner() {
   const t = planTotals();
   const short = t.afterCents < 0;
+  // Money expected is said before the answer it changes, so the arithmetic
+  // reads in the order it happens rather than arriving as a correction.
+  const coming = t.comingCents ? `With ${esc(t.coming)} coming in, that leaves` : 'Leaves';
+  const over = t.comingCents
+    ? `Even with ${esc(t.coming)} coming in, that is ${esc(t.after)} more than the ${esc(t.left)} you have logged.`
+    : `That is ${esc(t.after)} more than the ${esc(t.left)} you have logged.`;
   return `
     <span class="plan-sum-fig">${esc(t.owed)}</span>
     <span class="plan-sum-cap">to pay${t.dueCents ? ` · ${esc(t.due)} due now` : ''}</span>
     <span class="plan-sum-line${short ? ' is-short' : ''}">
-      ${short
-    ? `That is ${esc(t.after)} more than the ${esc(t.left)} you have logged.`
-    : `Leaves ${esc(t.after)} of the ${esc(t.left)} you have logged.`}
+      ${short ? over : `${coming} ${esc(t.after)} of the ${esc(t.left)} you have logged.`}
     </span>`;
 }
 
@@ -4333,7 +4358,7 @@ function paintPlanSum() {
   const chip = root.querySelector('[data-plan-count]');
   if (chip) {
     chip.hidden = !t.count;
-    chip.textContent = `${t.count} to pay`;
+    chip.textContent = `${t.count} planned`;
   }
   root.querySelectorAll('[data-plan-log]').forEach((btn) => {
     const row = findRow('plans', btn.dataset.planLog);
@@ -4346,16 +4371,84 @@ function paintPlanSum() {
    above it is a sentence — so summoning one for the figure changes nothing,
    where routing through the pad would mean leaving the list to type a number
    and coming back. */
+/* The purposes, in the order a list of names is looked through. The money
+   form keeps its own order — that one is a vocabulary you built and the
+   position is yours — but a pad you scan for one name wants the alphabet. */
+const planPurposes = () => state.purposes.slice()
+  .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }));
+
+/* Which way a line's money goes. Two words rather than a switch: a switch has
+   to be labelled to say what the on position means, and by the time it is
+   labelled it is these two words with extra parts. */
+function planWay(row) {
+  const dir = planDir(row);
+  const opt = (k, label) => `
+    <button type="button" class="plan-way-opt${dir === k ? ' is-on' : ''}" data-act="plan-dir"
+      data-id="${esc(row.id)}" data-dir="${k}" aria-pressed="${dir === k}">${label}</button>`;
+  return `<div class="plan-way" role="group" aria-label="Direction">${opt('out', 'Going out')}${opt('in', 'Coming in')}</div>`;
+}
+
+/* The purpose, as the searchable list the rest of the app uses rather than a
+   native select. A dozen purposes is a scroll; forty is a search — and the
+   same popover already knows how to filter itself, so this is the component
+   and not a second one. Opening it takes no focus: the keyboard waits to be
+   asked for, exactly as it does on the flow's category picker. */
+function planPickField(row) {
+  const open = state.pickOpen === `plan:${row.id}`;
+  const rows = planPurposes();
+  return `
+  <div class="pick-field plan-pick-field" data-pick-field="plan:${esc(row.id)}">
+    <div class="pick-anchor">
+      <button type="button" class="pick-btn plan-pick" data-act="plan-pick-open" data-id="${esc(row.id)}"
+        aria-haspopup="listbox" aria-expanded="${open}">
+        <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left;">${
+  row.purpose ? esc(row.purpose) : (planDir(row) === 'in' ? 'No source yet' : 'No purpose yet')}</span>
+        <span class="pick-caret" aria-hidden="true">▾</span>
+      </button>
+      ${open ? `
+      <div class="pick-pop" role="listbox">
+        <input class="input pick-search" data-k="plan-pick-search" data-pick-search="plan:${esc(row.id)}"
+          type="text" placeholder="Search ${planDir(row) === 'in' ? 'sources' : 'purposes'}…" autocomplete="off"
+          aria-label="Search purposes" style="min-height:40px;font-size:14px;">
+        <div class="pick-list" data-pick-list style="max-height:40vh;">
+          <span class="pick-row">
+            <button type="button" class="pick-opt${row.purpose ? '' : ' is-on'}" role="option"
+              aria-selected="${!row.purpose}" data-act="plan-pick-choose"
+              data-id="${esc(row.id)}" data-name="" data-find="none">
+              <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;opacity:.75;">${
+  planDir(row) === 'in' ? 'No source yet' : 'No purpose yet'}</span>
+            </button>
+          </span>
+          ${rows.map((pp) => `
+          <span class="pick-row">
+            <button type="button" class="pick-opt${pp.name === row.purpose ? ' is-on' : ''}" role="option"
+              aria-selected="${pp.name === row.purpose}" data-act="plan-pick-choose"
+              data-id="${esc(row.id)}" data-name="${esc(pp.name)}" data-find="${esc(pp.name.toLowerCase())}">
+              <span style="width:9px;height:9px;flex:none;border-radius:50%;background:${esc(mColor(pp.name, true))};"></span>
+              <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;">${esc(pp.name)}</span>
+            </button>
+          </span>`).join('')}
+          <div class="pick-empty" hidden style="padding:12px 10px;font-size:14px;color:#756f88;">Nothing matches that.</div>
+        </div>
+      </div>
+      <div class="pick-shade" data-backdrop="pick-close"></div>` : ''}
+    </div>
+  </div>`;
+}
+
 function planLine(row) {
   const st = planStatus(row.status);
   const armed = state.planArm === row.id;
   const owed = st.owed;
   const cents = mCents(row.amount);
+  const dir = planDir(row);
   return `
   <div class="todo-note plan-note" style="--tone:${st.tone};--tint:${st.tint};">
     <textarea class="todo-text" rows="1" maxlength="${PLAN_MAX}"
       data-k="plan-${esc(row.id)}" data-plan-text="${esc(row.id)}" data-todo-grow
-      placeholder="What is coming out?" aria-label="Planned spend">${esc(row.text || '')}</textarea>
+      placeholder="${dir === 'in' ? 'What is coming in?' : 'What is coming out?'}"
+      aria-label="Planned ${dir === 'in' ? 'income' : 'spend'}">${esc(row.text || '')}</textarea>
+    ${planWay(row)}
     <div class="plan-row">
       <label class="plan-amt">
         <span aria-hidden="true">${esc(currency().symbol)}</span>
@@ -4363,20 +4456,17 @@ function planLine(row) {
           value="${row.amount ? esc(money2(row.amount)) : ''}" placeholder="0.00"
           aria-label="Amount" autocomplete="off">
       </label>
-      <select class="plan-pick" data-change="plan-purpose" data-id="${esc(row.id)}" aria-label="Purpose">
-        <option value=""${row.purpose ? '' : ' selected'}>No purpose yet</option>
-        ${state.purposes.map((pp) => `<option value="${esc(pp.name)}"${pp.name === row.purpose ? ' selected' : ''}>${esc(pp.name)}</option>`).join('')}
-      </select>
+      ${planPickField(row)}
     </div>
     <div class="todo-foot">
       <select class="todo-status" data-change="plan-status" data-id="${esc(row.id)}" aria-label="Status">
-        ${PLAN_STATUSES.map((o) => `<option value="${o.key}"${o.key === st.key ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}
+        ${PLAN_STATUSES.map((o) => `<option value="${o.key}"${o.key === st.key ? ' selected' : ''}>${esc(planStatusLabel(o, dir))}</option>`).join('')}
       </select>
       <button class="todo-del${armed ? ' is-armed' : ''}" data-act="plan-del" data-id="${esc(row.id)}"
         aria-label="${armed ? 'Delete this line for good' : 'Delete line'}">${armed ? 'Delete?' : nodeIcon('trash', 15)}</button>
     </div>
     <button class="plan-log" data-act="plan-log" data-id="${esc(row.id)}" data-plan-log="${esc(row.id)}"
-      ${owed && cents > 0 ? '' : 'hidden'}>Log it as spent today</button>
+      ${owed && cents > 0 ? '' : 'hidden'}>Log it as ${dir === 'in' ? 'received' : 'spent'} today</button>
   </div>`;
 }
 
@@ -4387,15 +4477,15 @@ function planBody() {
   return `
   <div class="todo-head">
     <span class="todo-name">Money Plan</span>
-    <span class="todo-count" data-plan-count${planOpenCount() ? '' : ' hidden'}>${planOpenCount()} to pay</span>
+    <span class="todo-count" data-plan-count${planOpenCount() ? '' : ' hidden'}>${planOpenCount()} planned</span>
     <button class="todo-x" data-act="plan-close" aria-label="Close the pad">✕</button>
   </div>
   ${planSum()}
-  <button class="todo-new" data-act="plan-add">+ New line</button>
+  <button class="todo-new" data-act="plan-add">+ Add Plan</button>
   <div class="todo-list" data-plan-list>
     ${rows.length
     ? rows.map(planLine).join('')
-    : `<p class="todo-empty">Nothing planned yet. A line is what you owe, how much, and what it is for — the pad adds them up and tells you what that leaves.</p>`}
+    : `<p class="todo-empty">Nothing planned yet. A plan is money you know is moving — out for a bill, in for what you are expecting — and the pad adds them up and tells you what that leaves.</p>`}
   </div>`;
 }
 
@@ -4406,7 +4496,7 @@ const planPad = () => (!state.planOpen || isPhone() ? '' : `
   <div class="todo-pad plan-pad${planFresh ? ' is-new' : ''}" role="dialog" aria-label="Money Plan">${planBody()}</div>`);
 
 const planSheet = () => (!state.planOpen || !isPhone() ? '' : `
-  <div class="todo-scrim${planFresh ? ' is-new' : ''}" data-backdrop="plan-close">
+  <div class="todo-scrim plan-scrim${planFresh ? ' is-new' : ''}" data-backdrop="plan-close">
     <div class="todo-drawer" role="dialog" aria-label="Money Plan">
       <div class="todo-grab" aria-hidden="true"></div>
       ${planBody()}
@@ -9110,6 +9200,7 @@ function render() {
   ${backToTop()}
   ${todoSheet()}
   ${planSheet()}
+  ${moneyLogDialog()}
   ${todoWhyDialog()}
   ${mobileNav(v)}
 </div>`;
@@ -10809,6 +10900,11 @@ const ACTIONS = {
 
   /* ── the money pad ── Same shape as the to-do actions above, because it is
      the same object doing a different job. */
+  'money-log-open': () => { state.moneyLogOpen = true; render(); },
+  'money-log-close': () => { state.moneyLogOpen = false; render(); },
+  // The rows in that dialog are there to be read, not opened.
+  'money-log-noop': () => {},
+
   'plan-open': () => {
     state.planOpen = true;
     state.menuOpen = false;
@@ -10824,8 +10920,38 @@ const ACTIONS = {
     render();
   },
 
+  /* Which way this line's money goes. Changing it does not touch the figure —
+     an amount is a size, not a direction — so a line typed the wrong way round
+     is one tap from right rather than something to retype. */
+  'plan-dir': (el) => {
+    const row = findRow('plans', String(el.dataset.id || ''));
+    const want = el.dataset.dir === 'in' ? 'in' : 'out';
+    if (!row || planDir(row) === want) return;
+    row.dir = want;
+    touch('plans', row);
+    save(); queueSync(0); render();
+  },
+  /* The purpose list, opened and chosen. No focusField on open, the same rule
+     the flow's category picker follows: the list opens ready to be tapped and
+     the keyboard waits until the search box itself is. */
+  'plan-pick-open': (el) => {
+    const key = `plan:${String(el.dataset.id || '')}`;
+    state.pickOpen = state.pickOpen === key ? null : key;
+    state.pickQuery = '';
+    render();
+  },
+  'plan-pick-choose': (el) => {
+    const row = findRow('plans', String(el.dataset.id || ''));
+    if (!row) return;
+    const name = String(el.dataset.name || '');
+    if (name) row.purpose = name; else delete row.purpose;
+    touch('plans', row);
+    state.pickOpen = null; state.pickQuery = '';
+    save(); queueSync(0); render();
+  },
+
   'plan-add': () => {
-    const row = touch('plans', { id: newPlanId(), text: '', amount: 0, status: 'planned', createdAt: Date.now() });
+    const row = touch('plans', { id: newPlanId(), text: '', amount: 0, dir: 'out', status: 'planned', createdAt: Date.now() });
     state.plans = state.plans.concat([row]);
     state.planOpen = true;
     state.planArm = '';
@@ -10864,22 +10990,25 @@ const ACTIONS = {
     if (!row) return;
     const value = money2(row.amount);
     if (!value) return;
+    const incoming = planDir(row) === 'in';
     const spent = touch('money', {
       id: 'mn' + Date.now(),
       date: todayIso,
-      activity: String(row.text || '').trim().slice(0, 200) || 'Planned spend',
+      activity: String(row.text || '').trim().slice(0, 200) || (incoming ? 'Planned income' : 'Planned spend'),
       /* The pad allows a line with no purpose yet and the ledger does not, so
          an unfiled line lands under the first purpose the account has — the
          same default the money form opens with. */
       purpose: row.purpose || (state.purposes[0] || {}).name || 'Other',
-      in: 0, out: value, note: ''
+      // The line's own direction, so a salary lands as money in and not as a
+      // spend that happens to have been expected.
+      in: incoming ? value : 0, out: incoming ? 0 : value, note: ''
     });
     state.money = state.money.concat([spent]);
     row.status = 'paid';
     touch('plans', row);
     state.selectedDate = todayIso;
     save(); queueSync(0);
-    flash(`Logged · ${amount(value)}`);
+    flash(`Logged · ${incoming ? '+' : '−'}${amount(value)}`);
     render();
   },
 
@@ -12484,6 +12613,72 @@ function mTimerCard() {
 </div>`;
 }
 
+/* One day's list, told apart by what it is.
+
+   Hours and money were one run of cards in date order, which reads as a single
+   list of things that happened — and they are two different accounts of the
+   day. A spend among the entries looks like an activity that costs money, and
+   money logged with no time against it looked like it was missing from the
+   day rather than being a different kind of record.
+
+   A heading only where there are rows to head. A section labelled with nothing
+   under it says less than no section at all, and on a day with only hours the
+   pair of headings would be one of them announcing an absence. */
+/* What the money figures on the card are made of.
+
+   The card states a balance and a window's spending and offers no way to check
+   either — the rows are further down the page, mixed into the day, and over a
+   longer window they are behind a drawer. This is the same rows on their own,
+   for the window on screen: opened from the figure, so the answer arrives
+   where the question was asked. Read-only on purpose — the log below is where
+   a row is opened and edited. */
+function moneyLogDialog() {
+  if (!state.moneyLogOpen) return '';
+  const dates = mRangeDates();
+  const rows = mDayList(dates).filter((e) => e.kind === 'money');
+  const inCents = mSumCents(mMoneyRows(dates), 'in');
+  const outCents = mSumCents(mMoneyRows(dates), 'out');
+  const multi = dates.length > 1;
+  return lightbox({
+    icon: 'scales',
+    tone: '#16a394',
+    kicker: mRangeHeading(),
+    title: 'Money Logs',
+    closeAct: 'money-log-close',
+    body: `
+      <div style="display:flex;gap:8px;margin:0 0 14px;">
+        ${[['In', amount(inCents / 100), '#0e7a5c', '#e3f5ed'], ['Out', amount(outCents / 100), '#8a2f4a', '#fdecf1']]
+    .map((c) => `
+        <div style="flex:1;min-width:0;padding:9px 11px;border-radius:12px;background:${c[3]};text-align:left;">
+          <div style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:${c[2]};opacity:.85;font-weight:600;">${c[0]}</div>
+          <div style="font-family:var(--font-heading);font-weight:700;font-size:18px;color:${c[2]};margin-top:2px;
+                      font-variant-numeric:tabular-nums;">${esc(c[1])}</div>
+        </div>`).join('')}
+      </div>
+      ${rows.length
+    ? `<div style="display:flex;flex-direction:column;gap:9px;max-height:46vh;overflow-y:auto;overscroll-behavior:contain;">
+          ${rows.map((e) => mEntryRow(e, { act: 'money-log-noop', showDate: multi })).join('')}
+        </div>`
+    : `<p style="margin:0;font-size:13.5px;color:var(--color-neutral-600);line-height:1.5;">
+          Nothing logged against money in this window.</p>`}`,
+    actions: `<button class="btn btn-primary" data-act="money-log-close">Done</button>`
+  });
+}
+
+function mDaySections(list) {
+  const time = list.filter((e) => e.kind !== 'money');
+  const money = list.filter((e) => e.kind === 'money');
+  const section = (rows, label) => (!rows.length ? '' : `
+  <div style="margin-bottom:${money.length && time.length ? '20px' : '0'};">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:0 2px 9px;">
+      <span style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;font-weight:600;">${esc(label)}</span>
+      <span style="font-size:11.5px;color:#9995ab;">${rows.length}</span>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:9px;">${rows.map((e) => mEntryRow(e)).join('')}</div>
+  </div>`);
+  return section(time, 'Activity Logs') + section(money, 'Money Logs');
+}
+
 function mEntryRow(e, opts) {
   const o = opts || {};
   const money = e.kind === 'money';
@@ -13122,11 +13317,22 @@ function mHome() {
       // Nothing in this product puts money on the account. See workMode().
       if (workMode()) return '';
       const st = moneyStatus(moneyAll());
-      if (!st.inCents && !st.asideCents) return '';
-      return `<div style="display:flex;gap:8px;margin-top:8px;padding-top:9px;border-top:1px solid rgba(255,255,255,.22);font-size:12px;opacity:.92;">
+      const logs = mMoneyRows(dates).length;
+      /* The row carries the balance, the way in, or both. Kept when there is
+         only one of them: a stretch with spending but nothing coming in has no
+         balance to state and still has money worth opening, and the balance
+         has always been able to stand on its own. */
+      if (!st.inCents && !st.asideCents && !logs) return '';
+      return `<div style="display:flex;align-items:baseline;gap:10px;margin-top:8px;padding-top:9px;border-top:1px solid rgba(255,255,255,.22);font-size:12px;opacity:.92;">
+        ${st.inCents || st.asideCents ? `
         <span style="flex:none;letter-spacing:.08em;text-transform:uppercase;font-size:10.5px;opacity:.8;padding-top:1px;">Balance</span>
-        <span>${esc(st.tone === 'left' ? `${amount(st.leftCents / 100)} left` : st.short)}${
-          st.asideCents ? ` · ${esc(amount(st.asideCents / 100))} aside` : ''}</span>
+        <span style="flex:1;min-width:0;">${esc(st.tone === 'left' ? `${amount(st.leftCents / 100)} left` : st.short)}${
+          st.asideCents ? ` · ${esc(amount(st.asideCents / 100))} aside` : ''}</span>` : '<span style="flex:1;"></span>'}
+        <!-- Opposite the balance, because it answers the question the balance
+             raises: a figure like "Dhs 22,442 left" is only checkable against
+             the rows it was made of. -->
+        ${logs ? `<button data-act="money-log-open"
+          style="flex:none;border:0;background:transparent;padding:0;cursor:pointer;font:inherit;font-size:12px;font-weight:600;color:#fff;text-decoration:underline;text-underline-offset:3px;">View Money Logs</button>` : ''}
       </div>`;
     })()}
   </div>
@@ -13168,7 +13374,7 @@ function mHome() {
   <div id="search-body">${searching ? searchBody() : ''}</div>
 
   ${searching ? '' : list.length ? (single
-    ? `<div style="display:flex;flex-direction:column;gap:9px;">${list.map(mEntryRow).join('')}</div>`
+    ? mDaySections(list)
     : mEntryDrawer(mGroupedList(dates)))
     : `
   <div style="padding:30px 24px;border-radius:20px;background:#fff;border:1px dashed rgba(120,86,245,.35);text-align:center;">
@@ -14035,6 +14241,7 @@ function mobileApp() {
   ${s.accountOpen ? mAccountSheet() : ''}
   ${todoSheet()}
   ${planSheet()}
+  ${moneyLogDialog()}
   ${todoWhyDialog()}
   ${s.donateOpen ? mDonateSheet() : ''}
   ${mCalSheet()}
