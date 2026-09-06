@@ -974,6 +974,10 @@ const state = {
   // noteSkipped is per-session on purpose: skipping is an answer, so the same
   // question stops asking until the next page load.
   notePrompt: null, noteDraft: '', noteSkipped: {},
+  /* The meal that was logged with nothing written in it, and the meals already
+     told about it. Both per-session: the warning is worth showing once per
+     meal, and never twice for the same one. */
+  mealAsk: null, mealAsked: {},
   legalOpen: null,
   /* The to-do pad, and which note's delete button is armed. Arming rather than
      a dialog: a note is one line, and a modal asking whether you meant it is
@@ -5379,6 +5383,55 @@ function notePromptDialog() {
   });
 }
 
+/* ── a meal with nothing written in it ──
+
+   Calories eaten are read out of the words on the entry. "Lunch" on its own
+   says when you ate and nothing about what, so there is nothing to read, and
+   the meal is charged UNKNOWN_MEAL instead — a flat placeholder that keeps the
+   day from being understated and says nothing about the actual plate. That
+   happened silently: the question was skipped, the entry was saved, and a
+   number nobody chose went onto the card and into the dial looking exactly
+   like a reading.
+
+   So the skip is answered rather than obeyed, and it is answered honestly —
+   the figure is named as the guess it is rather than described as nothing.
+   Add Note goes straight back to the box; Skip Counting accepts the
+   placeholder on purpose and stops the whole line of questioning for the
+   session, because having said it once, being asked again at dinner is
+   nagging. */
+function mealNoteDialog() {
+  const a = state.mealAsk;
+  if (!a) return '';
+  return lightbox({
+    icon: 'plate',
+    tone: 'var(--zg-donate)',
+    kicker: a.activity ? `Logged against “${a.activity}”` : 'Meal logged',
+    title: 'Nothing to count it from',
+    body: `
+      <p>To get the calories consumed, you have to enter the foods you have eaten. The
+      reading prices what you wrote down, and there is nothing written on this one.</p>
+      <p style="margin:10px 0 0;">Left as it is, it is charged as an average meal —
+      ${UNKNOWN_MEAL.kcal.toLocaleString('en-US')} kcal — and counted as too vague to read.
+      That is a placeholder, not your meal.</p>`,
+    actions: `
+      <button class="btn btn-secondary" data-act="meal-skip">Skip Counting</button>
+      <button class="btn btn-primary" data-act="meal-note">Add Note</button>`
+  });
+}
+
+/* Raised from closeFollowUp when a meal came out of the question with no words
+   on it. Returns whether it took the turn, so the caller stops rather than
+   rendering over the dialog it just set. */
+function mealNeedsFoods(p) {
+  if (!p || p.kind !== 'entries' || state.mealAsked[p.id]) return false;
+  const row = findRow('entries', p.id);
+  if (!row || !isEatenRow(row) || (row.note || '').trim()) return false;
+  state.mealAsked[p.id] = true;
+  state.mealAsk = { id: p.id, activity: row.activity };
+  render();
+  return true;
+}
+
 /* ── one shell for the dialogs that ask something ──
 
    Every one of these was its own hand-built box, and the two consent dialogs
@@ -8802,6 +8855,7 @@ function render() {
   ${state.reportOpen ? reportSheet() : ''}
   ${pickDeleteDialog()}
   ${notePromptDialog()}
+  ${mealNoteDialog()}
   ${refineAskDialog()}
   ${chatDialog()}
   ${chatConsentDialog()}
@@ -10265,6 +10319,10 @@ function closeFollowUp(saveIt) {
     // Skipped or dismissed: stop asking this particular question this session.
     state.noteSkipped[p.key] = true;
   }
+  /* Nothing was written and nothing was there. For a meal that is not a
+     no-op — it is the difference between a day read off the plate and a day of
+     placeholders — so it gets said out loud before the dialog goes away. */
+  if (mealNeedsFoods(p)) return;
   askDeductAfterNote(p);
   render();
 }
@@ -10392,6 +10450,22 @@ const ACTIONS = {
   // rather than a second one that could drift from it.
   'note-remove': () => { state.noteDraft = ''; closeFollowUp(true); },
   'note-edit': (el) => editNote(el.dataset.kind, el.dataset.id),
+  /* Back to the box, with the question un-skipped: asking to write this one
+     down is not the answer of somebody who wants to stop being asked. editNote
+     renders, and render() puts the cursor in the note. */
+  'meal-note': () => {
+    const a = state.mealAsk;
+    state.mealAsk = null;
+    if (!a) { render(); return; }
+    delete state.noteSkipped.food;
+    editNote('entries', a.id);
+  },
+  'meal-skip': () => {
+    const a = state.mealAsk;
+    state.mealAsk = null;
+    if (a) state.noteSkipped.food = true;
+    render();
+  },
 
   'auth-submit': submitAuth,
   'sign-out': () => {
@@ -13530,6 +13604,7 @@ function mobileApp() {
        prompt that nothing here drew — the question was asked and then swallowed,
        and with it the only way to take a note back off an entry. -->
   ${notePromptDialog()}
+  ${mealNoteDialog()}
   ${state.reportOpen ? reportSheet() : ''}
   ${pickDeleteDialog()}
 </div>`;
