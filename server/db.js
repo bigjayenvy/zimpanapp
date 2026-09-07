@@ -6,7 +6,7 @@
    code path to keep honest. */
 
 import mysql from 'mysql2/promise';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -15,6 +15,20 @@ export const HERE = dirname(fileURLToPath(import.meta.url));
 // Node reads server/.env natively; absent in production, where cPanel supplies
 // real environment variables instead.
 try { process.loadEnvFile(join(HERE, '.env')); } catch { /* no .env — use the environment */ }
+
+/* Where MySQL is listening, which on shared hosting is not always a port.
+
+   cPanel's own tools are PHP, and PHP given the host "localhost" connects
+   through a unix socket. Node's driver does not: it reads localhost as TCP and
+   dials 127.0.0.1:3306. So a server whose MySQL listens on the socket alone —
+   which is how a host hardens one, and how one comes back from a migration —
+   serves phpMyAdmin perfectly while refusing this app outright, and the site
+   looks broken from every angle except the one that would explain it.
+
+   DB_SOCKET is the answer where it is known. Where it is not, the well-known
+   paths are tried after a refused connection and before giving up, because
+   somebody watching their sync stop has no reason to suspect any of this. */
+const SOCKET_PATHS = ['/var/lib/mysql/mysql.sock', '/var/run/mysqld/mysqld.sock', '/tmp/mysql.sock'];
 
 const CONFIG = {
   host: process.env.DB_HOST || '127.0.0.1',
@@ -33,7 +47,58 @@ const CONFIG = {
   bigNumberStrings: false
 };
 
-export const pool = mysql.createPool(CONFIG);
+/* The settings actually in use, and how they were arrived at. Reassigned if
+   the socket fallback fires — an exported `let` is a live binding, so every
+   module that imported the pool follows it to the new one. */
+const socketConfig = (path) => {
+  const { host, port, ...rest } = CONFIG;
+  return { ...rest, socketPath: path };
+};
+let live = process.env.DB_SOCKET ? socketConfig(process.env.DB_SOCKET) : CONFIG;
+export let pool = mysql.createPool(live);
+// "tcp" or "socket" — enough to diagnose, and it names no host and no user.
+export let dbVia = live.socketPath ? 'socket' : 'tcp';
+
+/* Opens the connection, moving to a socket if the port refuses one.
+
+   Only on ECONNREFUSED — nothing is listening on that port — and only when no
+   socket was named, so an explicit DB_SOCKET that fails stays failed rather
+   than being second-guessed. Only paths that exist are tried, and the first
+   that answers wins. Loud in the log either way: a connection that came up
+   somewhere other than where it was configured has to say so. */
+async function openConnection() {
+  try {
+    await pool.query('SELECT 1');
+    return;
+  } catch (err) {
+    if (err.code === 'ER_BAD_DB_ERROR') throw err;
+    if (err.code !== 'ECONNREFUSED' || process.env.DB_SOCKET) throw err;
+    for (const path of SOCKET_PATHS) {
+      if (!existsSync(path)) continue;
+      const candidate = mysql.createPool(socketConfig(path));
+      try {
+        await candidate.query('SELECT 1');
+        await pool.end().catch(() => {});
+        pool = candidate;
+        live = socketConfig(path);
+        dbVia = 'socket';
+        console.log(`[zimpan] port ${CONFIG.port} refused the connection; using the socket at ${path} instead`);
+        return;
+      } catch (e) {
+        await candidate.end().catch(() => {});
+        if (e.code === 'ER_BAD_DB_ERROR') {
+          // It answered. The database is simply not made yet, which migrate handles.
+          pool = mysql.createPool(socketConfig(path));
+          live = socketConfig(path);
+          dbVia = 'socket';
+          console.log(`[zimpan] port ${CONFIG.port} refused the connection; using the socket at ${path} instead`);
+          throw e;
+        }
+      }
+    }
+    throw err;
+  }
+}
 
 export const now = () => Date.now();
 
@@ -75,10 +140,11 @@ export const migrateAt = () => migrateStep;
 export async function migrate() {
   migrateStep = 'connect';
   try {
-    await pool.query('SELECT 1');
+    await openConnection();
   } catch (err) {
     if (err.code !== 'ER_BAD_DB_ERROR') throw err;
-    const admin = await mysql.createConnection({ ...CONFIG, database: undefined });
+    // Made against whatever the connection settled on, socket or port.
+    const admin = await mysql.createConnection({ ...live, database: undefined });
     await admin.query(`CREATE DATABASE IF NOT EXISTS \`${CONFIG.database}\`
                        CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     await admin.end();

@@ -8,7 +8,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
-import { query, one, now, migrate, migrateAt, HERE } from './db.js';
+import { query, one, now, migrate, migrateAt, dbVia, HERE } from './db.js';
 import {
   hashPassword, verifyPassword, createSession, userForToken, destroySession,
   parseCookies, setSessionCookie, clearSessionCookie, rateLimit, retryLabel, COOKIE
@@ -126,7 +126,13 @@ async function prepareDatabase() {
     console.log('[zimpan] database ready');
   } catch (err) {
     dbReady = false;
-    dbFault = { code: String(err.code || err.name || 'UNKNOWN').slice(0, 40), step: migrateAt(), attempts: dbAttempt + 1 };
+    dbFault = {
+      code: String(err.code || err.name || 'UNKNOWN').slice(0, 40),
+      step: migrateAt(),
+      // Which way it tried, never where: "tcp" and "socket" name no host.
+      via: dbVia,
+      attempts: dbAttempt + 1
+    };
     const wait = RETRY_MS[Math.min(dbAttempt, RETRY_MS.length - 1)];
     dbAttempt += 1;
     console.error(`[zimpan] database not ready (attempt ${dbAttempt}) at ${migrateAt()}: ${err.message} — retrying in ${wait / 1000}s`);
