@@ -431,7 +431,7 @@ function save() {
       entries: state.entries, money: state.money,
       categories: state.categories, purposes: state.purposes,
       todos: state.todos, todosRequeued: state.todosRequeued,
-      plans: state.plans,
+      plans: state.plans, syncedKinds: state.syncedKinds,
       aiRequeued: state.aiRequeued,
       currency: state.currency, currencyUpdatedAt: state.currencyUpdatedAt,
       steps: state.steps, stepsAt: state.stepsAt,
@@ -1006,6 +1006,10 @@ const state = {
   planArm: '',
   // Whether this browser has re-offered its notes. See requeueTodos().
   todosRequeued: stored.todosRequeued === true,
+  /* Which kinds this store has ever taken delivery of. Null in a store written
+     before it was recorded, which is treated as "none of them". See
+     rereadNewKinds(). */
+  syncedKinds: Array.isArray(stored.syncedKinds) ? stored.syncedKinds : null,
   // And its estimates. See requeueAi().
   aiRequeued: stored.aiRequeued === true,
   // The "why is this stuck" dialog: which note, and what has been typed.
@@ -1644,6 +1648,9 @@ async function syncNow() {
     mergeChanges(res.changes);
     clearPushed(sent, res.applied);
     state.lastSyncAt = res.serverTime;
+    // Recorded after the merge, not before: the mark is only allowed to stand
+    // for the kinds a sync that actually landed was able to take.
+    state.syncedKinds = KINDS.slice();
     state.syncing = false;
     save();
     setNet('synced', '');
@@ -1870,6 +1877,35 @@ async function onGoogleCredential(response) {
    Queued again, once per browser, and remembered so it is not done twice. A
    re-push costs nothing: the rows carry their own stamps and the server takes
    the newer of the two, so a note that did land is written back as itself. */
+/* History this browser was sent and threw away.
+
+   A pull hands back every kind the server knows and the client merges the ones
+   it has heard of. A client older than a kind does not have that kind in
+   KINDS, so those rows go in the bin — and then it adopts the watermark that
+   came with them. The rows are now behind its mark, `server_at > since` will
+   never offer them again, and updating the client does not help: it is looking
+   forward from a point past its own missing history.
+
+   Which is how a plan written on a phone at 22:29 sat on the server all night
+   while a laptop that syncs cleanly, every few minutes, with an empty outbox
+   and "All changes saved" on screen, never saw it and never would have.
+
+   clearPushed has guarded the other direction from the start — a server too
+   old for a kind is not allowed to empty the outbox. This is the same guard
+   pointed the other way, and it was missing.
+
+   So a store that has not taken delivery of every kind reads its history back
+   from the beginning, once. That is what a new device does on its first sync,
+   the merge is last-write-wins and cannot clobber anything newer, and the mark
+   is only recorded as covering these kinds after a sync actually lands. */
+function rereadNewKinds() {
+  const known = state.syncedKinds;
+  if (known && KINDS.every((k) => known.indexOf(k) >= 0)) return;
+  if (!state.lastSyncAt) return;
+  state.lastSyncAt = 0;
+  save();
+}
+
 function requeueTodos() {
   if (state.todosRequeued) return;
   state.todosRequeued = true;
@@ -1890,6 +1926,7 @@ function requeueAi() {
 }
 
 async function boot() {
+  rereadNewKinds();
   requeueTodos();
   requeueAi();
   const params = new URLSearchParams(location.search);
