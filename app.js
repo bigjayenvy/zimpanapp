@@ -1658,7 +1658,7 @@ async function syncNow() {
       state.netError = err.message || 'The server rejected these changes.';
       // Validation messages name the offending row ("entries[7].activity …"),
       // which is enough to identify it and offer a way past it.
-      const at = /^(entries|money|categories|purposes)\[(\d+)\]/.exec(state.netError);
+      const at = /^(entries|money|categories|purposes|todos|plans)\[(\d+)\]/.exec(state.netError);
       state.netErrorRow = at ? { kind: at[1], index: Number(at[2]) } : null;
       setNet('error', '');
       render();
@@ -4685,6 +4685,45 @@ function syncErrorBanner() {
       ${blocked ? `<button class="btn btn-ghost" data-act="sync-discard" style="font-size: 12px;" title="Keep it on this device but stop trying to upload it">Leave it behind</button>` : ''}
     </span>
   </div>`;
+}
+
+/* What the phone says when the sync is not working.
+
+   The full layout has had a banner for a server error and a line in its header
+   for everything else. The phone had neither: no header status, no banner, no
+   indication of any kind. A push that the server refuses, or a database that
+   is away, was completely silent there — the app went on accepting everything
+   typed into it, kept it safely on the device, and gave no hint that none of
+   it was leaving. "It is not syncing and I cannot tell why" is the only thing
+   that can be reported from inside that, which is exactly how it was reported.
+
+   Shown for a pause as well as an error. A pause is the right call for a
+   database that blinks — the queue is kept and it retries itself — but a pause
+   that lasts is indistinguishable from a failure to the person holding the
+   phone, and the server's own sentence explains it better than silence does.
+
+   Offline says nothing unless something is actually waiting: a phone in a lift
+   with nothing queued has no news. */
+function mSyncNote() {
+  if (!state.auth) return '';
+  const waiting = pendingCount();
+  const bad = state.netState === 'error' || state.netState === 'paused';
+  if (!bad && !(state.netState === 'offline' && waiting)) return '';
+  const hard = state.netState === 'error';
+  const title = hard ? (state.netErrorKind === 'server' ? 'The server had a problem' : 'The server refused these changes')
+    : state.netState === 'paused' ? 'Syncing is paused' : 'You are offline';
+  const detail = bad && state.netError ? state.netError
+    : `${waiting} ${waiting === 1 ? 'change is' : 'changes are'} waiting to go up.`;
+  return `
+<div class="m-syncnote${hard ? ' is-hard' : ''}">
+  <div class="m-syncnote-head">
+    <strong>${esc(title)}</strong>
+    <button data-act="sync-now">Try again</button>
+  </div>
+  <p>${esc(detail)}</p>
+  <p class="m-syncnote-safe">Everything you have logged is safe on this phone${
+  waiting ? ` — ${waiting} ${waiting === 1 ? 'change' : 'changes'} waiting` : ''}, and goes up by itself once this clears.</p>
+</div>`;
 }
 
 /* ── legal ──
@@ -14267,6 +14306,7 @@ function mobileApp() {
   const tabbed = s.screen === 'home' || s.screen === 'insights';
   return `
 <div style="min-height:100vh;background:#f8f7fb;color:#16131f;font-family:var(--font-body);">
+  ${mSyncNote()}
   ${s.screen === 'setup' ? mSetup() : ''}
   ${s.screen === 'home' ? mHome() : ''}
   ${s.screen === 'insights' ? mInsights() : ''}

@@ -1035,6 +1035,23 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .pad-wait strong { color: #5e400c; }
 
+  /* The phone's sync notice. Above everything, because it is about everything:
+     nothing on the screens below it is leaving the device while this is up. */
+  .m-syncnote {
+    margin: 0 0 2px; padding: 12px 22px 14px;
+    background: #fdf1de; border-bottom: 1px solid #f0d9ac; color: #7a5410;
+  }
+  .m-syncnote.is-hard { background: #fdecf1; border-bottom-color: #f3c9d6; color: #8a2f4a; }
+  .m-syncnote-head { display: flex; align-items: center; gap: 12px; }
+  .m-syncnote-head strong { flex: 1; min-width: 0; font-size: 14px; }
+  .m-syncnote-head button {
+    flex: none; border: 1px solid currentColor; background: transparent; color: inherit;
+    border-radius: 999px; padding: 5px 12px; cursor: pointer;
+    font: inherit; font-size: 12.5px; font-weight: 600;
+  }
+  .m-syncnote p { margin: 6px 0 0; font-size: 12.5px; line-height: 1.5; }
+  .m-syncnote-safe { opacity: .82; }
+
   /* One note. The status tints the left edge rather than the whole card, so a
      pad of four statuses still reads as one pad. */
   .todo-note {
