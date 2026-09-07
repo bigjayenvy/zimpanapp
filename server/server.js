@@ -8,6 +8,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
+import { statSync } from 'node:fs';
 import { query, one, now, migrate, migrateAt, dbVia, HERE } from './db.js';
 import {
   hashPassword, verifyPassword, createSession, userForToken, destroySession,
@@ -176,9 +177,23 @@ app.use((req, res, next) => {
    the problem and then sent you to a log file for which problem, which is the
    half of the question that actually takes the time — and on shared hosting
    that log is several clicks into a file manager, if it is readable at all. */
+/* When the code on this machine was last written.
+
+   "I deployed and nothing changed" is a sentence with two very different
+   causes behind it, and no way from outside to tell them apart: the change is
+   wrong, or the change is not there. Three rounds of it went by before anyone
+   thought to ask which. A file's own timestamp answers it without a build
+   step, a version file or a git checkout to read — if this is older than the
+   deploy you just ran, the deploy is what to look at, and nothing else here is
+   worth reading yet. Read once: the file cannot change under a running
+   process, and a restart is what a deploy does last. */
+const BUILT_AT = (() => {
+  try { return statSync(join(ROOT, 'server', 'server.js')).mtime.toISOString(); } catch { return null; }
+})();
+
 app.get('/api/health', (req, res) => {
   res.json(Object.assign(
-    { ok: true, database: dbReady ? 'ready' : 'unavailable', ready: dbReady },
+    { ok: true, database: dbReady ? 'ready' : 'unavailable', ready: dbReady, built: BUILT_AT },
     dbReady || !dbFault ? {} : { fault: dbFault }
   ));
 });
