@@ -1125,6 +1125,13 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px;
     background: var(--pad-tint); border-radius: 12px; padding: 9px 11px; margin: 0 0 10px;
   }
+  /* The strip is in the tree even with nothing to total, so a typed figure can
+     fill it in without a re-render — and `hidden` is how it stays out of the
+     way until then. A class that sets display outranks the UA rule, so it has
+     to be told what hidden means for it, exactly as .pick-row above is. Left
+     out, an empty pad announced "Dhs 0 to pay · Leaves Dhs 0 of the Dhs 0 you
+     have logged" over the words "Nothing planned yet". */
+  .plan-sum[hidden] { display: none; }
   .plan-sum-fig {
     font-family: var(--font-heading); font-weight: 700; font-size: 19px; color: var(--pad-ink);
     font-variant-numeric: tabular-nums;
