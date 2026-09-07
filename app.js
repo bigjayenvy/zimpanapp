@@ -989,6 +989,11 @@ const state = {
      take away something written. */
   todoOpen: false,
   todoArm: '',
+  /* Kinds this server acknowledged a push for without counting them — an
+     install running code older than the kind. Not stored: it is an observation
+     about the server on the other end of the last push, and the next one
+     re-makes it. */
+  syncStale: {},
   // Whether the money rows behind the card's figures are being read.
   moneyLogOpen: false,
   /* The money tracker's pad, and which of its lines has its delete armed. Held
@@ -1246,7 +1251,17 @@ function mergeChanges(changes) {
 function clearPushed(sent, applied) {
   const counted = applied && typeof applied === 'object';
   KINDS.forEach((kind) => {
-    if (counted && (sent[kind] || []).length && typeof applied[kind] !== 'number') return;
+    /* Kept out of the outbox is the right thing to do and a silent thing to
+       do. The client knows exactly why the rows are not crossing — it sent
+       them and the server did not say it took them — and said nothing, so the
+       symptom reaching a person is "the pad on my phone is not on my laptop"
+       with nothing to read anywhere. Recorded here so the pad can say it. */
+    if (counted && (sent[kind] || []).length && typeof applied[kind] !== 'number') {
+      state.syncStale[kind] = true;
+      return;
+    }
+    // Counted: whatever was wrong is not wrong now.
+    if (counted && (sent[kind] || []).length) delete state.syncStale[kind];
     (sent[kind] || []).forEach((row) => {
       const key = String(row[KEY_OF[kind]]);
       const live = findRow(kind, key);
@@ -4139,6 +4154,25 @@ function todoNote(t) {
   </div>`;
 }
 
+/* What a pad says when the server on the other end has not caught up.
+
+   Both pads were added after the app shipped, and a server running older code
+   answers a push 200, ignores the field it does not know, and reports no count
+   for it. The client already does the right thing — the rows stay queued
+   rather than being marked sent — but it did it silently, and silence here
+   reads as "my notes are not syncing", which is a frightening thing to read
+   about your own writing. So it says what is happening and, first, that
+   nothing is lost. */
+function padWaitNote(kind, what) {
+  if (!state.syncStale[kind]) return '';
+  return `
+  <p class="pad-wait">
+    <strong>Waiting for the server.</strong> Everything here is safe on this device.
+    ${esc(what)} needs an update this server has not been restarted for yet — until it is,
+    these will not reach your other devices. Nothing is lost, and they go up by themselves
+    the moment it catches up.</p>`;
+}
+
 /* The pad's contents, shared by the panel and the sheet so the two can never
    drift into being different features. */
 function todoBody() {
@@ -4149,6 +4183,7 @@ function todoBody() {
     ${rows.length ? `<span class="todo-count">${todoOpenCount()} open</span>` : ''}
     <button class="todo-x" data-act="todo-close" aria-label="Close the pad">✕</button>
   </div>
+  ${padWaitNote('todos', 'The To Do pad')}
   <button class="todo-new" data-act="todo-add">+ New note</button>
   <div class="todo-list" data-todo-list>
     ${rows.length
@@ -4481,6 +4516,7 @@ function planBody() {
     <button class="todo-x" data-act="plan-close" aria-label="Close the pad">✕</button>
   </div>
   ${planSum()}
+  ${padWaitNote('plans', 'Money Plan')}
   <button class="todo-new" data-act="plan-add">+ Add Plan</button>
   <div class="todo-list" data-plan-list>
     ${rows.length

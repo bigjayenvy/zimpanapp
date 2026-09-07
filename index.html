@@ -1025,6 +1025,15 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     overflow-y: auto; overscroll-behavior: contain; padding-right: 2px;
   }
   .todo-empty { margin: 6px 2px; font-size: 12.5px; line-height: 1.55; color: var(--pad-soft); }
+  /* Said where the writing is, rather than in the header's sync line: this is
+     about these notes and nothing else on the page. Amber rather than red —
+     nothing has gone wrong with the data, something is merely late. */
+  .pad-wait {
+    margin: 0 0 10px; padding: 9px 11px; border-radius: 12px;
+    background: #fdf1de; border: 1px solid #f0d9ac; color: #7a5410;
+    font-size: 12px; line-height: 1.5;
+  }
+  .pad-wait strong { color: #5e400c; }
 
   /* One note. The status tints the left edge rather than the whole card, so a
      pad of four statuses still reads as one pad. */
