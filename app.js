@@ -504,6 +504,9 @@ const API = {
   forgot: (email) => api('/api/forgot', { method: 'POST', body: { email } }),
   reset: (token, password) => api('/api/reset', { method: 'POST', body: { token, password } }),
   push: (since, changes) => api('/api/sync', { method: 'POST', body: { since: since || 0, changes } }),
+  // Receiving on its own. See pullOnly(): a device that cannot send must still
+  // be able to hear.
+  pull: (since) => api(`/api/sync?since=${encodeURIComponent(since || 0)}`),
   estimate: (text) => api('/api/estimate', { method: 'POST', body: { text } }),
   deckSummary: (facts) => api('/api/deck-summary', { method: 'POST', body: { facts } }),
   chat: (history, facts) => api('/api/chat', { method: 'POST', body: { history, facts } }),
@@ -1601,6 +1604,33 @@ function warmDeckSummary() {
   }, 6000);
 }
 
+/* Receiving, when sending is what failed.
+
+   One request does both halves, which is right when it works and quietly
+   catastrophic when it does not: a push the server refuses takes the pull down
+   with it, and the device stops hearing anything at all. Not for that request
+   — forever. Every later sync sends the same rejected payload, is refused
+   identically, and never reaches the merge. One bad row and a device goes
+   blind to every other device, indefinitely, while showing a message about the
+   row rather than about the blindness.
+
+   So a refused push is followed by a plain read. The queue is kept, the error
+   still stands and still says what it says, and the device carries on
+   receiving. Skipped for 503 — the database is away, so a read would fail for
+   the same reason — and for 401, where there is no session to read with.
+
+   Its own failure is swallowed on purpose: the push's error is the one worth
+   showing, and replacing it with a second one would bury the thing that
+   actually needs fixing. */
+async function pullOnly() {
+  try {
+    const res = await API.pull(state.lastSyncAt);
+    mergeChanges(res.changes);
+    state.lastSyncAt = res.serverTime;
+    save();
+  } catch (e) { /* the push's error is the one that matters */ }
+}
+
 async function syncNow() {
   if (!state.auth || state.syncing) return;
   // Stamped here rather than in the heartbeat, so a device being typed into is
@@ -1650,6 +1680,7 @@ async function syncNow() {
       state.netError = `The server returned an error (${err.status}). Its log will say why — often a database column the code expects but the schema has not got yet.`;
       state.netErrorRow = null;
       setNet('error', '');
+      await pullOnly();
       render();
       return;
     }
@@ -1661,6 +1692,7 @@ async function syncNow() {
       const at = /^(entries|money|categories|purposes|todos|plans)\[(\d+)\]/.exec(state.netError);
       state.netErrorRow = at ? { kind: at[1], index: Number(at[2]) } : null;
       setNet('error', '');
+      await pullOnly();
       render();
       return;
     }
