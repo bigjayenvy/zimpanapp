@@ -67,7 +67,13 @@ export async function transaction(fn) {
 /* Applies schema.sql. CREATE DATABASE is attempted only when the configured
    database is missing — on shared hosting the database is made in cPanel and
    the account usually lacks the privilege, so a failure there is not fatal. */
+/* The step migrate() is on, read by the health endpoint when it fails. Repo
+   content only — never a value, a credential, or anything a row holds. */
+export let migrateStep = '';
+export const migrateAt = () => migrateStep;
+
 export async function migrate() {
+  migrateStep = 'connect';
   try {
     await pool.query('SELECT 1');
   } catch (err) {
@@ -85,11 +91,22 @@ export async function migrate() {
   for (const statement of sql.split(';')) {
     const trimmed = statement.trim();
     // multipleStatements stays off, so each DDL statement goes over on its own.
-    if (trimmed) await pool.query(trimmed);
+    /* Which statement is running, in a form safe to show: the first line of a
+       DDL statement out of this repository names a table and nothing else.
+       When migrate fails, "where" is most of the answer — a connection that was
+       never opened fails at `connect`, a schema the database will not take
+       fails at the table it will not take. */
+    if (trimmed) {
+      migrateStep = trimmed.split('\n')[0].replace(/\s+/g, ' ').trim().slice(0, 80);
+      await pool.query(trimmed);
+    }
   }
 
+  migrateStep = 'alterExisting';
   await alterExisting();
+  migrateStep = 'seedAdmin';
   await seedAdmin();
+  migrateStep = '';
 }
 
 /* The first superadmin, created on the boot that first knows about roles.

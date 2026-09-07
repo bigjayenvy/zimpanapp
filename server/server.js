@@ -8,7 +8,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
-import { query, one, now, migrate, HERE } from './db.js';
+import { query, one, now, migrate, migrateAt, HERE } from './db.js';
 import {
   hashPassword, verifyPassword, createSession, userForToken, destroySession,
   parseCookies, setSessionCookie, clearSessionCookie, rateLimit, retryLabel, COOKIE
@@ -106,6 +106,15 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 
 let dbReady = false;
 let dbAttempt = 0;
+/* Why it is not ready, in a form that can be shown to whoever is asking.
+
+   The code and the step, never the message. A driver's message names the host
+   and the user it tried them with — that is why it has always stayed in the
+   log — but the code is a fixed identifier (ER_ACCESS_DENIED_ERROR, ECONNREFUSED,
+   ER_CANT_CREATE_TABLE) and the step is a line out of this repository. Between
+   them they say which of the handful of things went wrong, which is the whole
+   question, and neither can carry a secret. */
+let dbFault = null;
 const RETRY_MS = [2000, 5000, 10000, 20000, 30000];
 
 async function prepareDatabase() {
@@ -113,12 +122,14 @@ async function prepareDatabase() {
     await migrate();
     dbReady = true;
     dbAttempt = 0;
+    dbFault = null;
     console.log('[zimpan] database ready');
   } catch (err) {
     dbReady = false;
+    dbFault = { code: String(err.code || err.name || 'UNKNOWN').slice(0, 40), step: migrateAt(), attempts: dbAttempt + 1 };
     const wait = RETRY_MS[Math.min(dbAttempt, RETRY_MS.length - 1)];
     dbAttempt += 1;
-    console.error(`[zimpan] database not ready (attempt ${dbAttempt}): ${err.message} — retrying in ${wait / 1000}s`);
+    console.error(`[zimpan] database not ready (attempt ${dbAttempt}) at ${migrateAt()}: ${err.message} — retrying in ${wait / 1000}s`);
     setTimeout(prepareDatabase, wait);
   }
 }
@@ -155,12 +166,22 @@ app.use((req, res, next) => {
    Readiness: can this process do the work that needs MySQL? That is what a
    deploy gate or an alert wants, and it is a different question with its own
    path, still answering 503 so a check can fail on it deliberately. */
+/* The fault travels with the answer. "unavailable" told you the database was
+   the problem and then sent you to a log file for which problem, which is the
+   half of the question that actually takes the time — and on shared hosting
+   that log is several clicks into a file manager, if it is readable at all. */
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, database: dbReady ? 'ready' : 'unavailable', ready: dbReady });
+  res.json(Object.assign(
+    { ok: true, database: dbReady ? 'ready' : 'unavailable', ready: dbReady },
+    dbReady || !dbFault ? {} : { fault: dbFault }
+  ));
 });
 
 app.get('/api/ready', (req, res) => {
-  res.status(dbReady ? 200 : 503).json({ ok: dbReady, database: dbReady ? 'ready' : 'unavailable' });
+  res.status(dbReady ? 200 : 503).json(Object.assign(
+    { ok: dbReady, database: dbReady ? 'ready' : 'unavailable' },
+    dbReady || !dbFault ? {} : { fault: dbFault }
+  ));
 });
 
 const clientIp = (req) => req.ip || req.socket.remoteAddress || 'unknown';
