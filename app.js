@@ -147,6 +147,23 @@ const amount = (n) => {
 };
 const signed = (n) => (n < 0 ? `−${amount(n)}` : amount(n));
 
+/* Money leaving and money arriving, told apart by colour.
+
+   Out was the page's ordinary ink, which made it the same as everything else
+   on screen and left the distinction resting entirely on a minus sign a
+   thousandth of the size of the figure. Now the two directions read at a
+   glance and the sign confirms rather than carries it.
+
+   Maroon is the one the app already uses for a delete, a stuck note and a bill
+   that is due; green is the one already on a completed to-do and a plan that
+   has been received. Both are dark enough to sit on white at body weight,
+   which is where nearly every figure in this app sits. Three near-identical
+   greens were in use before this — one for a row, one for a dialog, one for a
+   status — and they are one green now. */
+const MONEY_IN_INK = '#0e7a5c';
+const MONEY_OUT_INK = '#8a2f4a';
+const moneyInk = (dir) => (dir === 'in' ? MONEY_IN_INK : MONEY_OUT_INK);
+
 const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ESCAPES[c]);
 
@@ -4554,7 +4571,7 @@ function planLine(row) {
       aria-label="Planned ${dir === 'in' ? 'income' : 'spend'}">${esc(row.text || '')}</textarea>
     ${planWay(row)}
     <div class="plan-row">
-      <label class="plan-amt">
+      <label class="plan-amt is-${dir}">
         <span aria-hidden="true">${esc(currency().symbol)}</span>
         <input type="text" inputmode="decimal" data-k="plan-amt-${esc(row.id)}" data-plan-amount="${esc(row.id)}"
           value="${row.amount ? esc(money2(row.amount)) : ''}" placeholder="0.00"
@@ -8168,7 +8185,7 @@ function moneyDesktop(v) {
                 <td data-col="activity"><input class="cell-input" data-k="mr-${esc(e.id)}-a" data-change="money-activity" data-id="${esc(e.id)}" value="${esc(e.activity)}"${e.note ? ` title="${esc(e.note)}"` : ''}><button class="cell-note" data-act="note-edit" data-kind="money" data-id="${esc(e.id)}" title="${e.note ? esc(e.note) : 'Add a note for this entry'}"${e.note ? ' data-has-note' : ''}>${e.note ? 'Note' : 'Add note'}</button></td>
                 <td data-col="purpose"><select data-change="money-purpose" data-id="${esc(e.id)}" style="${rowChipStyle(purposeColor(e.purpose))}">${options(pickPurposes().map((p) => p.name), e.purpose)}</select></td>
                 <td data-col="in" data-label="Received" style="text-align: right;"><input class="cell-num is-in" type="number" min="0" step="0.01" placeholder="0" data-change="money-in" data-id="${esc(e.id)}" value="${e.in || ''}"></td>
-                <td data-col="out" data-label="Spent" style="text-align: right;"><input class="cell-num" type="number" min="0" step="0.01" placeholder="0" data-change="money-out" data-id="${esc(e.id)}" value="${e.out || ''}"></td>
+                <td data-col="out" data-label="Spent" style="text-align: right;"><input class="cell-num is-out" type="number" min="0" step="0.01" placeholder="0" data-change="money-out" data-id="${esc(e.id)}" value="${e.out || ''}"></td>
                 <td data-col="remove" style="text-align: right;"><button class="cell-del" data-act="money-remove" data-id="${esc(e.id)}" title="Delete entry">×</button></td>
               </tr>`).join('');
 
@@ -12791,7 +12808,7 @@ function moneyLogDialog() {
     closeAct: 'money-log-close',
     body: `
       <div style="display:flex;gap:8px;margin:0 0 14px;">
-        ${[['In', amount(inCents / 100), '#0e7a5c', '#e3f5ed'], ['Out', amount(outCents / 100), '#8a2f4a', '#fdecf1']]
+        ${[['In', amount(inCents / 100), MONEY_IN_INK, '#e3f5ed'], ['Out', amount(outCents / 100), MONEY_OUT_INK, '#fdecf1']]
     .map((c) => `
         <div style="flex:1;min-width:0;padding:9px 11px;border-radius:12px;background:${c[3]};text-align:left;">
           <div style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:${c[2]};opacity:.85;font-weight:600;">${c[0]}</div>
@@ -12864,7 +12881,7 @@ function mEntryRow(e, opts) {
     <span style="display:block;font-weight:600;font-size:15px;color:#16131f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(e.title)}</span>
     <span style="display:block;font-size:12.5px;color:#756f88;margin-top:2px;">${esc(meta)}</span>
   </span>
-  <span style="font-family:var(--font-heading);font-weight:700;font-size:15px;white-space:nowrap;color:${money && e.dir === 'in' ? '#1c8a63' : '#16131f'};">${esc(value)}</span>
+  <span style="font-family:var(--font-heading);font-weight:700;font-size:15px;white-space:nowrap;color:${money ? moneyInk(e.dir) : '#16131f'};">${esc(value)}</span>
 </button>`;
 }
 
@@ -13857,7 +13874,7 @@ function mFlowAmount() {
   ${opt('out', 'Money out')}${opt('in', 'Money in')}
 </div>
 <div style="text-align:center;padding:6px 0 18px;">
-  <div style="font-family:var(--font-heading);font-weight:700;font-size:52px;line-height:1;letter-spacing:-.01em;color:${has ? (s.dir === 'in' ? '#1c8a63' : '#16131f') : '#c3bfd0'};">${esc(currency().symbol + (s.amount || '0'))}</div>
+  <div style="font-family:var(--font-heading);font-weight:700;font-size:52px;line-height:1;letter-spacing:-.01em;color:${has ? moneyInk(s.dir) : '#c3bfd0'};">${esc(currency().symbol + (s.amount || '0'))}</div>
   <div style="font-size:12.5px;color:#756f88;margin-top:6px;">${s.dir === 'in' ? 'Coming in' : 'Going out'}</div>
 </div>
 <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:18px;">
@@ -14127,7 +14144,7 @@ function mDetail() {
   <div class="card" style="margin-top:14px;border-radius:22px;box-shadow:0 4px 14px rgba(47,28,102,.1);padding:20px;gap:0;">
     <div><span class="tag ${money ? 'tag-accent-2' : 'tag-accent'}" style="padding:4px 11px;">${money ? 'Money' : 'Activity'} · ${esc(cat)}</span></div>
     <div style="font-family:var(--font-heading);font-weight:700;font-size:27px;line-height:1.15;color:#16131f;margin-top:12px;">${esc(row.activity)}</div>
-    <div style="font-family:var(--font-heading);font-weight:700;font-size:40px;line-height:1.1;margin-top:6px;color:${money && dir === 'in' ? '#1c8a63' : '#16131f'};">${esc(money ? (dir === 'in' ? '+' : '−') + mMoney(amt) : mDur(span(row)))}</div>
+    <div style="font-family:var(--font-heading);font-weight:700;font-size:40px;line-height:1.1;margin-top:6px;color:${money ? moneyInk(dir) : '#16131f'};">${esc(money ? (dir === 'in' ? '+' : '−') + mMoney(amt) : mDur(span(row)))}</div>
     <div style="height:1px;background:rgba(22,19,31,.12);margin:18px 0;"></div>
     <div style="display:flex;flex-direction:column;gap:13px;">
       ${rows.map((r) => `

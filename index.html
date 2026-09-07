@@ -1176,6 +1176,11 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     font-variant-numeric: tabular-nums;
   }
   .plan-amt input:focus { outline: 0; }
+  /* The figure carries its direction. Both halves of the field, so the currency
+     and the number read as one thing rather than a coloured number beside a
+     grey symbol. */
+  .plan-amt.is-out, .plan-amt.is-out input { color: #8a2f4a; }
+  .plan-amt.is-in, .plan-amt.is-in input { color: #0e7a5c; }
   .plan-amt input::placeholder { color: color-mix(in srgb, var(--pad-soft) 60%, #fff); font-weight: 600; }
   .plan-amt:focus-within { border-color: #16a394; box-shadow: 0 0 0 2px rgba(22, 163, 148, .18); }
   /* Where it will be filed when it is paid. Neutral where the status select is
@@ -1218,10 +1223,14 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     border-radius: 999px; padding: 5px 8px; color: var(--pad-mid);
     font: inherit; font-size: 11.5px; font-weight: 600; white-space: nowrap;
   }
+  /* Only the chosen half takes a colour: an unpicked option announcing itself
+     in maroon would read as a warning about a direction nobody picked. */
   .plan-way-opt.is-on {
     background: #fff; color: var(--pad-ink);
     box-shadow: 0 1px 3px color-mix(in srgb, #0b5750 18%, transparent);
   }
+  .plan-way-opt.is-on[data-dir="out"] { color: #8a2f4a; }
+  .plan-way-opt.is-on[data-dir="in"] { color: #0e7a5c; }
   .plan-way-opt:focus-visible { outline: 2px solid #16a394; outline-offset: 1px; }
 
   /* Clears the fixed bottom bar. Declared after the base rule rather than up in
@@ -2650,7 +2659,11 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .cell-input { width: 100%; border: 0; background: transparent; font: inherit; font-size: 14px; color: inherit; padding: 2px 0; }
   .cell-time { border: 0; background: transparent; font: inherit; font-size: 14px; color: inherit; }
   .cell-num { width: 100%; text-align: right; border: 0; background: transparent; font: inherit; font-size: 14px; color: inherit; }
-  .cell-num.is-in { color: var(--color-accent-700); }
+  /* Received and Spent, in the two colours the app reads money by. The tracker
+     accent used to do for Received, which meant it changed with the tab and
+     said "this column" rather than "this direction". */
+  .cell-num.is-in { color: #0e7a5c; }
+  .cell-num.is-out { color: #8a2f4a; }
   .cell-spent { font-variant-numeric: tabular-nums; color: var(--color-neutral-700); }
   .cell-del { border: 0; background: transparent; cursor: pointer; color: var(--color-neutral-500); font-size: 15px; padding: 2px 4px; }
   .rows-scroll { overflow-x: auto; }
