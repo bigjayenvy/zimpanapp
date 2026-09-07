@@ -14839,15 +14839,33 @@ const M_ACTIONS = {
     const row = findRow(money ? 'money' : 'entries', s.selected);
     if (!row) { mGo('home'); return; }
     mResetDraft();
+    /* The day the entry STARTED, which for a night that crosses midnight is
+       the day before the one it is filed under.
+
+       mCommit reads the draft's date as the start day and moves a wrapping
+       entry forward itself — `to < from` means it ended the following morning.
+       Seeded with the stored date, that move happened a second time on every
+       save: a sleep timed 11pm to 7:40am and filed on the morning it ended was
+       pushed to the morning after that, and vanished from the log. Worse, it
+       was not once. Opening it again re-seeded from the new date and pushed it
+       again, so a night walked a day further off the end of the log every time
+       it was saved, whether or not anything had been changed.
+
+       The same fault the timer handover was fixed for, arriving from the other
+       direction: there the stop day was handed to a shift that had already
+       happened, here the stored date was. One rule holds everywhere now — the
+       draft carries the day the entry began, and mCommit decides where it
+       lands. */
+    const started = !money && wraps(row) ? mShiftIso(row.date, -1) : row.date;
     const held = {
       screen: 'flow', step: 4, kind: money ? 'money' : 'time',
       editId: row.id, editKind: s.selectedKind,
       cat: money ? row.purpose : row.category,
       activityText: row.activity, typing: true,
       note: row.note || '', noteOpen: !!row.note,
-      day: row.date === todayIso ? 'today'
-        : row.date === mShiftIso(todayIso, -1) ? 'yesterday' : 'earlier',
-      earlierIso: row.date
+      day: started === todayIso ? 'today'
+        : started === mShiftIso(todayIso, -1) ? 'yesterday' : 'earlier',
+      earlierIso: started
     };
     if (money) {
       const income = mCents(row.in) > 0;
