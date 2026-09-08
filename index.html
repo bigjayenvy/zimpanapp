@@ -3409,5 +3409,17 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 
 <div id="app"></div>
 <script src="/app.js"></script>
+
+<!-- Metricool. Last, so it cannot delay the app's own boot: the snippet
+     appends its tag to <head> itself, so where it sits only decides when it
+     runs. Here rather than in the head block with Google's tags, which is what
+     Metricool's own instructions ask for.
+
+     This document is also what /blogs and every /blogs/<slug> are served as —
+     the client reads the path and draws the right page — so the blog is
+     counted by this one tag and needs none of its own. The admin dashboard is
+     admin.html and deliberately has no tag: it is one person's back office,
+     not site traffic, and counting it would only bend the numbers. -->
+<script>function loadScript(a){var b=document.getElementsByTagName("head")[0],c=document.createElement("script");c.type="text/javascript",c.src="https://tracker.metricool.com/resources/be.js",c.onreadystatechange=a,c.onload=a,b.appendChild(c)}loadScript(function(){beTracker.t({hash:"bfa6e7088c91337b3c4562edb64d4d12"})});</script>
 </body>
 </html>
