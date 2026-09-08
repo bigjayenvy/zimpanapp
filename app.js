@@ -1023,6 +1023,10 @@ const state = {
   planArm: '',
   // The line whose "log it" is being answered. See planLogDialog().
   planLogAsk: null,
+  /* Which pad line is having a new category or purpose named for it, and the
+     name being typed. Held here rather than per-pad: only one popover is open
+     at a time, so only one of these can be in flight. */
+  padNew: null, padNewName: '',
   // Whether this browser has re-offered its notes. See requeueTodos().
   todosRequeued: stored.todosRequeued === true,
   /* Which kinds this store has ever taken delivery of. Null in a store written
@@ -1099,14 +1103,14 @@ function serialise(kind, r) {
      treats it as the thing an admin cannot see. */
   if (kind === 'entries') return { id: r.id, date: r.date, activity: r.activity, category: r.category, project: r.project || undefined, from: r.from, to: r.to, note: r.note || '', updatedAt: r.updatedAt || 0 };
   if (kind === 'money') return { id: r.id, date: r.date, activity: r.activity, purpose: r.purpose, in: Number(r.in) || 0, out: Number(r.out) || 0, note: r.note || '', updatedAt: r.updatedAt || 0 };
-  if (kind === 'todos') return { id: r.id, text: r.text || '', status: r.status || 'pending', blocked: r.blocked || undefined, createdAt: r.createdAt || 0, updatedAt: r.updatedAt || 0 };
+  if (kind === 'todos') return { id: r.id, text: r.text || '', status: r.status || 'pending', blocked: r.blocked || undefined, category: r.category || undefined, createdAt: r.createdAt || 0, updatedAt: r.updatedAt || 0 };
   if (kind === 'plans') return { id: r.id, text: r.text || '', amount: money2(r.amount), purpose: r.purpose || undefined, dir: r.dir === 'in' ? 'in' : 'out', status: r.status || 'planned', createdAt: r.createdAt || 0, updatedAt: r.updatedAt || 0 };
   return { name: r.name, color: r.color, position: r.position || 0, updatedAt: r.updatedAt || 0 };
 }
 function deserialise(kind, r) {
   if (kind === 'entries') return { id: r.id, date: r.date, activity: r.activity, category: r.category, project: r.project || undefined, from: r.from, to: r.to, note: r.note || '', updatedAt: r.updatedAt };
   if (kind === 'money') return { id: r.id, date: r.date, activity: r.activity, purpose: r.purpose, in: r.in, out: r.out, note: r.note || '', updatedAt: r.updatedAt };
-  if (kind === 'todos') return { id: r.id, text: r.text || '', status: r.status || 'pending', blocked: r.blocked || undefined, createdAt: r.createdAt || 0, updatedAt: r.updatedAt };
+  if (kind === 'todos') return { id: r.id, text: r.text || '', status: r.status || 'pending', blocked: r.blocked || undefined, category: r.category || undefined, createdAt: r.createdAt || 0, updatedAt: r.updatedAt };
   if (kind === 'plans') return { id: r.id, text: r.text || '', amount: money2(r.amount), purpose: r.purpose || undefined, dir: r.dir === 'in' ? 'in' : 'out', status: r.status || 'planned', createdAt: r.createdAt || 0, updatedAt: r.updatedAt };
   return { name: r.name, color: r.color, position: r.position, updatedAt: r.updatedAt };
 }
@@ -4232,6 +4236,7 @@ function todoNote(t) {
     <button class="todo-why" data-act="todo-why" data-id="${esc(t.id)}">
       ${why ? `<span class="todo-why-mark">Stuck:</span> ${esc(why)}` : 'Say why this is stuck'}
     </button>` : ''}
+    <div class="todo-row">${padPickField('todos', t)}</div>
     <div class="todo-foot">
       <select class="todo-status" data-change="todo-status" data-id="${esc(t.id)}" aria-label="Status">
         ${TODO_STATUSES.map((o) => `<option value="${o.key}"${o.key === st.key ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}
@@ -4494,12 +4499,6 @@ function paintPlanSum() {
    above it is a sentence — so summoning one for the figure changes nothing,
    where routing through the pad would mean leaving the list to type a number
    and coming back. */
-/* The purposes, in the order a list of names is looked through. The money
-   form keeps its own order — that one is a vocabulary you built and the
-   position is yours — but a pad you scan for one name wants the alphabet. */
-const planPurposes = () => state.purposes.slice()
-  .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }));
-
 /* Which way a line's money goes. Two words rather than a switch: a switch has
    to be labelled to say what the on position means, and by the time it is
    labelled it is these two words with extra parts. */
@@ -4511,52 +4510,145 @@ function planWay(row) {
   return `<div class="plan-way" role="group" aria-label="Direction">${opt('out', 'Going out')}${opt('in', 'Coming in')}</div>`;
 }
 
-/* The purpose, as the searchable list the rest of the app uses rather than a
-   native select. A dozen purposes is a scroll; forty is a search — and the
-   same popover already knows how to filter itself, so this is the component
-   and not a second one. Opening it takes no focus: the keyboard waits to be
-   asked for, exactly as it does on the flow's category picker. */
-function planPickField(row) {
-  const open = state.pickOpen === `plan:${row.id}`;
-  const rows = planPurposes();
+/* What a line is filed under, for both pads.
+
+   One component, because it is one question asked of two vocabularies: the
+   money pad files a line under a purpose, the to-do pad files a note under a
+   category, and the list, the search, the "none" row and the way a new one is
+   made are the same in each. Written twice they would have drifted the first
+   time either half was touched.
+
+   The searchable popover rather than a native select. A dozen entries is a
+   scroll and forty is a search, and this popover already knows how to filter
+   itself. Opening it takes no focus — the keyboard waits to be asked for,
+   exactly as it does on the flow's own picker. */
+const PAD_PICK = {
+  plans: {
+    field: 'purpose',
+    list: pickPurposes,
+    money: true,
+    // A plan pointing inwards is filed under where the money came from.
+    none: (row) => (planDir(row) === 'in' ? 'No source yet' : 'No purpose yet'),
+    search: (row) => (planDir(row) === 'in' ? 'sources' : 'purposes'),
+    fresh: 'New source or purpose'
+  },
+  todos: {
+    field: 'category',
+    list: pickCategories,
+    money: false,
+    none: () => 'No category yet',
+    search: () => 'categories',
+    fresh: 'New category',
+    /* In work mode the categories are the team's projects, made in the team
+       sheet where everyone can see them. A member minting one from a private
+       pad is the thing addCategoryIfNeeded already refuses; this is the same
+       rule, said before the button rather than after it. */
+    canAdd: () => !workMode()
+  }
+};
+
+function padPickField(kind, row) {
+  const spec = PAD_PICK[kind];
+  const key = `${kind}:${row.id}`;
+  const open = state.pickOpen === key;
+  const held = row[spec.field] || '';
+  const naming = state.padNew === key;
+  const opt = (name, label, find) => `
+          <span class="pick-row">
+            <button type="button" class="pick-opt${name === held ? ' is-on' : ''}" role="option"
+              aria-selected="${name === held}" data-act="pad-pick-choose"
+              data-kind="${esc(kind)}" data-id="${esc(row.id)}" data-name="${esc(name)}" data-find="${esc(find)}">
+              ${name ? `<span style="width:9px;height:9px;flex:none;border-radius:50%;background:${esc(mColor(name, spec.money))};"></span>` : ''}
+              <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;${name ? '' : 'opacity:.75;'}">${esc(label)}</span>
+            </button>
+          </span>`;
   return `
-  <div class="pick-field plan-pick-field" data-pick-field="plan:${esc(row.id)}">
+  <div class="pick-field pad-pick-field" data-pick-field="${esc(key)}">
     <div class="pick-anchor">
-      <button type="button" class="pick-btn plan-pick" data-act="plan-pick-open" data-id="${esc(row.id)}"
+      <button type="button" class="pick-btn pad-pick" data-act="pad-pick-open"
+        data-kind="${esc(kind)}" data-id="${esc(row.id)}"
         aria-haspopup="listbox" aria-expanded="${open}">
         <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left;">${
-  row.purpose ? esc(row.purpose) : (planDir(row) === 'in' ? 'No source yet' : 'No purpose yet')}</span>
+  held ? esc(held) : esc(spec.none(row))}</span>
         <span class="pick-caret" aria-hidden="true">▾</span>
       </button>
       ${open ? `
       <div class="pick-pop" role="listbox">
-        <input class="input pick-search" data-k="plan-pick-search" data-pick-search="plan:${esc(row.id)}"
-          type="text" placeholder="Search ${planDir(row) === 'in' ? 'sources' : 'purposes'}…" autocomplete="off"
-          aria-label="Search purposes" style="min-height:40px;font-size:14px;">
-        <div class="pick-list" data-pick-list style="max-height:40vh;">
-          <span class="pick-row">
-            <button type="button" class="pick-opt${row.purpose ? '' : ' is-on'}" role="option"
-              aria-selected="${!row.purpose}" data-act="plan-pick-choose"
-              data-id="${esc(row.id)}" data-name="" data-find="none">
-              <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;opacity:.75;">${
-  planDir(row) === 'in' ? 'No source yet' : 'No purpose yet'}</span>
-            </button>
-          </span>
-          ${rows.map((pp) => `
-          <span class="pick-row">
-            <button type="button" class="pick-opt${pp.name === row.purpose ? ' is-on' : ''}" role="option"
-              aria-selected="${pp.name === row.purpose}" data-act="plan-pick-choose"
-              data-id="${esc(row.id)}" data-name="${esc(pp.name)}" data-find="${esc(pp.name.toLowerCase())}">
-              <span style="width:9px;height:9px;flex:none;border-radius:50%;background:${esc(mColor(pp.name, true))};"></span>
-              <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;">${esc(pp.name)}</span>
-            </button>
-          </span>`).join('')}
+        <input class="input pick-search" data-k="pad-pick-search" data-pick-search="${esc(key)}"
+          type="text" placeholder="Search ${esc(spec.search(row))}…" autocomplete="off"
+          aria-label="Search ${esc(spec.search(row))}" style="min-height:40px;font-size:14px;">
+        <div class="pick-list" data-pick-list>
+          ${opt('', spec.none(row), 'none')}
+          ${spec.list().map((c) => opt(c.name, c.name, c.name.toLowerCase())).join('')}
           <div class="pick-empty" hidden style="padding:12px 10px;font-size:14px;color:#756f88;">Nothing matches that.</div>
         </div>
+        ${spec.canAdd && !spec.canAdd() ? '' : naming
+    ? `<div class="pick-create">
+            <input class="input" data-k="pad-pick-new" data-sync="padNewName" value="${esc(state.padNewName)}"
+              placeholder="Name it" autocomplete="off" data-enter="pad-pick-create"
+              style="min-height:42px;font-size:15px;">
+            <button class="btn btn-primary" data-act="pad-pick-create" style="min-height:42px;padding-inline:16px;font-size:14px;">Add</button>
+          </div>`
+    : `<button type="button" class="pick-new" data-act="pad-pick-new"
+            data-kind="${esc(kind)}" data-id="${esc(row.id)}">+ ${esc(spec.fresh)}</button>`}
       </div>
       <div class="pick-shade" data-backdrop="pick-close"></div>` : ''}
     </div>
   </div>`;
+}
+
+/* A list that opens below the pad's last visible line is a list you cannot
+   read, and a "+ New" you cannot reach. The pad scrolls its own notes, so
+   anything hanging off one is clipped at the pad's edge rather than merely off
+   the bottom of the window — window.scrollBy, which is what showPicker() uses,
+   would do nothing here. Only the amount that is actually over the edge is
+   scrolled away, so the note stays where the finger left it whenever there was
+   already room.
+
+   The scroll position is written back to the pad's own variable as well as to
+   the element: paintTodo and paintPlan restore it on every render, and the
+   scroll event that would have recorded it arrives a frame too late. */
+let padPickFresh = false;
+function padPickShow() {
+  const fresh = padPickFresh;
+  padPickFresh = false;
+  const pop = root.querySelector('.pad-pick-field .pick-pop');
+  if (!pop) return;
+  const list = pop.closest('[data-todo-list], [data-plan-list]');
+  if (!list) return;
+  /* First, make it small enough to be shown at all. The panel is capped in CSS
+     at a height that fits a laptop's pad; a phone's sheet is shorter than that,
+     and a panel taller than the thing it is inside cannot be scrolled into
+     view — one end or the other is always over an edge. So the list of names
+     gives up whatever room the rest of the panel needs, down to about three
+     rows, and scrolls the remainder itself.
+
+     The chip it hangs off is counted too: 5px of gap and the chip's own height
+     have to survive the scroll, or the note ends up filed by a panel floating
+     over nothing. */
+  const inner = pop.querySelector('[data-pick-list]');
+  const btn = pop.parentElement.querySelector('.pick-btn');
+  if (inner) {
+    const chrome = pop.getBoundingClientRect().height - inner.getBoundingClientRect().height;
+    const room = list.clientHeight - chrome - (btn ? btn.getBoundingClientRect().height + 5 : 0) - 12;
+    if (room >= 90 && room < inner.getBoundingClientRect().height) inner.style.maxHeight = `${Math.floor(room)}px`;
+  }
+  /* The scroll, though, only for the render that put the panel there. Sizing
+     is idempotent and has to happen on every render — the tree is rebuilt each
+     time, so a sync landing behind an open panel would otherwise hand back the
+     full-height list — but scrolling again under someone who has since scrolled
+     the pad themselves would be taking the wheel off them. */
+  if (!fresh) return;
+  const over = pop.getBoundingClientRect().bottom + 8 - list.getBoundingClientRect().bottom;
+  if (over <= 0) return;
+  /* Never past the chip. Scrolling the panel's foot into view is worth doing
+     up to the point where its head leaves. */
+  const above = btn ? btn.getBoundingClientRect().top - list.getBoundingClientRect().top : over;
+  const by = Math.min(over, Math.max(0, above));
+  if (by <= 0) return;
+  const top = Math.min(list.scrollTop + by, list.scrollHeight - list.clientHeight);
+  list.scrollTop = top;
+  if (list.hasAttribute('data-todo-list')) todoScroll = top; else planScroll = top;
 }
 
 function planLine(row) {
@@ -4579,7 +4671,7 @@ function planLine(row) {
           value="${row.amount ? esc(money2(row.amount)) : ''}" placeholder="0.00"
           aria-label="Amount" autocomplete="off">
       </label>
-      ${planPickField(row)}
+      ${padPickField('plans', row)}
     </div>
     <div class="todo-foot">
       <select class="todo-status" data-change="plan-status" data-id="${esc(row.id)}" aria-label="Status">
@@ -9398,6 +9490,7 @@ function render() {
     paintChatLog();
     paintTodo();
     paintPlan();
+    padPickShow();
     paintTeamDrawer();
     teamLiveWatch();
     return;
@@ -9460,6 +9553,7 @@ function render() {
   paintChatLog();
   paintTodo();
   paintPlan();
+  padPickShow();
   paintTeamDrawer();
   teamLiveWatch();
   // The dialog exists to be typed in, so put the caret there straight away.
@@ -11176,21 +11270,57 @@ const ACTIONS = {
     touch('plans', row);
     save(); queueSync(0); render();
   },
-  /* The purpose list, opened and chosen. No focusField on open, the same rule
-     the flow's category picker follows: the list opens ready to be tapped and
-     the keyboard waits until the search box itself is. */
-  'plan-pick-open': (el) => {
-    const key = `plan:${String(el.dataset.id || '')}`;
+  /* Filing a line, on either pad. No focusField when the list opens, the same
+     rule the flow's picker follows: it opens ready to be tapped and the
+     keyboard waits until the search box itself is asked for. Naming a new one
+     is the exception — that is a field somebody chose to open. */
+  'pad-pick-open': (el) => {
+    const key = `${el.dataset.kind}:${String(el.dataset.id || '')}`;
     state.pickOpen = state.pickOpen === key ? null : key;
     state.pickQuery = '';
+    state.padNew = null; state.padNewName = '';
+    padPickFresh = !!state.pickOpen;
     render();
   },
-  'plan-pick-choose': (el) => {
-    const row = findRow('plans', String(el.dataset.id || ''));
+  'pad-pick-choose': (el) => {
+    const kind = el.dataset.kind;
+    const spec = PAD_PICK[kind];
+    const row = spec && findRow(kind, String(el.dataset.id || ''));
     if (!row) return;
     const name = String(el.dataset.name || '');
-    if (name) row.purpose = name; else delete row.purpose;
-    touch('plans', row);
+    if (name) row[spec.field] = name; else delete row[spec.field];
+    touch(kind, row);
+    state.pickOpen = null; state.pickQuery = '';
+    state.padNew = null; state.padNewName = '';
+    save(); queueSync(0); render();
+  },
+  'pad-pick-new': (el) => {
+    state.padNew = `${el.dataset.kind}:${String(el.dataset.id || '')}`;
+    // Seeded with whatever was searched for: somebody who typed "Insur" and
+    // found nothing has already said what they want it called.
+    state.padNewName = String(state.pickQuery || '').trim();
+    state.focusField = 'pad-pick-new';
+    // The naming row makes the panel taller, so it may need showing again.
+    padPickFresh = true;
+    render();
+  },
+  /* Makes the category or purpose and files the line under it in one go — the
+     name was typed to be used, not to be added to a list and then chosen from
+     it. An empty name just closes the field. */
+  'pad-pick-create': () => {
+    const at = String(state.padNew || '');
+    const [kind, id] = [at.slice(0, at.indexOf(':')), at.slice(at.indexOf(':') + 1)];
+    const spec = PAD_PICK[kind];
+    const row = spec && findRow(kind, id);
+    const name = String(state.padNewName || '').trim().slice(0, 60);
+    state.padNew = null; state.padNewName = '';
+    if (!row || !name) { render(); return; }
+    if (spec.money) addPurposeIfNeeded(name); else addCategoryIfNeeded(name);
+    /* Only if it took. addCategoryIfNeeded refuses in work mode, and filing a
+       note under a name that does not exist would leave a label pointing at
+       nothing. */
+    const made = (spec.money ? state.purposes : state.categories).some((c) => c.name === name);
+    if (made) { row[spec.field] = name; touch(kind, row); }
     state.pickOpen = null; state.pickQuery = '';
     save(); queueSync(0); render();
   },
@@ -11605,6 +11735,7 @@ const ACTIONS = {
   'pick-close': () => {
     state.pickOpen = null; state.pickQuery = '';
     state.pickNew = null; state.pickNewName = '';
+    state.padNew = null; state.padNewName = '';
     if (state.m) { state.m.pickNew = false; state.m.pickNewName = ''; }
     render();
   },

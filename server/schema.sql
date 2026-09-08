@@ -207,6 +207,10 @@ CREATE TABLE IF NOT EXISTS todos (
   -- status, and kept rather than cleared when one moves off stuck: a note that
   -- goes back to being blocked is usually blocked on the same thing.
   blocked    VARCHAR(500) NULL,
+  -- What the note is filed under, from the same vocabulary the hours use. Null
+  -- while unfiled, which most notes are: a category is worth offering and not
+  -- worth insisting on.
+  category   VARCHAR(60)  NULL,
   created_at BIGINT       NOT NULL,
   updated_at BIGINT       NOT NULL,
   server_at  BIGINT       NOT NULL DEFAULT 0,

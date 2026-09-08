@@ -343,6 +343,19 @@ async function alterExisting() {
     if (t.length) await pool.query('ALTER TABLE todos ADD COLUMN blocked VARCHAR(500) NULL AFTER status');
   }
 
+  /* What a to-do is filed under. Added after the pad shipped, so an install
+     that already has the table needs the column rather than the table, and
+     every note already in it is unfiled — which is what NULL says. */
+  const [filed] = await pool.query(
+    'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+    [CONFIG.database, 'todos', 'category']);
+  if (!filed.length) {
+    const [t] = await pool.query(
+      'SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?',
+      [CONFIG.database, 'todos']);
+    if (t.length) await pool.query('ALTER TABLE todos ADD COLUMN category VARCHAR(60) NULL AFTER blocked');
+  }
+
   /* Which way a planned line's money goes. Added after the money pad shipped,
      so an install that already has the table needs the column rather than the
      table — and every row already in it is money going out, which is what the
