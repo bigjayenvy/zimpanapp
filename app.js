@@ -1021,6 +1021,8 @@ const state = {
      different places and one must not close the other. */
   planOpen: false,
   planArm: '',
+  // The line whose "log it" is being answered. See planLogDialog().
+  planLogAsk: null,
   // Whether this browser has re-offered its notes. See requeueTodos().
   todosRequeued: stored.todosRequeued === true,
   /* Which kinds this store has ever taken delivery of. Null in a store written
@@ -4589,6 +4591,87 @@ function planLine(row) {
     <button class="plan-log" data-act="plan-log" data-id="${esc(row.id)}" data-plan-log="${esc(row.id)}"
       ${owed && cents > 0 ? '' : 'hidden'}>Log it as ${dir === 'in' ? 'received' : 'spent'} today</button>
   </div>`;
+}
+
+/* Writes the plan into the ledger, and then does whatever was asked of the
+   line itself.
+
+   The entry is a plain money row: dated today, named after the line, filed
+   under its purpose, and pointed the line's own way so a salary lands as money
+   in rather than as a spend that happened to be expected.
+
+   One direction only, whichever answer is given. Editing the entry afterwards
+   does not reach back into the plan, and un-marking a plan does not remove the
+   entry: the ledger is a record of what happened, and a pad cannot be allowed
+   to rewrite it. */
+function planLogAnswer(move) {
+  const ask = state.planLogAsk;
+  state.planLogAsk = null;
+  const row = ask && findRow('plans', ask.id);
+  const value = row ? money2(row.amount) : 0;
+  if (!value) { render(); return; }
+  const incoming = planDir(row) === 'in';
+  const spent = touch('money', {
+    id: 'mn' + Date.now(),
+    date: todayIso,
+    activity: String(row.text || '').trim().slice(0, 200) || (incoming ? 'Planned income' : 'Planned spend'),
+    /* The pad allows a line with no purpose yet and the ledger does not, so an
+       unfiled line lands under the first purpose the account has — the same
+       default the money form opens with. */
+    purpose: row.purpose || (state.purposes[0] || {}).name || 'Other',
+    in: incoming ? value : 0, out: incoming ? 0 : value, note: ''
+  });
+  state.money = state.money.concat([spent]);
+  if (move) {
+    /* Off the pad, with a tombstone so the other devices take it off theirs
+       too. The plan has done its job; the entry is the record from here. */
+    state.plans = state.plans.filter((r) => r.id !== row.id);
+    bury('plans', row.id);
+    state.planArm = '';
+  } else {
+    row.status = 'paid';
+    touch('plans', row);
+  }
+  state.selectedDate = todayIso;
+  save(); queueSync(0);
+  flash(`Logged · ${incoming ? '+' : '−'}${amount(value)}`);
+  render();
+}
+
+/* What to do with the line once the money has actually moved.
+
+   Two right answers, which is why it is asked. Moving it is the tidy one: the
+   bill is paid, the entry is the record, and a pad that keeps every settled
+   line is a pad you have to weed. Keeping both is the other: a paid line is
+   proof this is the bill you planned for, and next month you want it there to
+   copy rather than to remember.
+
+   The entry is written either way — that half is not in question, and an
+   answer that could leave you with neither the plan nor the spend would be a
+   worse thing than the assumption it replaced. */
+function planLogDialog() {
+  const ask = state.planLogAsk;
+  if (!ask) return '';
+  const row = findRow('plans', ask.id);
+  if (!row) return '';
+  const incoming = planDir(row) === 'in';
+  const value = amount(money2(row.amount));
+  return lightbox({
+    icon: 'scales',
+    tone: incoming ? MONEY_IN_INK : MONEY_OUT_INK,
+    kicker: row.text ? `“${String(row.text).slice(0, 60)}”` : (incoming ? 'Money in' : 'Money out'),
+    title: 'Move it to your log?',
+    closeAct: 'plan-log-cancel',
+    body: `
+      <p>${esc(value)} goes into today either way, as money ${incoming ? 'in' : 'out'}${
+  row.purpose ? ` under ${esc(row.purpose)}` : ''}.</p>
+      <p style="margin:10px 0 0;">The question is the line here. <strong>Move it</strong> and it comes off
+      the pad — the entry is the record from now on. <strong>Keep both</strong> and it stays, marked
+      ${incoming ? 'Received' : 'Paid'}, as the plan this ${incoming ? 'payment' : 'bill'} came from.</p>`,
+    actions: `
+      <button class="btn btn-secondary" data-act="plan-log-keep">No, keep both</button>
+      <button class="btn btn-primary" data-act="plan-log-move">Yes, move it</button>`
+  });
 }
 
 /* Shared by the panel and the sheet, exactly as todoBody is, so the two
@@ -9361,6 +9444,7 @@ function render() {
   ${backToTop()}
   ${todoSheet()}
   ${planSheet()}
+  ${planLogDialog()}
   ${moneyLogDialog()}
   ${todoWhyDialog()}
   ${mobileNav(v)}
@@ -11137,41 +11221,20 @@ const ACTIONS = {
     save(); queueSync(0); render();
   },
 
-  /* Paying a line is the one place the pad writes to the ledger, and it writes
-     a plain money-out entry: dated today, named after the line, filed under
-     its purpose. The plan is then marked paid rather than deleted — a paid
-     line is the record that the thing you planned for actually happened, and
-     deleting it would make the pad look like the bill was never there.
-
-     One direction only. Editing the entry afterwards does not reach back into
-     the plan, and un-marking the plan does not remove the entry: the ledger is
-     a record of what happened, and a pad cannot be allowed to rewrite it. */
+  /* Paying a line is the one place the pad writes to the ledger, and what
+     happens to the line afterwards is a question with two right answers, so it
+     is asked rather than assumed. See planLogDialog(). */
   'plan-log': (el) => {
     const row = findRow('plans', String(el.dataset.id || ''));
-    if (!row) return;
-    const value = money2(row.amount);
-    if (!value) return;
-    const incoming = planDir(row) === 'in';
-    const spent = touch('money', {
-      id: 'mn' + Date.now(),
-      date: todayIso,
-      activity: String(row.text || '').trim().slice(0, 200) || (incoming ? 'Planned income' : 'Planned spend'),
-      /* The pad allows a line with no purpose yet and the ledger does not, so
-         an unfiled line lands under the first purpose the account has — the
-         same default the money form opens with. */
-      purpose: row.purpose || (state.purposes[0] || {}).name || 'Other',
-      // The line's own direction, so a salary lands as money in and not as a
-      // spend that happens to have been expected.
-      in: incoming ? value : 0, out: incoming ? 0 : value, note: ''
-    });
-    state.money = state.money.concat([spent]);
-    row.status = 'paid';
-    touch('plans', row);
-    state.selectedDate = todayIso;
-    save(); queueSync(0);
-    flash(`Logged · ${incoming ? '+' : '−'}${amount(value)}`);
+    if (!row || !money2(row.amount)) return;
+    state.planLogAsk = { id: row.id };
     render();
   },
+  'plan-log-cancel': () => { state.planLogAsk = null; render(); },
+  // Written down and off the pad: the entry is the record now.
+  'plan-log-move': () => planLogAnswer(true),
+  // Written down and still on the pad, marked paid.
+  'plan-log-keep': () => planLogAnswer(false),
 
   'menu-toggle': () => { state.menuOpen = !state.menuOpen; render(); },
   'menu-close': () => { if (state.menuOpen) { state.menuOpen = false; render(); } },
@@ -14403,6 +14466,7 @@ function mobileApp() {
   ${s.accountOpen ? mAccountSheet() : ''}
   ${todoSheet()}
   ${planSheet()}
+  ${planLogDialog()}
   ${moneyLogDialog()}
   ${todoWhyDialog()}
   ${s.donateOpen ? mDonateSheet() : ''}
