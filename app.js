@@ -1027,6 +1027,9 @@ const state = {
      name being typed. Held here rather than per-pad: only one popover is open
      at a time, so only one of these can be in flight. */
   padNew: null, padNewName: '',
+  /* The logged row waiting on a name for the category or purpose it is about to
+     be filed under, and the name being typed. See askRowName(). */
+  rowNew: null, rowNewName: '',
   // Whether this browser has re-offered its notes. See requeueTodos().
   todosRequeued: stored.todosRequeued === true,
   /* Which kinds this store has ever taken delivery of. Null in a store written
@@ -2548,6 +2551,60 @@ const isItemish = (s) => s.trim().length >= 3 && /[a-z]/i.test(s);
    count, and "Breakfast 2 eggs" quietly becomes one egg. */
 const MEAL_LABEL = /^\s*(?:breakfast|brunch|lunch|dinner|supper|snack|merienda|meal|food|ate|eating|almusal|tanghalian|hapunan)\b[\s:–-]*/i;
 
+/* A row counts as described if it says what was in it — and the activity is
+   allowed to be where that is said. A bare meal label still counts as saying
+   nothing: strip "Lunch" and there is nothing left, strip it from "Lunch: half
+   glass wine" and there is. */
+const describesFood = (r) => !!((r.note || '').trim()
+  || String(r.activity || '').toLowerCase().replace(MEAL_LABEL, '').trim());
+
+/* What would be sent for an AI estimate, and what the cache is keyed on. Only
+   the food itself — no dates, no amounts, nothing identifying.
+
+   Derived here rather than at each caller, because a second copy of it would
+   look right and miss the cache on the first difference in punctuation. Joined
+   only where both halves exist, so a row described by its activity alone does
+   not go up as "half glass wine:" with a dangling colon. */
+const foodDetail = (rows) => rows.filter(describesFood)
+  .map((r) => [String(r.activity || '').trim(), String(r.note || '').trim()].filter(Boolean).join(': '))
+  .join('\n');
+const foodKey = (rows) => { const d = foodDetail(rows); return d ? textKey(d) : ''; };
+
+/* The figure a set of meals is worth, with any day that has been calibrated by
+   AI standing in for its own share of it.
+
+   Resolved a day at a time even when the set spans a fortnight, because a day
+   is the only unit a refinement is ever asked for — every entry into it insists
+   on one — and because the bars under the dial are built a day at a time too.
+   Asking the cache about a whole window's text at once asked it a question it
+   was never given an answer to, so a calibrated day counted in the chart and
+   not in the dial above it.
+
+   With nothing calibrated the local reading is returned whole rather than
+   re-added a day at a time: summing eight rounded days drifts from the rounded
+   sum, and the two readings have to match to the calorie. */
+function foodRefined(rows, local) {
+  const dates = [...new Set(rows.map((r) => r.date))];
+  if (dates.length < 2) {
+    const key = foodKey(rows);
+    const ai = key ? state.aiCache[key] || null : null;
+    return { kcal: ai ? ai.kcal : local.kcal, ai };
+  }
+  let any = false;
+  const sum = { kcal: 0, protein: 0, carbs: 0, fat: 0 };
+  dates.forEach((date) => {
+    const mine = rows.filter((r) => r.date === date);
+    const n = nutritionFor(mine);
+    const key = foodKey(mine);
+    const hit = key ? state.aiCache[key] || null : null;
+    if (hit) any = true;
+    const use = hit || { kcal: n.kcal, protein: n.protein, carbs: n.carbs, fat: n.fat };
+    sum.kcal += use.kcal; sum.protein += use.protein;
+    sum.carbs += use.carbs; sum.fat += use.fat;
+  });
+  return any ? { kcal: sum.kcal, ai: sum } : { kcal: local.kcal, ai: null };
+}
+
 function nutritionFor(rows) {
   let kcal = 0, p = 0, c = 0, f = 0, read = 0, guessed = 0, items = 0, unread = 0;
 
@@ -2929,7 +2986,9 @@ async function refineBurn(id) {
 
 function buildDayFood(date) {
   const rows = state.entries.filter((r) => r.date === date);
-  return rows.length ? foodReport(rows, [], [date]) : null;
+  // One day, said as a count rather than as the list of dates it used to be
+  // handed — foodReport reads it as a number and an array was never one.
+  return rows.length ? foodReport(rows, [], 1) : null;
 }
 
 let renderSeq = 0;
@@ -3017,18 +3076,12 @@ function foodReport(entries, money, days) {
   const bought = entries.filter(isGroceryRow).concat(money.filter(isGroceryRow));
   const uncounted = paidFor.concat(bought);
 
-  /* A row counts as described if it says what was in it — and the activity is
-     allowed to be where that is said. The old rule looked only at the note, so
-     "half glass wine" logged as the activity with nothing in the note was
-     treated as a meal that said nothing: no detail, and therefore no Refine
-     button, on the entries most in need of one.
-
-     A bare meal label still counts as saying nothing. MEAL_LABEL is what
-     separates them: strip "Lunch" and there is nothing left, strip it from
-     "Lunch: half glass wine" and there is. */
-  const describes = (r) => !!((r.note || '').trim()
-    || String(r.activity || '').toLowerCase().replace(MEAL_LABEL, '').trim());
-  const withNotes = rows.filter(describes);
+  /* Which of them say what was in them. The rule looks at the activity as well
+     as the note, so "half glass wine" logged as the activity with nothing in
+     the note is not treated as a meal that said nothing — those were the
+     entries most in need of a Refine button and the ones least likely to get
+     one. See describesFood(). */
+  const withNotes = rows.filter(describesFood);
   const text = rows.concat(uncounted)
     .map((r) => `${r.activity || ''} ${r.note || ''}`).join(' ').toLowerCase();
   const found = FOOD_GROUPS.filter((g) => g.re.test(text));
@@ -3052,11 +3105,29 @@ function foodReport(entries, money, days) {
   }
 
   if (!withNotes.length) {
+    /* A figure even so, and the same one the window it sits inside charges.
+
+       nutritionFor prices a meal that says nothing at the placeholder rather
+       than at zero — "lunch out" is a lunch — and a week's reading has always
+       counted these rows that way, because across a week some other day
+       described itself and this branch was never reached. A day of bare
+       "Lunch" entries returning nothing therefore made the very same meals
+       worth 450 kcal each on the dial and nothing at all in the bar beneath
+       it, which is how a range could show a surplus over a chart of deficits.
+
+       The findings really are absent — there is nothing here to read a pattern
+       from — so hasFindings stays false. What is returned is the count, not an
+       opinion about it. */
+    const nn = nutritionFor(rows);
     return {
       meals: rows.length,
       observation: `${rows.length} food ${rows.length === 1 ? 'entry' : 'entries'} logged${per}, but none say what was in them. The timing is useful on its own — long gaps and late meals both show up here — though the contents are where the useful part lives.`,
       advice: 'Next time the “What did you eat?” box appears, a few words is plenty — “chicken, rice, salad” already tells you something a month from now.',
-      nutrition: '', kcal: 0,
+      nutrition: `Counted at a placeholder ${UNKNOWN_MEAL.kcal} kcal a meal — ${nn.kcal.toLocaleString('en-US')} kcal in all${days > 1 ? ` across ${days} days` : ''}. Say what was in them and this becomes a reading rather than a stand-in.`,
+      kcal: nn.kcal,
+      ai: null,
+      local: { kcal: nn.kcal, protein: nn.protein, carbs: nn.carbs, fat: nn.fat },
+      detail: '', key: '',
       hasFindings: false
     };
   }
@@ -3084,18 +3155,12 @@ function foodReport(entries, money, days) {
     : `Keep the pattern and keep logging it. General guidance only — for anything specific to you, your doctor is the right person to ask.`;
 
   const n = nutritionFor(rows);
-  /* What would be sent for an AI estimate, and what the cache is keyed on. Only
-     the food itself — no dates, no amounts, nothing identifying. */
-  // Joined only where both halves exist, so a row described by its activity
-  // alone does not go up as "half glass wine:" with a dangling colon.
-  const detail = withNotes
-    .map((r) => [String(r.activity || '').trim(), String(r.note || '').trim()].filter(Boolean).join(': '))
-    .join('\n');
+  const detail = foodDetail(rows);
   /* A refinement already asked for and answered, keyed by the text it was asked
      about — so it survives a reload and is found again the moment the same
-     meals are on screen. */
+     meals are on screen. Resolved a day at a time; see foodRefined(). */
   const key = detail ? textKey(detail) : '';
-  const ai = key ? state.aiCache[key] || null : null;
+  const { kcal: effective, ai } = foodRefined(rows, n);
   const perDay = days > 1 ? ` (about ${Math.round(n.kcal / days)} a day)` : '';
   /* Both kinds of gap are named: a meal that said nothing at all, and an item
      inside a readable meal that is not in the table. Saying so is what stops
@@ -3115,7 +3180,7 @@ function foodReport(entries, money, days) {
        sentence under it disagreeing is not a second opinion, it is a question
        nobody on the page can answer. `local` keeps the original so the block
        can still show what the reading was before. */
-    kcal: ai ? ai.kcal : n.kcal,
+    kcal: effective,
     ai,
     local: { kcal: n.kcal, protein: n.protein, carbs: n.carbs, fat: n.fat },
     detail,
@@ -3378,6 +3443,11 @@ function compute() {
     return out.sort();
   })();
   const rangeList = rangeEntries();
+  /* The days of the window that carry something. See rangeBurn below. */
+  const windowLive = (() => {
+    const has = new Set(rangeList.map((e) => e.date));
+    return windowDates.filter((d) => has.has(d) || (Number(s.steps[d]) || 0) > 0);
+  })();
   const rangeWb = wellbeing(rangeList, { count: stepsIn(windowDates), date: s.selectedDate, days: winDays });
   const rangeBusy = (() => {
     const per = {};
@@ -3518,8 +3588,6 @@ function compute() {
     pastList = s.entries.filter((e) => e.date === iso(y));
     pastFallback = true;
   }
-  const pastDates = Array.from(new Set(pastList.map((e) => e.date))).sort();
-
   /* Every finished day the window covers, not only the ones carrying an entry.
      A step count can be the only thing recorded against a day, and that day
      still has to be counted. */
@@ -3541,6 +3609,17 @@ function compute() {
     }
     return out.sort();
   })();
+
+  /* The finished days this window actually carries something on — an entry, or
+     a step count as the only thing recorded. The same rule pastSpan is built
+     on, which stated it in its own comment and then left the day count reading
+     entries alone.
+
+     The undercount reached the dials. Resting burn is charged per day, so a day
+     of walking and nothing else was drawn by the chart under them, at a full
+     day of rest, and missing from the totals above it. */
+  const pastDates = Array.from(new Set(pastList.map((e) => e.date)
+    .concat(pastSpan.filter((d) => (Number(s.steps[d]) || 0) > 0)))).sort();
   // Money logged on the same finished days, so the food read covers both trackers.
   const pastDateSet = new Set(pastDates);
   const pastMoney = s.money.filter((e) => pastDateSet.has(e.date));
@@ -3703,9 +3782,14 @@ function compute() {
     /* Readings across the whole window, for the report deck. */
     rangeReadings: dimensionReadings(rangeWb, winDays),
     rangeSleep: sleepReading(rangeList, winDays),
-    rangeBurn: burnFor(rangeList, s.weightKg, winDays, windowDates),
+    /* Charged over the days that carry a reading rather than over the whole
+       calendar window, on the same rule as pastDates above: a month with ten
+       days logged has not eaten for thirty, and netting thirty days of resting
+       burn against ten days of food reports a deficit nobody had. It is also
+       what the day-by-day chart does, and the two have to agree. */
+    rangeBurn: burnFor(rangeList, s.weightKg, Math.max(1, windowLive.length), windowDates),
 
-    rangeFood: foodReport(rangeList, mRangeList, winDays),
+    rangeFood: foodReport(rangeList, mRangeList, Math.max(1, windowLive.length)),
     rangeSteps: stepsIn(windowDates),
     rangeDayCount: winDays,
     rangeBusiest: rangeBusy
@@ -3784,6 +3868,67 @@ const rowChipStyle = (color) => `border:0;background:${color}1f;color:var(--colo
 // existing comparison against state keeps working.
 function options(names, selected, extra) {
   return names.map((n) => `<option value="${esc(n)}"${n === selected ? ' selected' : ''}>${esc(withIcon(n))}</option>`).join('') + (extra || '');
+}
+
+/* ── filing a logged row under something that does not exist yet ──
+
+   The tables under both trackers file a row with a native <select>, which can
+   only offer what is already there. Making the name meant leaving the row,
+   opening Preferences, making it, coming back and finding the row again — and
+   the moment you want a new category is precisely the moment you are looking at
+   the entry that does not fit the old ones.
+
+   So the list carries one more line. A <select> cannot hold a button, and a
+   popover in a table cell is a bigger change to a row of small controls than
+   this needs, so the affordance is one more option: picking it asks for the
+   name and files the row under it in one go, the same bargain the pads make.
+
+   Marked by an attribute rather than by a magic value. A value has to survive
+   the HTML parser and be something no category could ever be called, and the
+   two requirements pull against each other — a sentinel exotic enough to be
+   safe is exactly the kind of string a parser rewrites. The attribute is read
+   off the option itself and cannot collide with anything. */
+const isNewOption = (el) => {
+  const opt = el.selectedOptions && el.selectedOptions[0];
+  return !!(opt && opt.hasAttribute('data-new'));
+};
+const newOption = (label) => `<option value="" data-new>+ ${esc(label)}…</option>`;
+
+/* Asked for from a row, so the row is what it says it is for. Refused in work
+   mode for the same reason the to-do pad refuses it: there the categories are
+   the team's projects, made where the team can see them. */
+function askRowName(kind, id) {
+  const row = findRow(kind, id);
+  const money = kind === 'money';
+  if (!row || (!money && workMode())) { render(); return; }
+  state.rowNew = { kind, id, money, activity: row.activity || '' };
+  state.rowNewName = '';
+  // A field the reader opened by asking for it, which is what earns the caret.
+  state.focusField = 'row-new-name';
+  render();
+}
+
+function rowNewDialog() {
+  const p = state.rowNew;
+  if (!p) return '';
+  const what = p.money ? 'purpose' : 'category';
+  return lightbox({
+    icon: 'pencil',
+    kicker: p.activity ? `For “${p.activity}”` : '',
+    title: `New ${what}`,
+    sub: `It joins the list for good, and this entry is filed under it now.`,
+    closeAct: 'row-new-cancel',
+    body: `
+      <input class="input" data-k="row-new-name" data-sync="rowNewName" data-enter="row-new-save"
+        maxlength="60" autocomplete="off" placeholder="${p.money ? 'e.g. Utilities' : 'e.g. Errands'}"
+        aria-label="Name the new ${what}" value="${esc(state.rowNewName)}"
+        style="width:100%;font-size:15px;min-height:44px;">`,
+    // Primary last: .lb-acts runs column-reverse under 720px, so the last
+    // button is the one on top of the phone's stack and the right of the desk's.
+    actions: `
+      <button class="btn btn-ghost" data-act="row-new-cancel">Cancel</button>
+      <button class="btn btn-primary" data-act="row-new-save">Add and file it here</button>`
+  });
 }
 
 /* ── the searchable picker ──
@@ -7303,15 +7448,19 @@ function balanceGauges(food, burn, scope, stepDate) {
   // Not this product's subject. See workMode().
   if (workMode()) return '';
 
-  /* A thirty-day total on a dial scaled for one day reads as wildly over-eaten
-     every time, so a multi-day range is averaged and says so. Every figure is
-     divided by the same span, which leaves the balance between them — the
-     reading this row exists to show — unchanged. */
+  /* The whole window, added up. The four dials are scaled against each other
+     rather than against a daily target, so a total draws exactly the same arcs
+     an average does — and a total is what a range of days is being asked for.
+     It used to divide by the span and label itself an average, which read as a
+     single quiet day next to a heading that said eight of them.
+
+     The average is not lost, it is demoted: it sits under the row as a
+     sentence, which is where the phone's copy of this card has always put it. */
   const days = Math.max(1, burn.days || 1);
-  const per = (n) => Math.round(n / days);
-  const burned = per(burn.kcal);
-  const eaten = per(food.kcal);
-  const rested = per(burn.restKcal);
+  const perDay = (n) => Math.round(n / days);
+  const burned = Math.round(burn.kcal);
+  const eaten = Math.round(food.kcal);
+  const rested = Math.round(burn.restKcal);
 
   /* With nothing logged on either side there is no balance to draw, and
      printing one anyway would report a ~1,650 deficit at breakfast time purely
@@ -7320,10 +7469,10 @@ function balanceGauges(food, burn, scope, stepDate) {
      resting figure is still worth showing — it is true whatever you log. */
   if (!food.kcal && !burn.kcal) {
     return `
-      <div class="cal-kicker">${days > 1 ? `Average day across ${days} days` : 'Daily calorie balance'}</div>
+      <div class="cal-kicker">${days > 1 ? `Total across ${days} days` : 'Daily calorie balance'}</div>
       <div class="cal-empty">
         Nothing to weigh up yet. Your body spends roughly
-        <strong>${rested.toLocaleString('en-US')} kcal a day</strong> at rest, but a balance needs
+        <strong>${perDay(burn.restKcal).toLocaleString('en-US')} kcal a day</strong> at rest, but a balance needs
         something on the other side — log a meal or a workout${stepDate
           ? `, or <button class="cal-link" data-act="steps-open" data-date="${esc(stepDate)}">add your steps</button>` : ''}.
       </div>`;
@@ -7374,7 +7523,7 @@ function balanceGauges(food, burn, scope, stepDate) {
   const open = state.weightEditOpen === scope;
 
   return `
-      <div class="cal-kicker">${days > 1 ? `Average day across ${days} days` : 'Daily calorie balance'}</div>
+      <div class="cal-kicker">${days > 1 ? `Total across ${days} days` : 'Daily calorie balance'}</div>
       <div class="cal-row">
         ${dial(burned, 'var(--zg-strong)', CAL_ICONS.workout, 'Calories burned from workout and movement',
           /* The steps link is offered only where a single day is on screen —
@@ -7391,8 +7540,13 @@ function balanceGauges(food, burn, scope, stepDate) {
             ? `a default ${DEFAULT_WEIGHT_KG} kg`
             : `your ${esc(state.weightKg)} kg`}. <button class="cal-link" data-act="weight-open" data-scope="${esc(scope)}" aria-expanded="${open}">Edit your weight here</button>.`)}
         ${dial(net, netTone, CAL_ICONS.net, `Net calories (${deficit ? 'deficit' : 'surplus'})`,
-          `Your net calorie for ${days > 1 ? 'an average day' : (scope === 'past' ? 'that day' : 'today')}: workout burn + burn at rest − calories consumed.`)}
+          `Your net calorie ${days > 1 ? `across these ${days} days` : (scope === 'past' ? 'for that day' : 'for today')}: workout burn + burn at rest − calories consumed.`)}
       </div>
+      ${days > 1 ? `
+      <div class="cal-perday">That is about
+        <strong>${Math.abs(perDay(net)).toLocaleString('en-US')} kcal a day</strong> ${deficit ? 'in deficit' : 'in surplus'} —
+        ${perDay(burned).toLocaleString('en-US')} burned moving, ${perDay(eaten).toLocaleString('en-US')} eaten
+        and ${perDay(rested).toLocaleString('en-US')} at rest, on an average day.</div>` : ''}
       ${open ? `
       <div class="cal-weight">
         <label for="cal-weight-${esc(scope)}">Your weight</label>
@@ -8227,7 +8381,7 @@ function timeTableCard(v) {
                   <input class="entry-name" data-k="r-${esc(e.id)}-a" data-change="entry-activity" data-id="${esc(e.id)}" value="${esc(e.activity)}" title="${esc(e.activity)}${e.note ? ` — ${esc(e.note)}` : ''}">
                   <div class="entry-controls">
                     <button class="cell-note" data-act="note-edit" data-kind="entries" data-id="${esc(e.id)}" title="${e.note ? esc(e.note) : 'Add a note for this entry'}"${e.note ? ' data-has-note' : ''}>${e.note ? 'Note' : 'Add note'}</button>
-                    <select class="entry-select" data-change="entry-category" data-id="${esc(e.id)}" style="${rowChipStyle(tint)}">${options(pickCategories().map((c) => c.name), e.category)}</select>
+                    <select class="entry-select" data-change="entry-category" data-id="${esc(e.id)}" style="${rowChipStyle(tint)}">${options(pickCategories().map((c) => c.name), e.category, workMode() ? '' : newOption('New category'))}</select>
                   </div>
                   <div class="entry-times">
                     <span class="entry-time"><span class="entry-leg">From</span><input class="cell-time" type="time" data-change="entry-from" data-id="${esc(e.id)}" value="${hm(e.from)}"></span>
@@ -8358,7 +8512,7 @@ function moneyDesktop(v) {
   const rows = shown.map((e) => `
               <tr>
                 <td data-col="activity"><input class="cell-input" data-k="mr-${esc(e.id)}-a" data-change="money-activity" data-id="${esc(e.id)}" value="${esc(e.activity)}"${e.note ? ` title="${esc(e.note)}"` : ''}><button class="cell-note" data-act="note-edit" data-kind="money" data-id="${esc(e.id)}" title="${e.note ? esc(e.note) : 'Add a note for this entry'}"${e.note ? ' data-has-note' : ''}>${e.note ? 'Note' : 'Add note'}</button></td>
-                <td data-col="purpose"><select data-change="money-purpose" data-id="${esc(e.id)}" style="${rowChipStyle(purposeColor(e.purpose))}">${options(pickPurposes().map((p) => p.name), e.purpose)}</select></td>
+                <td data-col="purpose"><select data-change="money-purpose" data-id="${esc(e.id)}" style="${rowChipStyle(purposeColor(e.purpose))}">${options(pickPurposes().map((p) => p.name), e.purpose, newOption('New purpose'))}</select></td>
                 <td data-col="in" data-label="Received" style="text-align: right;"><input class="cell-num is-in" type="number" min="0" step="0.01" placeholder="0" data-change="money-in" data-id="${esc(e.id)}" value="${e.in || ''}"></td>
                 <td data-col="out" data-label="Spent" style="text-align: right;"><input class="cell-num is-out" type="number" min="0" step="0.01" placeholder="0" data-change="money-out" data-id="${esc(e.id)}" value="${e.out || ''}"></td>
                 <td data-col="remove" style="text-align: right;"><button class="cell-del" data-act="money-remove" data-id="${esc(e.id)}" title="Delete entry">×</button></td>
@@ -9519,6 +9673,7 @@ function render() {
   ${state.reportOpen ? reportSheet() : ''}
   ${pickDeleteDialog()}
   ${notePromptDialog()}
+  ${rowNewDialog()}
   ${mealNoteDialog()}
   ${refineAskDialog()}
   ${chatDialog()}
@@ -11119,6 +11274,25 @@ const ACTIONS = {
   // rather than a second one that could drift from it.
   'note-remove': () => { state.noteDraft = ''; closeFollowUp(true); },
   'note-edit': (el) => editNote(el.dataset.kind, el.dataset.id),
+
+  'row-new-cancel': () => { state.rowNew = null; state.rowNewName = ''; render(); },
+  /* Makes it and files the row under it in one go — the name was typed to be
+     used, not to be added to a list and then chosen from. An empty name simply
+     closes, and the row keeps whatever it was filed under. */
+  'row-new-save': () => {
+    const p = state.rowNew;
+    const name = String(state.rowNewName || '').trim().slice(0, 60);
+    state.rowNew = null; state.rowNewName = '';
+    if (!p || !name) { render(); return; }
+    if (p.money) addPurposeIfNeeded(name); else addCategoryIfNeeded(name);
+    /* Only if it took. addCategoryIfNeeded refuses in work mode, and filing a
+       row under a name that does not exist would leave a chip pointing at
+       nothing. */
+    const made = (p.money ? state.purposes : state.categories).some((c) => c.name === name);
+    if (!made) { render(); return; }
+    if (p.money) updateMoney(p.id, { purpose: name }); else updateEntry(p.id, { category: name });
+    render();
+  },
   /* Back to the box, with the question un-skipped: asking to write this one
      down is not the answer of somebody who wants to stop being asked. editNote
      renders, and render() puts the cursor in the note. */
@@ -12054,7 +12228,12 @@ const CHANGES = {
 
   'entry-activity': (el) => updateEntry(el.dataset.id, { activity: el.value }),
   'log-filter': (el) => { state.logFilter = el.value || ''; render(); },
-  'entry-category': (el) => updateEntry(el.dataset.id, { category: el.value }),
+  /* The one value in the list that is not a name. Rendering again is what puts
+     the select back on the row's real category — the reader picked a question,
+     not an answer, and the chip must not sit on it while the question is open. */
+  'entry-category': (el) => (isNewOption(el)
+    ? askRowName('entries', el.dataset.id)
+    : updateEntry(el.dataset.id, { category: el.value })),
   /* ── team ──
      Each edit goes straight to the server rather than into a local copy: these
      are somebody else's rows, they do not live in this device's state, and
@@ -12080,7 +12259,9 @@ const CHANGES = {
   'entry-from': (el) => editEntryTime(el, 'from'),
   'entry-to': (el) => editEntryTime(el, 'to'),
   'money-activity': (el) => updateMoney(el.dataset.id, { activity: el.value }),
-  'money-purpose': (el) => updateMoney(el.dataset.id, { purpose: el.value }),
+  'money-purpose': (el) => (isNewOption(el)
+    ? askRowName('money', el.dataset.id)
+    : updateMoney(el.dataset.id, { purpose: el.value })),
   'money-in': (el) => updateMoney(el.dataset.id, { in: money2(el.value) }),
   'money-out': (el) => updateMoney(el.dataset.id, { out: money2(el.value) })
 };
@@ -14620,6 +14801,7 @@ function mobileApp() {
        prompt that nothing here drew — the question was asked and then swallowed,
        and with it the only way to take a note back off an entry. -->
   ${notePromptDialog()}
+  ${rowNewDialog()}
   ${mealNoteDialog()}
   ${mQuitDialog()}
   ${state.reportOpen ? reportSheet() : ''}
@@ -15826,6 +16008,7 @@ document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') { ev.preventDefault(); state.pickOpen = null; state.pickQuery = ''; render(); return; }
   }
   // Topmost first: the follow-up dialog sits above the report sheet.
+  if (ev.key === 'Escape' && state.rowNew) { ACTIONS['row-new-cancel'](); return; }
   if (ev.key === 'Escape' && state.refineAsk) { ACTIONS['refine-no'](); return; }
   if (ev.key === 'Escape' && state.chat.open) { ACTIONS['chat-close'](); return; }
   if (ev.key === 'Escape' && state.calOpen) { ACTIONS['cal-close'](); return; }
