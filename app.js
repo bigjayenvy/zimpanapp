@@ -14093,35 +14093,62 @@ function mHome() {
   </div>
   ${mRangeChips('m-range', mRangeKey())}
 
-  <div style="border-radius:20px;padding:18px;background:var(--grad-time-money);box-shadow:${M_LIFT};color:#fff;margin-bottom:14px;">
-    <div style="display:flex;justify-content:space-between;align-items:baseline;">
+  <div class="m-hero" data-m-hero>
+    <!-- The hours, alone on the top line. This is the Activity Tracker's own
+         home, so the time is its headline; money used to sit opposite it at the
+         same size, which made the card two headlines arguing, and put a growing
+         figure on a collision course with the one beside it. -->
+    <div class="m-hero-top">
       <div>
-        <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;opacity:.78;">${single ? 'Logged today' : 'Logged'}</div>
-        <div style="font-family:var(--font-heading);font-weight:700;font-size:32px;line-height:1.1;margin-top:4px;">${esc(mDur(logged))}</div>
+        <div class="m-hero-cap">${single ? 'Logged today' : 'Logged'}</div>
+        <div class="m-hero-big">${esc(mDur(logged))}</div>
       </div>
+      ${workMode() ? `
       <div style="text-align:right;">
-        <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;opacity:.78;">${workMode() ? 'Projects' : 'Money out'}</div>
-        <div style="font-family:var(--font-heading);font-weight:700;font-size:32px;line-height:1.1;margin-top:4px;">${
-          workMode() ? String(new Set(list.map((e) => e.category).filter(Boolean)).size) : esc(mMoney(mOutToday(dates)))}</div>
-        <!-- Under the figure it belongs to rather than above the label: a
-             heading, its number, then the smaller fact about it reads down in
-             one line of sight. Money in is a slower number than money out —
-             a salary lands once, lunch is bought every day — so it is the
-             footnote and not the headline, but it is on the card, because
-             spending with nothing to weigh it against is half a sentence. -->
-        ${workMode() ? '' : `
-        <div style="font-size:12px;margin-top:5px;opacity:.85;white-space:nowrap;">
-          <span style="opacity:.8;">Money in</span> ${esc(mMoney(mInToday(dates)))}
-        </div>`}
-      </div>
+        <div class="m-hero-cap">Projects</div>
+        <div class="m-hero-big">${String(new Set(list.map((e) => e.category).filter(Boolean)).size)}</div>
+      </div>` : ''}
     </div>
-    <div style="display:flex;gap:3px;margin-top:16px;height:9px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.22);">
+    <div class="m-hero-bar">
       ${bars.map((b) => `<div style="height:100%;flex-basis:0;border-radius:999px;background:${b.color};flex-grow:${b.grow};"></div>`).join('')}
     </div>
-    <div style="display:flex;justify-content:space-between;margin-top:9px;font-size:11.5px;opacity:.85;">
+    <div class="m-hero-facts">
       <span>${single ? `${esc(mDur(Math.max(0, capacity - logged)))} unlogged` : `${esc(mDur(logged))} across ${dates.length} days`}</span>
       <span>${list.length} ${list.length === 1 ? 'entry' : 'entries'}</span>
     </div>
+    ${workMode() ? '' : (() => {
+    /* The two money figures as a matched pair rather than one headline and one
+       whisper. In then out, which is the order a ledger reads, and the same
+       size each: spending with nothing to weigh it against is half a sentence,
+       and the half that was a footnote was the one nobody could read on this
+       gradient.
+
+       The size steps down as the figure gets longer, and it is measured off the
+       longer of the two so the pair always matches — a row of two figures at
+       two sizes reads as a fault rather than a rule.
+
+       Measured in characters rather than digits, because what has to fit is
+       the string and not the amount. Five digits is where it first bites, which
+       is "Dhs 12,450" at ten characters: 150px of figure in a 141px half-card.
+       The steps below that are the same arithmetic carried on — a five-figure
+       sum with the pennies on it is thirteen characters and has to come down
+       again. Ellipsis alone would have hidden the overflow rather than fixed
+       it, which is exactly what it was doing. */
+    const inAmt = mMoney(mInToday(dates));
+    const outAmt = mMoney(mOutToday(dates));
+    const len = Math.max(inAmt.length, outAmt.length);
+    const step = len <= 9 ? '' : len <= 10 ? ' is-s2' : len <= 13 ? ' is-s3' : len <= 15 ? ' is-s4' : ' is-s5';
+    const cell = (cap, val, tone) => `
+      <div class="m-hero-cell">
+        <div class="m-hero-cap">${esc(cap)}</div>
+        <div class="m-hero-money${step}" style="color:${tone};">${esc(val)}</div>
+      </div>`;
+    return `
+    <div class="m-hero-money-row">
+      ${cell('Money in', inAmt, '#c9ffe9')}
+      ${cell('Money out', outAmt, '#ffd7e6')}
+    </div>`;
+  })()}
     <!-- The account balance, shown only once there is one to show. With
          nothing logged coming in it would be a line saying the spending has
          nothing to come off, on every empty day, forever.
@@ -14139,9 +14166,9 @@ function mHome() {
          balance to state and still has money worth opening, and the balance
          has always been able to stand on its own. */
       if (!st.inCents && !st.asideCents && !logs) return '';
-      return `<div style="display:flex;align-items:baseline;gap:10px;margin-top:8px;padding-top:9px;border-top:1px solid rgba(255,255,255,.22);font-size:12px;opacity:.92;">
+      return `<div class="m-hero-balance">
         ${st.inCents || st.asideCents ? `
-        <span style="flex:none;letter-spacing:.08em;text-transform:uppercase;font-size:10.5px;opacity:.8;padding-top:1px;">Balance</span>
+        <span class="m-hero-cap" style="flex:none;padding-top:1px;">Balance</span>
         <span style="flex:1;min-width:0;">${esc(st.tone === 'left' ? `${amount(st.leftCents / 100)} left` : st.short)}${
           st.asideCents ? ` · ${esc(amount(st.asideCents / 100))} aside` : ''}</span>` : '<span style="flex:1;"></span>'}
         <!-- Opposite the balance, because it answers the question the balance

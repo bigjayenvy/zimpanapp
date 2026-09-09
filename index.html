@@ -191,6 +191,86 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .m-pick .pick-list { gap: 2px; }
   .m-pick .pick-btn { box-shadow: var(--shadow-sm); }
 
+  /* — the phone's home card —
+     The hours, how the day is spread, and the money either side of it. Phone
+     only: the full layout has its own stat cards and never draws this.
+
+     It used to put the time and one money figure at 32px on the same line with
+     the other money figure whispered underneath in 12px. Two headlines on one
+     line is no headline, the whisper was unreadable against this gradient, and
+     a five-figure sum at 32px had nowhere to go but into the number beside it.
+     Now: the hours alone on top, then the day's bar, then the two money
+     figures as a matched pair. */
+  .m-hero {
+    border-radius: 20px; padding: 18px; color: #fff; margin-bottom: 14px;
+    background: var(--grad-time-money);
+    box-shadow: 0 14px 34px rgba(79, 70, 229, .3);
+  }
+  .m-hero-top { display: flex; justify-content: space-between; align-items: baseline; }
+  /* .82 rather than .78: these labels are small caps on a mid-purple ground and
+     were the first thing to disappear in daylight. */
+  .m-hero-cap {
+    font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase;
+    opacity: .82; font-weight: 600;
+  }
+  .m-hero-big {
+    font-family: var(--font-heading); font-weight: 700; font-size: 34px;
+    line-height: 1.1; margin-top: 4px;
+  }
+  .m-hero-bar {
+    display: flex; gap: 3px; margin-top: 16px; height: 9px;
+    border-radius: 999px; overflow: hidden; background: rgba(255, 255, 255, .22);
+  }
+  .m-hero-facts {
+    display: flex; justify-content: space-between; margin-top: 9px;
+    font-size: 11.5px; opacity: .88;
+  }
+  /* Two cells of equal width with a hairline between them, so neither figure
+     is the other's footnote. min-width:0 on the cells is what lets a long
+     figure shrink its own column instead of pushing the divider off the card. */
+  .m-hero-money-row {
+    display: flex; align-items: stretch; margin-top: 14px; padding-top: 13px;
+    border-top: 1px solid rgba(255, 255, 255, .22);
+  }
+  .m-hero-cell { flex: 1 1 0; min-width: 0; padding-right: 14px; }
+  .m-hero-cell + .m-hero-cell {
+    padding-right: 0; padding-left: 14px;
+    border-left: 1px solid rgba(255, 255, 255, .22);
+  }
+  .m-hero-money {
+    font-family: var(--font-heading); font-weight: 700; font-size: 32px;
+    line-height: 1.15; margin-top: 3px;
+    /* Tabular figures so the two columns line up digit for digit, and so a
+       figure does not reflow as its last digit ticks over. */
+    font-variant-numeric: tabular-nums;
+    /* The ellipsis is the last resort behind the steps below, not the plan.
+       On its own it hid the overflow instead of fixing it. */
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  /* The ladder. is-s2 is the five-digit step the redesign was asked for; the
+     rest carry the same arithmetic on for the figures that are longer still.
+     Classes rather than an inline size, so the narrow-phone block below can
+     take each one down again — an inline style would outrank it. See mHome(). */
+  .m-hero-money.is-s2 { font-size: 26px; }
+  .m-hero-money.is-s3 { font-size: 22px; }
+  .m-hero-money.is-s4 { font-size: 20px; }
+  .m-hero-money.is-s5 { font-size: 18px; }
+  /* An SE is 320px wide and a mini 375. The halves of this card are 30px
+     narrower there, which is a whole step of the ladder. */
+  @media (max-width: 379px) {
+    .m-hero-money { font-size: 28px; }
+    .m-hero-money.is-s2 { font-size: 23px; }
+    .m-hero-money.is-s3 { font-size: 20px; }
+    .m-hero-money.is-s4 { font-size: 18px; }
+    .m-hero-money.is-s5 { font-size: 16px; }
+  }
+  .m-hero-balance {
+    display: flex; align-items: baseline; gap: 10px;
+    margin-top: 12px; padding-top: 11px;
+    border-top: 1px solid rgba(255, 255, 255, .22);
+    font-size: 12px; opacity: .94;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .m-timer-dot { animation: none; }
     [style*="zStep"], [style*="zPop"] { animation: none !important; }
