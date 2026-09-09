@@ -28,8 +28,14 @@ export class TeamError extends Error {
    nobody has paid for is the trial. `cap` 0 is the unlimited plan. */
 export const PLANS = {
   trial: { label: 'Trial', cap: 3, price: 0 },
-  team6: { label: 'Team of 6', nickname: 'Starter', cap: 6, price: 9, paypal: 'L2TA54N2MGAEC' },
-  team12: { label: 'Team of 12', nickname: 'Squad', cap: 12, price: 15, paypal: 'LWSN5Y8ETFSSJ' },
+  team6: { label: 'Squad', nickname: 'Squad', cap: 6, price: 9, paypal: 'L2TA54N2MGAEC' },
+  /* Withdrawn from sale, kept in the table. Teams are on it, and everything
+     read off the key resolves through here — the label on their billing panel
+     and, more to the point, the seat cap. Deleting the row would silently drop
+     a paying team of twelve to the trial's three. setTeamPlan still accepts it,
+     because putting a team back on the plan they pay for is an admin's job and
+     not something to make impossible. */
+  team12: { label: 'Team of 12', nickname: 'Squad', cap: 12, price: 15, paypal: 'LWSN5Y8ETFSSJ', offered: false },
   team20: { label: 'Team of 20', nickname: 'Business', cap: 20, price: 22, paypal: 'NYRHVDWH6SXN8' },
   team50: { label: 'Team of 50', nickname: 'Max', cap: 50, price: 30, paypal: 'AZBJMFGCVEK98' },
   unlimited: { label: 'Unlimited', nickname: 'Unlimited', cap: 0, price: 100, paypal: 'C7ZHCA5ZMUG8G' }

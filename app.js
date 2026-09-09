@@ -5661,12 +5661,27 @@ const TEAM_FEATURES = [
    up to charge. Kept here beside the price they belong to so the two cannot
    drift; the server holds the same table, and a test compares them. */
 const TEAM_PLANS = [
-  ['team6', 'Team of 6', 'Starter', 6, 9, 'L2TA54N2MGAEC'],
+  ['team6', 'Squad', 'Squad', 6, 9, 'L2TA54N2MGAEC'],
   ['team12', 'Team of 12', 'Squad', 12, 15, 'LWSN5Y8ETFSSJ'],
   ['team20', 'Team of 20', 'Business', 20, 22, 'NYRHVDWH6SXN8'],
   ['team50', 'Team of 50', 'Max', 50, 30, 'AZBJMFGCVEK98'],
   ['unlimited', 'Unlimited', 'Unlimited', 0, 100, 'C7ZHCA5ZMUG8G']
 ];
+
+/* Plans that are no longer sold.
+
+   They stay in the table rather than being deleted from it, because teams are
+   on them. The key is what a row in the database holds, and everything read
+   off it — the label on their billing panel, the seat cap that decides whether
+   they can invite anybody — resolves through this table. A plan that simply
+   vanished would drop a paying team of twelve to the trial's three seats
+   without anyone touching their account. So it is withdrawn from the offer and
+   left where it is.
+
+   The server holds the same fact as `offered: false`, and srv/teams.mjs
+   compares the two. */
+const TEAM_RETIRED = new Set(['team12']);
+const TEAM_OFFERED = TEAM_PLANS.filter(([key]) => !TEAM_RETIRED.has(key));
 
 /* PayPal's own hosted-button form, with their gif swapped for our button.
 
@@ -6142,7 +6157,7 @@ function teamsScreen() {
         <span class="strip-rule"></span>
         <span class="strip-note">One price per team, not per seat</span>
       </div>
-      <div class="plans">${TEAM_PLANS.map(plan).join('')}</div>
+      <div class="plans">${TEAM_OFFERED.map(plan).join('')}</div>
       <p class="plans-foot">Start free for ${TEAM_TRIAL_DAYS} days with up to 3 people, then subscribe from inside your team. Billed monthly in USD. The personal Zimpan stays free for everyone.</p>
     </section>
 
@@ -10888,7 +10903,12 @@ function teamBillingTab() {
     </div>
 
     <div class="tm-plans">
-      ${TEAM_PLANS.map(([key, label, nickname, seats, price, button]) => `
+      <!-- What is on sale, plus whatever this team is already on. A team on a
+           withdrawn plan still has to see which one it is and that it is
+           theirs; dropping it from the list would leave their own plan
+           unnamed on their own billing panel. -->
+      ${TEAM_PLANS.filter(([key]) => !TEAM_RETIRED.has(key) || key === t.plan)
+    .map(([key, label, nickname, seats, price, button]) => `
       <div class="tm-plan${t.plan === key ? ' is-on' : ''}${key === TEAM_POPULAR && t.plan !== key ? ' is-popular' : ''}">
         ${key === TEAM_POPULAR && t.plan !== key ? `<span class="tm-plan-flag">${nodeIcon('flame', 11)}Most popular</span>` : ''}
         <div class="tm-plan-head">
