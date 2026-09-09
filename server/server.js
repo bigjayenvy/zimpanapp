@@ -625,11 +625,15 @@ app.post('/api/chat', requireUser, wrap(async (req, res) => {
   if (history.length > 40) return res.status(400).json({ error: 'That conversation is too long to send in one go.' });
 
   const facts = body.facts && typeof body.facts === 'object' ? body.facts : {};
+  /* Which of the two assistants answers. Anything but the how-to section is
+     read as the log one — an old client that knows nothing about the split
+     sends no mode and means the log, which is all it ever asked for. */
+  const mode = body.mode === 'app' ? 'app' : 'log';
   if (JSON.stringify(history).length > 20000) return res.status(400).json({ error: 'That conversation is too long to send in one go.' });
   if (JSON.stringify(facts).length > 60000) return res.status(400).json({ error: 'That is more log than we can send in one go.' });
 
   try {
-    res.json({ reply: await chatReply(history, facts) });
+    res.json({ reply: await chatReply(history, facts, mode) });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

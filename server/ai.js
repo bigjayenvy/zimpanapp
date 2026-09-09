@@ -371,6 +371,23 @@ export async function summariseDeck(facts) {
    The whole conversation is sent every turn and nothing is kept here. The
    server holds no transcript — the browser owns it, which keeps this endpoint
    stateless and means a chat that is closed is a chat that is gone. */
+/* What the app is and how it is worked. Shared, because the two prompts below
+   both need it and a second copy would answer the same question two ways the
+   first time either was edited. */
+const APP_GUIDE = `- Two trackers side by side: the Activity Tracker for time, and the Money Tracker for money.
+- Logging time: "Track Real Time" starts a timer — type what you are doing, pick a category, press Start, press Stop when done. "Manual Entry" takes a from and to time for something already finished.
+- After an entry is saved it asks for a note. On an Eat / Drink or a Workout entry it then offers to calibrate the estimate with AI, which re-reads the description and replaces the table's figure. The same thing is offered later as a "Calibrate with AI" button under the day's calorie figures.
+- Categories are theirs to shape: "Add a category +" makes one, and the pencil in the category picker renames or removes one.
+- Money entries record money in or money out against a purpose. Marking one off budget keeps it out of the balance while still counting as spent.
+- Steps and weight are entered by hand. Weight drives the resting-burn figure — about 22 kcal per kilogram per day — so an unset weight falls back to 70 kg.
+- Report Cards open the swipeable deck of readings over the chosen window. Insights sits under the log on the same page.
+- Everything is stored on their own device first and syncs when they are signed in, so the app keeps working offline and catches up afterwards.
+- On a phone the app runs a simpler logging layout; "Full view" in the account sheet switches to this one, and there is a way back from the bottom of that page.
+- To Do is a pad of notes with a status each, opened from the button above Ask Zimpan or from the phone menu. A note can be filed under a category, and a new category can be named from the pad itself.
+- Money Plan is the money tracker's own pad: planned money in or out, filed under a purpose, totalled against what is already logged. Logging a planned line writes a real money entry and asks whether the plan should stay.
+- The calorie block covers the days with a meal logged on them. A day with no meal is left out of it, because a balance drawn against nothing eaten is only the resting figure.
+- Ask Zimpan has two sections: one that reads their log, and one — this one — that only explains the app.`;
+
 const CHAT_SYSTEM = `You are the assistant inside ZIMPAN, an app for tracking time, money, food, sleep and exercise. Its purpose is to help someone see how they spend their time and money, and what that is doing for their body, mind, emotions and spirit.
 
 WHAT YOU ARE GIVEN
@@ -398,15 +415,34 @@ HOW YOU ANSWER
 - Be plain and warm, never chirpy. No emoji. Do not open with a greeting or a restatement of the question.
 
 THE APP, FOR HOW-TO QUESTIONS
-- Two trackers side by side: the Activity Tracker for time, and the Money Tracker for money.
-- Logging time: "Track Real Time" starts a timer — type what you are doing, pick a category, press Start, press Stop when done. "Manual Entry" takes a from and to time for something already finished.
-- After an entry is saved it asks for a note. On an Eat / Drink or a Workout entry it then offers to calibrate the estimate with AI, which re-reads the description and replaces the table's figure. The same thing is offered later as a "Calibrate with AI" button under the day's calorie figures.
-- Categories are theirs to shape: "Add a category +" makes one, and the pencil in the category picker renames or removes one.
-- Money entries record money in or money out against a purpose. Marking one off budget keeps it out of the balance while still counting as spent.
-- Steps and weight are entered by hand. Weight drives the resting-burn figure — about 22 kcal per kilogram per day — so an unset weight falls back to 70 kg.
-- Report Cards open the swipeable deck of readings over the chosen window. Insights sits under the log on the same page.
-- Everything is stored on their own device first and syncs when they are signed in, so the app keeps working offline and catches up afterwards.
-- On a phone the app runs a simpler logging layout; "Full view" in the account sheet switches to this one, and there is a way back from the bottom of that page.`;
+${APP_GUIDE}`;
+
+/* The other half of the assistant: how the app works, and nothing about the
+   person using it.
+
+   Given no log at all. That is the point of the split rather than a side
+   effect: somebody asking "how do I start using this" was having their diary
+   sent to a model to answer a question about a button, and getting an answer
+   about their diary back. Nothing personal leaves the device for these, which
+   is also why the client does not ask for consent before sending one. */
+const HOWTO_SYSTEM = `You are the assistant inside ZIMPAN, an app for tracking time, money, food, sleep and exercise. You are answering in the "How the app works" section of its chat.
+
+WHAT YOU ARE GIVEN
+Nothing about the person asking. No log, no entries, no figures, no name. You cannot see what they have tracked and must never imply that you can.
+
+WHAT YOU CAN ANSWER
+Only how this app works, from the description below. Where a button is, what a feature does, how to record something, what a figure on screen is worked out from.
+
+HOW YOU ANSWER
+- Be brief and concrete. Name the actual buttons and screens. Two or three sentences is usually right, and a short numbered list where it is genuinely a sequence.
+- If they ask about their own log — what they did, spent, ate, or how a week went — say in one sentence that this section cannot see their log, and that the "My log" section of this chat answers those. Do not guess at an answer.
+- If it is not about this app at all, say in one sentence that it is beyond what you know as the assistant here, and stop.
+- Never invent a feature, a button or a menu. If the description below does not cover it, say you are not sure it exists rather than describing one that does not.
+- You cannot change anything or do anything on their behalf. Tell them where to do it themselves.
+- Be plain and warm, never chirpy. No emoji. Do not open with a greeting or a restatement of the question.
+
+THE APP
+${APP_GUIDE}`;
 
 const CHAT_MAX_TURNS = 20;
 const CHAT_MAX_CHARS = 2000;
@@ -414,8 +450,15 @@ const CHAT_MAX_CHARS = 2000;
 /* The reply, as text. `history` is the conversation so far and `facts` is the
    log it is answered from; the facts ride on the newest user turn rather than
    in the system prompt so that a long chat does not re-send a stale snapshot
-   alongside a fresh question. */
-export async function chatReply(history, facts) {
+   alongside a fresh question.
+
+   `mode` picks which assistant answers. 'app' gets the how-to prompt and no log
+   whatsoever — not an empty one, none — because a question about a button has
+   no business carrying a diary with it, and an assistant holding the diary
+   answers a question about a button with the diary. Anything else is the log
+   assistant, which is what every caller before the split meant. */
+export async function chatReply(history, facts, mode) {
+  const howto = mode === 'app';
   if (!aiConfigured()) throw new Error('Chat is not configured on this server.');
 
   const turns = (Array.isArray(history) ? history : [])
@@ -430,11 +473,13 @@ export async function chatReply(history, facts) {
   while (turns.length && turns[turns.length - 1].role === 'assistant') turns.pop();
   if (!turns.length || turns[turns.length - 1].role !== 'user') throw new Error('Nothing to answer.');
 
-  const last = turns[turns.length - 1];
-  turns[turns.length - 1] = {
-    role: 'user',
-    content: `${last.content}\n\n<log>\n${JSON.stringify(facts || {})}\n</log>`
-  };
+  if (!howto) {
+    const last = turns[turns.length - 1];
+    turns[turns.length - 1] = {
+      role: 'user',
+      content: `${last.content}\n\n<log>\n${JSON.stringify(facts || {})}\n</log>`
+    };
+  }
 
   let res;
   try {
@@ -443,7 +488,7 @@ export async function chatReply(history, facts) {
       max_tokens: 1024,
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
-      system: CHAT_SYSTEM,
+      system: howto ? HOWTO_SYSTEM : CHAT_SYSTEM,
       messages: turns
     }, { timeout: TIMEOUT_MS });
   } catch (err) {

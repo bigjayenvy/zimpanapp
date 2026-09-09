@@ -526,7 +526,7 @@ const API = {
   pull: (since) => api(`/api/sync?since=${encodeURIComponent(since || 0)}`),
   estimate: (text) => api('/api/estimate', { method: 'POST', body: { text } }),
   deckSummary: (facts) => api('/api/deck-summary', { method: 'POST', body: { facts } }),
-  chat: (history, facts) => api('/api/chat', { method: 'POST', body: { history, facts } }),
+  chat: (history, facts, mode) => api('/api/chat', { method: 'POST', body: { history, facts, mode } }),
   estimateBurn: (text, weightKg, minutes) => api('/api/estimate-burn', { method: 'POST', body: { text, weightKg, minutes } }),
   donateClick: () => api('/api/donate-click', { method: 'POST', body: {} }),
 
@@ -865,10 +865,21 @@ const state = {
      `speak` is whether replies are read aloud; it is remembered per browser. */
   chat: {
     open: false, messages: [], draft: '', busy: false, error: '',
-    listening: false, speak: readJson(CHAT_SPEAK_KEY, true) !== false
+    listening: false,
+    /* true, false, or null for never asked. It used to default to true, which
+       is why an answer started talking at people who had not asked it to. */
+    speak: readJson(CHAT_SPEAK_KEY, null),
+    /* Which of the two sections is open: 'log' reads what you tracked, 'app'
+       only explains the app. Null until chosen, which is the first thing the
+       panel asks — a how-to question answered out of somebody's diary is the
+       wrong answer to the right question, and it was the only answer on
+       offer. Session state: it is a question about this conversation. */
+    mode: null
   },
   chatConsent: readJson(CHAT_CONSENT_KEY, false) === true,
   chatAsking: false,
+  // The answer waiting on "shall I read this aloud?". See chatSpeakDialog().
+  chatSpeakAsk: '',
   newPurposeOpen: false, newPurposeName: '',
 
   /* Which searchable picker is open — 'category', 'purpose', or null — and what
@@ -6809,7 +6820,10 @@ function chatHistory() {
 async function chatSend(text) {
   const q = String(text == null ? state.chat.draft : text).trim();
   if (!q || state.chat.busy) return;
-  if (!state.chatConsent) { state.chatAsking = true; render(); return; }
+  const howto = state.chat.mode === 'app';
+  /* Consent is about the log leaving the device, so it is asked for when the
+     log leaves the device. A how-to question sends nothing but the question. */
+  if (!howto && !state.chatConsent) { state.chatAsking = true; render(); return; }
 
   state.chat.messages = state.chat.messages.concat([{ role: 'user', text: q }]);
   state.chat.draft = '';
@@ -6819,10 +6833,18 @@ async function chatSend(text) {
   render();
 
   try {
-    const res = await API.chat(chatHistory(), chatFacts());
+    // No facts at all in the how-to section — see chatReply() on the server.
+    const res = await API.chat(chatHistory(), howto ? {} : chatFacts(), state.chat.mode || 'log');
     const reply = (res.reply && res.reply.text) || '';
     state.chat.messages = state.chat.messages.concat([{ role: 'assistant', text: reply, truncated: !!(res.reply && res.reply.truncated) }]);
-    if (state.chat.speak) speakReply(reply);
+    /* Asked before it talks, and asked once. Reading an answer out loud in a
+       room is not something to start doing on somebody's behalf, which is what
+       defaulting to on amounted to; and asking after every answer would be its
+       own kind of rude, so the answer is remembered and the speaker button in
+       the header is what changes it afterwards. */
+    if (!canSpeak() || !reply) { /* nothing to read, or nothing to read it */ }
+    else if (state.chat.speak === true) speakReply(reply);
+    else if (state.chat.speak == null) state.chatSpeakAsk = reply;
   } catch (err) {
     state.chat.error = err.message || 'Could not reach the assistant.';
   } finally {
@@ -6922,9 +6944,38 @@ function paintChatDraft() {
 
    One body, two frames — the phone's sheet and the laptop's dialog — the way
    the calorie breakdown and the money-out question already work. */
+/* Two assistants behind one panel.
+
+   "How do I start using it?" came back as a reading of thirty-three days of
+   somebody's log, because there was one assistant, it was handed the log with
+   every question, and an assistant holding a diary answers with the diary. The
+   question was right; there was simply nowhere for it to go.
+
+   So the panel asks which one first. The log section is what it always was.
+   The app section is given no log at all — not an empty one, none — which is
+   also why it needs no consent: nothing about the person leaves the device to
+   answer a question about a button. */
+const CHAT_MODES = {
+  log: {
+    label: 'My log',
+    icon: 'pulse',
+    blurb: (days) => `What you tracked — hours, money, meals, sleep. Sends your last ${days} days so it can read them.`,
+    ask: 'Ask about your log',
+    seeds: ['Am I burning more than I eat?', 'Where did my time go this week?', 'What am I spending most on?', 'How has my sleep been?']
+  },
+  app: {
+    label: 'How the app works',
+    icon: 'question',
+    blurb: () => 'Buttons, features and where things live. Sends nothing but the question — it cannot see your log.',
+    ask: 'Ask how something works',
+    seeds: ['How do I start using it?', 'How do I edit a category?', 'What is the To Do pad for?', 'How is my calorie burn worked out?']
+  }
+};
+
 function chatBody(closeAct) {
   const c = state.chat;
   const empty = !c.messages.length;
+  const spec = CHAT_MODES[c.mode] || null;
 
   const bubbles = c.messages.map((m) => `
     <div class="chat-turn is-${m.role === 'user' ? 'me' : 'it'}">
@@ -6933,9 +6984,28 @@ function chatBody(closeAct) {
     </div>`).join('');
 
   /* Openers rather than an empty box. Nobody's first instinct is to know what
-     an assistant over their own diary can be asked, and these are the questions
-     the log can actually answer well. */
-  const seeds = ['Am I burning more than I eat?', 'Where did my time go this week?', 'What am I spending most on?', 'How has my sleep been?', 'How do I edit a category?'];
+     an assistant can be asked, and these are the questions each side answers
+     well. */
+  const seeds = spec ? spec.seeds : [];
+
+  /* The choice, before anything is asked. Two cards rather than a segmented
+     control at this point: it is the first thing on screen and it has to say
+     what the difference is, which a two-word toggle cannot. */
+  const chooser = `
+        <div class="chat-pick">
+          <p class="chat-pick-q">What can I help with?</p>
+          ${Object.keys(CHAT_MODES).map((key) => {
+    const m = CHAT_MODES[key];
+    return `
+          <button type="button" class="chat-pick-opt" data-act="chat-mode" data-mode="${esc(key)}">
+            <span class="chat-pick-mark" aria-hidden="true">${nodeIcon(m.icon, 18)}</span>
+            <span class="chat-pick-text">
+              <strong>${esc(m.label)}</strong>
+              <span>${esc(m.blurb(CHAT_DAYS))}</span>
+            </span>
+          </button>`;
+  }).join('')}
+        </div>`;
 
   return `
   <div class="chat">
@@ -6943,7 +7013,7 @@ function chatBody(closeAct) {
       <span class="chat-mark" aria-hidden="true">${nodeIcon('pulse', 18)}</span>
       <div class="chat-title">
         <strong>Chat with Zimpan</strong>
-        <span>Your log, and how this app works. Nothing beyond that.</span>
+        <span>${spec ? esc(spec.blurb(CHAT_DAYS)) : 'Your log, and how this app works. Nothing beyond that.'}</span>
       </div>
       ${canSpeak() ? `<button type="button" class="chat-icon${c.speak ? ' is-on' : ''}" data-act="chat-speak"
         aria-pressed="${c.speak}" title="${c.speak ? 'Replies are read aloud' : 'Replies stay silent'}"
@@ -6951,28 +7021,41 @@ function chatBody(closeAct) {
       <button type="button" class="chat-icon" data-act="${esc(closeAct)}" aria-label="Close">✕</button>
     </div>
 
+    ${spec ? `
+    <div class="chat-tabs" role="group" aria-label="What to ask about">
+      ${Object.keys(CHAT_MODES).map((key) => `
+      <button type="button" class="chat-tab${key === c.mode ? ' is-on' : ''}" data-act="chat-mode" data-mode="${esc(key)}"
+        aria-pressed="${key === c.mode}">${esc(CHAT_MODES[key].label)}</button>`).join('')}
+    </div>` : ''}
+
     <div class="chat-log" data-chat-log>
-      ${empty ? `
+      ${!spec ? chooser : empty ? `
         <div class="chat-empty">
-          <p>Ask about anything you have logged — the last ${CHAT_DAYS} days are what it can see — or about how the app works.</p>
+          <p>${esc(spec.blurb(CHAT_DAYS))}</p>
           <div class="chat-seeds">
             ${seeds.map((q) => `<button type="button" class="chat-seed" data-act="chat-seed" data-q="${esc(q)}">${esc(q)}</button>`).join('')}
           </div>
         </div>` : bubbles}
-      ${c.busy ? '<div class="chat-turn is-it"><div class="chat-bubble is-wait"><span class="spinner"></span> Reading your log…</div></div>' : ''}
+      ${c.busy ? `<div class="chat-turn is-it"><div class="chat-bubble is-wait"><span class="spinner"></span> ${
+  c.mode === 'app' ? 'Looking it up…' : 'Reading your log…'}</div></div>` : ''}
       ${c.error ? `<div class="chat-err">${esc(c.error)}</div>` : ''}
     </div>
 
+    ${spec ? `
     <div class="chat-ask">
       ${canHear() ? `<button type="button" class="chat-mic${c.listening ? ' is-live' : ''}" data-act="chat-listen"
         aria-pressed="${c.listening}" aria-label="${c.listening ? 'Stop listening' : 'Ask by voice'}"
         title="${c.listening ? 'Listening — tap to stop' : 'Ask by voice'}">${nodeIcon(c.listening ? 'stop' : 'mic', 18)}</button>` : ''}
       <input class="input chat-input" type="text" data-k="chat-draft" data-sync="chat.draft"
         data-enter="chat-send" value="${esc(c.draft)}" autocomplete="off"
-        placeholder="${c.listening ? 'Listening…' : 'Ask about your log'}" aria-label="Ask about your log">
+        placeholder="${c.listening ? 'Listening…' : esc(spec.ask)}" aria-label="${esc(spec.ask)}">
       <button type="button" class="btn btn-primary chat-send" data-act="chat-send"${c.busy ? ' disabled' : ''}>Ask</button>
-    </div>
-    <p class="chat-foot">Answers are read from what you logged and can be wrong. Nothing here can change your log.</p>
+    </div>` : ''}
+    <p class="chat-foot">${!spec
+    ? 'Answers can be wrong either way, and nothing here can change your log.'
+    : c.mode === 'app'
+      ? 'Answers describe the app and can be wrong. This section cannot see your log.'
+      : 'Answers are read from what you logged and can be wrong. Nothing here can change your log.'}</p>
   </div>`;
 }
 
@@ -6988,6 +7071,32 @@ function chatDialog() {
 function mChatSheet() {
   if (!state.chat.open) return '';
   return mSheet(chatBody('chat-close'), '18px 16px 20px');
+}
+
+/* Asked before anything is spoken out loud, once.
+
+   Reading an answer into whatever room somebody is sitting in is not a thing to
+   start doing on their behalf, and this used to default to on — the first
+   answer simply began talking. Few words on purpose: it is a yes-or-no about
+   the next few seconds, not a settings page. The answer is remembered, and the
+   speaker button in the chat's own header is what changes it afterwards, which
+   the dialog says so that "No" does not read as "never again, and good luck
+   finding it". */
+function chatSpeakDialog() {
+  if (!state.chatSpeakAsk) return '';
+  return lightbox({
+    icon: 'sound',
+    tone: 'var(--color-accent)',
+    title: 'Read the answer aloud?',
+    closeAct: 'chat-speak-no',
+    /* In the body rather than as the subtitle: .lb-sub is set large and bold,
+       which put more weight on the footnote than on the question. */
+    body: `<p style="margin:0;font-size:12.5px;line-height:1.5;color:var(--color-neutral-600);">
+      The speaker button at the top of the chat changes this later.</p>`,
+    actions: `
+      <button class="btn btn-ghost" data-act="chat-speak-no">No</button>
+      <button class="btn btn-primary" data-act="chat-speak-yes">Yes</button>`
+  });
 }
 
 /* Its own consent, and its own words. The estimate dialog promises that only a
@@ -9788,6 +9897,7 @@ function render() {
   ${refineAskDialog()}
   ${chatDialog()}
   ${chatConsentDialog()}
+  ${chatSpeakDialog()}
   ${recapDialog()}
   ${prefsDialog()}
   ${teamSheet()}
@@ -12069,12 +12179,40 @@ const ACTIONS = {
     state.chat.open = false;
     chatStopListening();
     stopSpeaking();
+    state.chatSpeakAsk = '';
+    render();
+  },
+  /* Switching sections keeps the transcript. The two answer from different
+     things, so a reply above a question in the other section could read as
+     having come from it — the turn labels are what separate them, and the
+     alternative, wiping what was asked because a tab was pressed, loses more
+     than it saves. */
+  'chat-mode': (el) => {
+    const mode = el.dataset.mode === 'app' ? 'app' : 'log';
+    if (state.chat.mode === mode) return;
+    state.chat.mode = mode;
+    state.chat.error = '';
+    render();
+  },
+  'chat-speak-yes': () => {
+    const say = state.chatSpeakAsk;
+    state.chatSpeakAsk = '';
+    state.chat.speak = true;
+    writeJson(CHAT_SPEAK_KEY, true);
+    render();
+    speakReply(say);
+  },
+  'chat-speak-no': () => {
+    state.chatSpeakAsk = '';
+    state.chat.speak = false;
+    writeJson(CHAT_SPEAK_KEY, false);
     render();
   },
   'chat-send': () => chatSend(),
   'chat-seed': (el) => chatSend(el.dataset.q || ''),
   'chat-listen': () => chatListen(),
   'chat-speak': () => {
+    // Never asked reads as off here: pressing it is the reader turning it on.
     state.chat.speak = !state.chat.speak;
     writeJson(CHAT_SPEAK_KEY, state.chat.speak);
     if (!state.chat.speak) stopSpeaking();
@@ -14934,6 +15072,7 @@ function mobileApp() {
   ${refineAskDialog()}
   ${mChatSheet()}
   ${chatConsentDialog()}
+  ${chatSpeakDialog()}
   ${recapDialog()}
   ${prefsDialog()}
   ${teamSheet()}
@@ -16150,6 +16289,7 @@ document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') { ev.preventDefault(); state.pickOpen = null; state.pickQuery = ''; render(); return; }
   }
   // Topmost first: the follow-up dialog sits above the report sheet.
+  if (ev.key === 'Escape' && state.chatSpeakAsk) { ACTIONS['chat-speak-no'](); return; }
   if (ev.key === 'Escape' && state.rowNew) { ACTIONS['row-new-cancel'](); return; }
   if (ev.key === 'Escape' && state.refineAsk) { ACTIONS['refine-no'](); return; }
   if (ev.key === 'Escape' && state.chat.open) { ACTIONS['chat-close'](); return; }
