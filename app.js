@@ -2763,6 +2763,25 @@ const weekWeightKg = (netKcalPerDay) => (netKcalPerDay * 7) / KCAL_PER_KG;
 
    Deliberately built from the same burnFor / foodReport the gauges use rather
    than from a quicker sum, so a bar and the dial above it can never disagree. */
+/* Whether a day can carry a calorie reading at all.
+
+   It needs something eaten. Resting burn and workout burn are both money going
+   out; food is the only money coming in, so a day with no meal on it has no
+   balance to strike — subtract nothing from a body that spends ~1,650 kcal
+   lying still and the answer is ~1,650 kcal of "deficit" that is not a reading
+   of anything, it is the formula talking to itself. A day of sleep and desk
+   work produced exactly that, and a gym day without lunch produced a bigger
+   one, and both went into the totals and the average as if they were days that
+   had been weighed.
+
+   The app cannot tell "did not eat" from "did not log it", so it must not claim
+   either. A day with no meal is left blank, exactly as a day with nothing at
+   all on it already was. Every figure in the block — burned, eaten, at rest and
+   the net between them — is then over the same set of days, which is the
+   property that lets the dials and the bars under them agree. */
+const hasFood = (rows) => rows.some(isEatenRow);
+const foodDays = (rows) => new Set(rows.filter(isEatenRow).map((r) => r.date));
+
 function netSeries(dates, entries, money, weightKg) {
   const byDate = {};
   entries.forEach((e) => { (byDate[e.date] = byDate[e.date] || []).push(e); });
@@ -2780,8 +2799,10 @@ function netSeries(dates, entries, money, weightKg) {
       burned: burn.kcal,
       rest: burn.restKcal,
       eaten: food.kcal,
-      // A day with nothing logged is not a deficit, it is a day with no reading.
-      logged: !!(rows.length || burn.steps)
+      /* A day with nothing logged is not a deficit, it is a day with no
+         reading — and neither is a day that logged everything except what was
+         eaten. See hasFood(). */
+      logged: hasFood(rows)
     };
   });
 }
@@ -3443,11 +3464,12 @@ function compute() {
     return out.sort();
   })();
   const rangeList = rangeEntries();
-  /* The days of the window that carry something. See rangeBurn below. */
-  const windowLive = (() => {
-    const has = new Set(rangeList.map((e) => e.date));
-    return windowDates.filter((d) => has.has(d) || (Number(s.steps[d]) || 0) > 0);
-  })();
+  /* The days of the window that carry a meal, which are the only ones the
+     calorie block can weigh. See hasFood() and rangeBurn below. */
+  const rangeCalSet = foodDays(rangeList);
+  const rangeCalDates = windowDates.filter((d) => rangeCalSet.has(d));
+  const rangeCalList = rangeList.filter((e) => rangeCalSet.has(e.date));
+  const rangeCalDays = Math.max(1, rangeCalDates.length);
   const rangeWb = wellbeing(rangeList, { count: stepsIn(windowDates), date: s.selectedDate, days: winDays });
   const rangeBusy = (() => {
     const per = {};
@@ -3622,6 +3644,15 @@ function compute() {
     .concat(pastSpan.filter((d) => (Number(s.steps[d]) || 0) > 0)))).sort();
   // Money logged on the same finished days, so the food read covers both trackers.
   const pastDateSet = new Set(pastDates);
+
+  /* The calorie block's own days, which are fewer: the finished days with a
+     meal on them. Kept apart from pastDates because the two counts answer
+     different questions — "24 days tracked" is about the hours, and the hours
+     are tracked whether or not lunch was written down. See hasFood(). */
+  const pastCalSet = foodDays(pastList);
+  const pastCalDates = pastSpan.filter((d) => pastCalSet.has(d));
+  const pastCalList = pastList.filter((e) => pastCalSet.has(e.date));
+  const pastCalDays = Math.max(1, pastCalDates.length);
   const pastMoney = s.money.filter((e) => pastDateSet.has(e.date));
   const pastWb = wellbeing(pastList, { count: stepsIn(pastSpan), date: pastSpan[pastSpan.length - 1], days: pastSpan.length });
   const pastTotals = totalsByCategory(pastList);
@@ -3708,8 +3739,19 @@ function compute() {
     pastReadings: dimensionReadings(pastWb, pastDates.length),
     pastAdvice: adviceFor(pastWb, dimensionReadings(pastWb, pastDates.length), pastDates.length),
     pastSleep: sleepReading(pastList, pastSpan.length),
-    pastFood: foodReport(pastList, pastMoney, Math.max(1, pastDates.length)),
-    pastBurn: burnFor(pastList, s.weightKg, Math.max(1, pastDates.length), pastSpan),
+    /* Over the days that carry a meal, not over every finished day. The steps
+       come from the same list, so a walk on a day nothing was eaten is left out
+       of the burn as well — all four dials have to cover the same days or they
+       stop adding up, which is the whole reason this block was wrong before. */
+    pastFood: foodReport(pastCalList, pastMoney.filter((e) => pastCalSet.has(e.date)), pastCalDays),
+    pastBurn: burnFor(pastCalList, s.weightKg, pastCalDays, pastCalDates),
+    /* How many finished days the block could not weigh. Counted against the
+       whole span rather than against pastDates, so it is the same number the
+       chart underneath calls blank — two counts of the same thing differing by
+       one is how a page starts looking like it cannot add up. A day with
+       nothing on it and a day that logged everything but lunch are both days
+       with no meal, which is the only thing this sentence claims. */
+    pastCalSkipped: pastSpan.length - pastCalDates.length,
     pastEmpty: pastDates.length === 0,
 
     untracked: durShort(untrackedMins),
@@ -3782,14 +3824,14 @@ function compute() {
     /* Readings across the whole window, for the report deck. */
     rangeReadings: dimensionReadings(rangeWb, winDays),
     rangeSleep: sleepReading(rangeList, winDays),
-    /* Charged over the days that carry a reading rather than over the whole
-       calendar window, on the same rule as pastDates above: a month with ten
-       days logged has not eaten for thirty, and netting thirty days of resting
-       burn against ten days of food reports a deficit nobody had. It is also
-       what the day-by-day chart does, and the two have to agree. */
-    rangeBurn: burnFor(rangeList, s.weightKg, Math.max(1, windowLive.length), windowDates),
+    /* Charged over the days that carry a meal rather than over the whole
+       calendar window: a month with ten days eaten has not eaten for thirty,
+       and netting thirty days of resting burn against ten days of food reports
+       a deficit nobody had. It is also what the day-by-day chart draws, and the
+       two have to agree. */
+    rangeBurn: burnFor(rangeCalList, s.weightKg, rangeCalDays, rangeCalDates),
 
-    rangeFood: foodReport(rangeList, mRangeList, Math.max(1, windowLive.length)),
+    rangeFood: foodReport(rangeCalList, mRangeList.filter((e) => rangeCalSet.has(e.date)), rangeCalDays),
     rangeSteps: stepsIn(windowDates),
     rangeDayCount: winDays,
     rangeBusiest: rangeBusy
@@ -7444,7 +7486,7 @@ function pillarSheet(v) {
    `scope` names the card this pair of gauges belongs to — the same block is
    drawn twice on the page, so the weight editor needs to know which copy was
    asked for and the fields inside it need keys that do not collide. */
-function balanceGauges(food, burn, scope, stepDate) {
+function balanceGauges(food, burn, scope, stepDate, skipped) {
   // Not this product's subject. See workMode().
   if (workMode()) return '';
 
@@ -7462,19 +7504,23 @@ function balanceGauges(food, burn, scope, stepDate) {
   const eaten = Math.round(food.kcal);
   const rested = Math.round(burn.restKcal);
 
-  /* With nothing logged on either side there is no balance to draw, and
-     printing one anyway would report a ~1,650 deficit at breakfast time purely
-     because the day had not been logged yet. It says so rather than
-     disappearing: a panel that silently comes and goes reads as a bug. The
-     resting figure is still worth showing — it is true whatever you log. */
-  if (!food.kcal && !burn.kcal) {
+  /* Nothing eaten, nothing to weigh. Printing one anyway reports a ~1,650
+     deficit at breakfast time purely because the day has not been logged yet —
+     and it did exactly that for a whole month of days that logged a gym session
+     and never mentioned lunch. The gate used to be "neither side", which let a
+     workout on its own draw a balance it could not have. See hasFood().
+
+     It says so rather than disappearing: a panel that silently comes and goes
+     reads as a bug. The resting figure is still worth showing — it is true
+     whatever you log. */
+  if (!food.kcal) {
     return `
       <div class="cal-kicker">${days > 1 ? `Total across ${days} days` : 'Daily calorie balance'}</div>
       <div class="cal-empty">
         Nothing to weigh up yet. Your body spends roughly
         <strong>${perDay(burn.restKcal).toLocaleString('en-US')} kcal a day</strong> at rest, but a balance needs
-        something on the other side — log a meal or a workout${stepDate
-          ? `, or <button class="cal-link" data-act="steps-open" data-date="${esc(stepDate)}">add your steps</button>` : ''}.
+        the other side of it — log what you ate${stepDate
+          ? `, and <button class="cal-link" data-act="steps-open" data-date="${esc(stepDate)}">add your steps</button>` : ''}.
       </div>`;
   }
 
@@ -7532,7 +7578,7 @@ function balanceGauges(food, burn, scope, stepDate) {
           stepDate ? `${burn.steps
             ? `${burn.steps.toLocaleString('en-US')} steps${burn.fromSteps ? ` · about ${burn.fromSteps.toLocaleString('en-US')} kcal of the figure above` : ''}. `
             : ''}<button class="cal-link" data-act="steps-open" data-date="${esc(stepDate)}">${burn.steps ? 'Edit your steps' : 'Add your steps'}</button>.`
-            : (burn.steps ? `Includes ${burn.steps.toLocaleString('en-US')} steps across the range.` : ''), 'burn')}
+            : (burn.steps ? `Includes ${burn.steps.toLocaleString('en-US')} steps from the days counted here.` : ''), 'burn')}
         ${dial(eaten, 'var(--zg-donate)', CAL_ICONS.food, 'Calories consumed (food)',
           food.ai ? 'Calibrated by AI from what you wrote.' : '', 'food')}
         ${dial(rested, 'var(--color-accent-700)', CAL_ICONS.rest, 'Calories burned (at rest)',
@@ -7542,6 +7588,10 @@ function balanceGauges(food, burn, scope, stepDate) {
         ${dial(net, netTone, CAL_ICONS.net, `Net calories (${deficit ? 'deficit' : 'surplus'})`,
           `Your net calorie ${days > 1 ? `across these ${days} days` : (scope === 'past' ? 'for that day' : 'for today')}: workout burn + burn at rest − calories consumed.`)}
       </div>
+      ${skipped ? `
+      <div class="cal-skip">${skipped} ${skipped === 1 ? 'day is' : 'days are'} left out of this —
+        ${skipped === 1 ? 'it carries' : 'they carry'} no meal, and a balance drawn against nothing eaten is
+        just your resting burn wearing a different name.</div>` : ''}
       ${days > 1 ? `
       <div class="cal-perday">That is about
         <strong>${Math.abs(perDay(net)).toLocaleString('en-US')} kcal a day</strong> ${deficit ? 'in deficit' : 'in surplus'} —
@@ -7955,7 +8005,7 @@ function barChart(series, o) {
         </div>
         <div class="net-note">
           ${o.note}
-          ${missing ? `${missing} ${missing === 1 ? 'day has' : 'days have'} nothing logged and ${missing === 1 ? 'is' : 'are'} left blank.` : ''}
+          ${missing ? `${missing} ${missing === 1 ? 'day has' : 'days have'} ${esc(o.blank || 'nothing logged')} and ${missing === 1 ? 'is' : 'are'} left blank.` : ''}
         </div>
       </div>`;
 }
@@ -7978,6 +8028,10 @@ function netChart(series) {
   return barChart(netCols(series), {
     upLabel: 'Deficit',
     downLabel: 'Surplus',
+    /* Not "nothing logged": most of these days have plenty logged, they just
+       have no meal on them, and a day cannot be weighed against what was not
+       eaten. See hasFood(). */
+    blank: 'no meal logged',
     average: `${avg >= 0 ? '+' : '−'}${Math.abs(avg).toLocaleString('en-US')} kcal a day on average`,
     title: (d) => (!d.logged
       ? `${dayLabel(d.date)} · nothing logged`
@@ -8203,7 +8257,7 @@ function pastCard(v) {
         <div style="font-size: 12px; color: var(--color-neutral-600); margin-bottom: 12px;">${esc(v.pastLabel)}</div>
         <div style="font-size: 13.5px; line-height: 1.6;">${esc(v.pastHeadline)}</div>
         ${v.pastBusiest ? `<div style="font-size: 12.5px; line-height: 1.6; color: var(--color-neutral-700); margin-top: 4px;">${esc(v.pastBusiest)}</div>` : ''}
-        ${balanceGauges(v.pastFood, v.pastBurn, 'past', v.pastSingleDate)}
+        ${balanceGauges(v.pastFood, v.pastBurn, 'past', v.pastSingleDate, v.pastCalSkipped)}
         ${v.pastNet ? `
         <div class="net-block">
           <div class="cal-kicker">Net calories, day by day</div>
@@ -13648,10 +13702,18 @@ function mCalCard(dates) {
   // Not this product's subject. See workMode().
   if (workMode()) return '';
 
-  const days = Math.max(1, dates.length);
-  const rows = mTimeRows(dates);
-  const burn = burnFor(rows, state.weightKg, days, dates);
-  const food = foodReport(rows, mMoneyRows(dates), days);
+  /* Over the days with a meal on them, on the same rule the laptop's copy
+     follows: without something eaten there is nothing to weigh the burn
+     against, and the "deficit" that comes back is just the resting figure. See
+     hasFood(). */
+  const all = mTimeRows(dates);
+  const calSet = foodDays(all);
+  const calDates = dates.filter((d) => calSet.has(d));
+  const rows = all.filter((e) => calSet.has(e.date));
+  const days = Math.max(1, calDates.length);
+  const skipped = dates.filter((d) => !calSet.has(d)).length;
+  const burn = burnFor(rows, state.weightKg, days, calDates);
+  const food = foodReport(rows, mMoneyRows(calDates), days);
 
   /* The same source the kcal figure came from — a refined estimate replaces
      the local one everywhere or nowhere — and on the same footing, so the
@@ -13661,6 +13723,12 @@ function mCalCard(dates) {
   const eaten = Math.round(food.kcal);
   const rested = Math.round(burn.restKcal);
   const kicker = days > 1 ? `Total across ${days} days` : 'Daily calorie balance';
+  /* Said, rather than left as a smaller number than the one above it. A reader
+     who logged eleven days and is shown a total across four is owed the
+     sentence that explains the other seven. */
+  const skipLine = skipped
+    ? `${skipped} ${skipped === 1 ? 'day has' : 'days have'} no meal logged and ${skipped === 1 ? 'is' : 'are'} left out — a balance needs both sides. `
+    : '';
 
   const shell = (inner) => `
 <div style="margin-bottom:22px;">
@@ -13673,13 +13741,13 @@ function mCalCard(dates) {
      because the day had not been logged yet. It says so rather than
      disappearing: a card that silently comes and goes reads as a fault. The
      resting figure is still worth showing — it is true whatever you log. */
-  if (!food.kcal && !burn.kcal) {
+  if (!food.kcal) {
     return shell(`
   <div class="card" style="border-radius:16px;padding:16px;gap:0;box-shadow:${M_SHADOW_SM};">
     <div style="font-size:14px;line-height:1.5;color:#575168;">
       Nothing to weigh up yet. Your body spends roughly
       <strong style="color:#16131f;">${Math.round(rested / days).toLocaleString('en-US')} kcal a day</strong> at rest, but a balance
-      needs something on the other side — log a meal or a workout${days === 1
+      needs the other side of it — log what you ate${days === 1
         ? `, or <button data-act="m-steps-open" style="border:0;background:transparent;padding:0;font:inherit;color:#5f3ac9;font-weight:600;text-decoration:underline;cursor:pointer;">add your steps</button>` : ''}.
     </div>
   </div>`);
@@ -13696,7 +13764,7 @@ function mCalCard(dates) {
 
   const stepLine = days === 1
     ? `${burn.steps ? `${burn.steps.toLocaleString('en-US')} steps counted. ` : ''}`
-    : (burn.steps ? `${burn.steps.toLocaleString('en-US')} steps across the window. ` : '');
+    : (burn.steps ? `${burn.steps.toLocaleString('en-US')} steps across the days counted. ` : '');
   /* The average belongs somewhere — it is the figure that compares one window
      to another — just not on a dial labelled with a span. */
   const perDayLine = days > 1
@@ -13713,7 +13781,7 @@ function mCalCard(dates) {
     ${mCalDial(net, deficit ? '#0e9f6e' : '#d92d20', 'scales', `Net ${deficit ? 'deficit' : 'surplus'}`, top)}
   </div>
   <p style="margin:10px 0 0;font-size:11.5px;line-height:1.5;color:#9995ab;">
-    ${esc(perDayLine)}${esc(stepLine)}Rest is worked out from ${burn.assumedWeight
+    ${esc(skipLine)}${esc(perDayLine)}${esc(stepLine)}Rest is worked out from ${burn.assumedWeight
       ? `a default ${DEFAULT_WEIGHT_KG} kg — `
       : `your ${esc(String(state.weightKg))} kg — `}<button data-act="m-weight-open"
       style="border:0;background:transparent;padding:0;font:inherit;color:#5f3ac9;font-weight:600;text-decoration:underline;cursor:pointer;">${burn.assumedWeight ? 'add your weight' : 'edit it'}</button>.

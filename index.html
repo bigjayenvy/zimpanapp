@@ -2545,6 +2545,14 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .cal-weight-unit { font-size: 12.5px; color: var(--color-neutral-700); }
   .cal-weight-note { font-size: 11px; color: var(--color-neutral-600); flex: 1 1 100%; }
 
+  /* Which days the row could not weigh, and why. Sits above the average so the
+     count in the kicker is explained before it is used. */
+  .cal-skip {
+    margin-top: 13px; padding: 9px 12px; border-radius: 10px;
+    background: #fdf1de; border: 1px solid #f0d9ac; color: #7a5410;
+    font-size: 12.5px; line-height: 1.55;
+  }
+
   /* The average day, under a row of dials that now carry the whole window.
      Reads as a sentence rather than as a fifth figure: it is the thing you
      compare one window to another with, and it is not what the row is about. */
