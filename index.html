@@ -264,12 +264,20 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     .m-hero-money.is-s4 { font-size: 18px; }
     .m-hero-money.is-s5 { font-size: 16px; }
   }
+  /* Wraps rather than squeezes: the figure now says which period it covers,
+     and on a 360px phone that plus the way in is more than one line holds. */
   .m-hero-balance {
-    display: flex; align-items: baseline; gap: 10px;
+    display: flex; align-items: baseline; gap: 4px 10px; flex-wrap: wrap;
     margin-top: 12px; padding-top: 11px;
     border-top: 1px solid rgba(255, 255, 255, .22);
     font-size: 12px; opacity: .94;
   }
+  /* Kept whole, so a wrap never leaves "Dhs 22,099.01 ·" at the end of a line
+     with "all time" orphaned under it. */
+  .m-hero-onhand { white-space: nowrap; }
+  /* Which means the way in is what wraps, and when it does it goes to its own
+     line at the right-hand end rather than sitting under the label. */
+  .m-hero-balance > button { margin-left: auto; }
 
   @media (prefers-reduced-motion: reduce) {
     .m-timer-dot { animation: none; }

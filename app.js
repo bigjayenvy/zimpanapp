@@ -14100,7 +14100,10 @@ function mHome() {
          figure on a collision course with the one beside it. -->
     <div class="m-hero-top">
       <div>
-        <div class="m-hero-cap">${single ? 'Logged today' : 'Logged'}</div>
+        <!-- "Hours logged" rather than "Logged": the card has money on it too,
+             and a bare "Logged" over a figure does not say which of the two it
+             is counting. -->
+        <div class="m-hero-cap">${single ? 'Hours logged today' : 'Hours logged'}</div>
         <div class="m-hero-big">${esc(mDur(logged))}</div>
       </div>
       ${workMode() ? `
@@ -14161,19 +14164,36 @@ function mHome() {
       if (workMode()) return '';
       const st = moneyStatus(moneyAll());
       const logs = mMoneyRows(dates).length;
-      /* The row carries the balance, the way in, or both. Kept when there is
+      /* The row carries the figure, the way in, or both. Kept when there is
          only one of them: a stretch with spending but nothing coming in has no
-         balance to state and still has money worth opening, and the balance
-         has always been able to stand on its own. */
+         figure to state and still has money worth opening, and the figure has
+         always been able to stand on its own. */
       if (!st.inCents && !st.asideCents && !logs) return '';
+      /* "On hand" rather than "Balance". This app cannot see a bank, so the
+         word was borrowed from one it does not have — and a figure called a
+         balance beside a bank app that says something else is a figure nobody
+         trusts twice. On hand claims only what it can: what is left of what
+         was logged coming in. "Left" goes with it, because on hand already
+         says that.
+
+         And it says which period it is. Everything else on this card is the
+         window the chips at the top choose; this is the whole account, and the
+         two money figures above are not the sum it comes from — they cover a
+         window, and they count off-budget spending this holds aside. A reader
+         who tries the subtraction gets a different number twice over, and had
+         nothing on the card to tell them why. */
       return `<div class="m-hero-balance">
         ${st.inCents || st.asideCents ? `
-        <span class="m-hero-cap" style="flex:none;padding-top:1px;">Balance</span>
-        <span style="flex:1;min-width:0;">${esc(st.tone === 'left' ? `${amount(st.leftCents / 100)} left` : st.short)}${
-          st.asideCents ? ` · ${esc(amount(st.asideCents / 100))} aside` : ''}</span>` : '<span style="flex:1;"></span>'}
-        <!-- Opposite the balance, because it answers the question the balance
-             raises: a figure like "Dhs 22,442 left" is only checkable against
-             the rows it was made of. -->
+        <span class="m-hero-cap" style="flex:none;padding-top:1px;">On hand</span>
+        <!-- The figure and the period it covers move as one: split across a
+             wrap they left a middot hanging at the end of a line. The money
+             held aside is its own clause and may wrap on its own. -->
+        <span class="m-hero-onhand">${esc(st.tone === 'left' ? amount(st.leftCents / 100) : st.short)}<span
+          style="opacity:.72;"> · all time</span></span>${
+  st.asideCents ? `<span style="opacity:.8;">· ${esc(amount(st.asideCents / 100))} aside</span>` : ''}` : '<span style="flex:1;"></span>'}
+        <!-- Opposite the figure, because it answers the question the figure
+             raises: "Dhs 22,442 on hand" is only checkable against the rows it
+             was made of. -->
         ${logs ? `<button data-act="money-log-open"
           style="flex:none;border:0;background:transparent;padding:0;cursor:pointer;font:inherit;font-size:12px;font-weight:600;color:#fff;text-decoration:underline;text-underline-offset:3px;">View Money Logs</button>` : ''}
       </div>`;
