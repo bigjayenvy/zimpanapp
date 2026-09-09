@@ -5809,15 +5809,9 @@ const blogFoot = () => `
       ${legalLinks('var(--color-neutral-600)')}
     </footer>`;
 
-function blogIndex() {
-  const data = state.blogList;
-  const body = state.blogBusy && data === null
-    ? '<p class="blog-note">Loading…</p>'
-    : state.blogError
-      ? `<p class="blog-note">${esc(state.blogError)}</p>`
-      : !data || !data.posts || !data.posts.length
-        ? '<p class="blog-note">Nothing published yet. Come back soon.</p>'
-        : `<div class="blog-grid">${data.posts.map((post) => `
+/* One card, so the index and the strip at the foot of a post cannot drift into
+   looking like two different things. */
+const blogCard = (post) => `
           <article class="blog-card">
             <a class="blog-card-link" href="${esc(pathForRoute('blogs', post.slug))}"
                data-act="go-post" data-slug="${esc(post.slug)}">
@@ -5828,7 +5822,55 @@ function blogIndex() {
                 ${post.excerpt ? `<span class="blog-card-ex">${esc(post.excerpt)}</span>` : ''}
               </span>
             </a>
-          </article>`).join('')}</div>`;
+          </article>`;
+
+/* The way on from the end of a post.
+
+   A reader who has finished an article is the most likely person on the site to
+   read a second one, and the only thing offered there was a link back to the
+   index — a list they have to scan again. Three of the newest, minus the one
+   they just read.
+
+   Nothing when there is nothing to offer: a heading called "Read more like
+   this" over an empty space is worse than no heading, and a site with one post
+   is a site with one post. It is also silent while the list is still coming —
+   the article does not wait on it, so the strip simply appears when it lands.
+
+   "Like this" is a promise about subject the list cannot keep yet. The posts
+   are ordered by date and that is the honest reading of it: more from the same
+   blog, newest first. Worth revisiting the day posts carry tags. */
+function blogMore(slug) {
+  const all = (state.blogList && state.blogList.posts) || [];
+  const rest = all.filter((p) => p && p.slug && p.slug !== slug).slice(0, 3);
+  if (!rest.length) return '';
+  return `
+    <section class="blog-wrap blog-more">
+      <h2 class="blog-more-head">Read more like this</h2>
+      <div class="blog-grid">${rest.map(blogCard).join('')}</div>
+    </section>`;
+}
+
+/* Back to top, on both blog pages. The app's own copy rides in the column with
+   Ask Zimpan and the pads, none of which belong on a public article, so the
+   blog gets the button on its own — same class, same scroll rule, its own
+   corner. paintScrollChrome() is what turns it on, and the blog branch of
+   render() calls it like every other screen does. */
+const blogTop = () => `
+    <div class="blog-fabs no-print">
+      <button class="backtotop" data-backtotop data-act="scroll-top" aria-label="Back to top">
+        ${NAV_ICONS.up}
+      </button>
+    </div>`;
+
+function blogIndex() {
+  const data = state.blogList;
+  const body = state.blogBusy && data === null
+    ? '<p class="blog-note">Loading…</p>'
+    : state.blogError
+      ? `<p class="blog-note">${esc(state.blogError)}</p>`
+      : !data || !data.posts || !data.posts.length
+        ? '<p class="blog-note">Nothing published yet. Come back soon.</p>'
+        : `<div class="blog-grid">${data.posts.map(blogCard).join('')}</div>`;
 
   return `
   <div class="landing">
@@ -5842,6 +5884,7 @@ function blogIndex() {
     </section>
     <section class="blog-wrap">${body}</section>
     ${blogFoot()}
+    ${blogTop()}
   </div>`;
 }
 
@@ -5864,14 +5907,25 @@ function blogPostPage() {
              the only unescaped string in this file, and that is where it is
              made safe. -->
         <div class="blog-body">${post.body}</div>
-        <button class="blog-back" data-act="go-blogs">← All posts</button>
       </article>`;
+
+  /* Below the read-more strip rather than above it. "All posts" is the way out;
+     three articles are the way on, and the way on belongs first. */
+  const back = state.blogPost
+    ? `
+    <section class="blog-wrap blog-wrap-back">
+      <button class="blog-back" data-act="go-blogs">← All posts</button>
+    </section>`
+    : '';
 
   return `
   <div class="landing">
     ${blogBar()}
     <section class="blog-wrap blog-wrap-post">${body}</section>
+    ${state.blogPost ? blogMore(state.blogPost.slug) : ''}
+    ${back}
     ${blogFoot()}
+    ${blogTop()}
   </div>`;
 }
 
@@ -9579,6 +9633,8 @@ function render() {
       + (panel ? authScreen() : '') + legalSheet() + helpDialog() + closeAccountDialog();
     if (scrollY && window.scrollY !== scrollY) window.scrollTo(0, scrollY);
     restoreFocus(f);
+    // The tree was just replaced, so the button has to be told where the page is.
+    paintScrollChrome();
     if (panel) mountGoogleButton();
     return;
   }
@@ -10401,6 +10457,11 @@ async function loadBlog() {
   try {
     if (slug) {
       state.blogPost = await API.blog.read(slug);
+      /* And then the others, for the strip at the foot of it. Not awaited: the
+         article is the page, and it should not wait on a list that only
+         furnishes what comes after it. Skipped when the list is already here —
+         a reader who arrived from the index has it. */
+      if (!state.blogList) loadBlogSiblings();
     } else {
       state.blogList = await API.blog.list();
     }
@@ -10415,6 +10476,17 @@ async function loadBlog() {
   }
   state.blogBusy = false;
   render();
+}
+
+/* The rest of the blog, fetched for the "Read more like this" strip and for
+   nothing else. Silent on failure by design: the article is on screen and
+   readable, and an apology about a list nobody asked for would be the only
+   thing wrong with the page. blogMore() simply draws nothing. */
+async function loadBlogSiblings() {
+  try {
+    state.blogList = await API.blog.list();
+    render();
+  } catch (err) { /* the strip stays away */ }
 }
 
 async function loadTeam() {
@@ -11372,7 +11444,9 @@ const ACTIONS = {
     mBooted = false;
     signOut();
   },
-  'scroll-top': () => window.scrollTo({ top: 0, behavior: 'smooth' }),
+  /* Was declared twice in this object. The second won and the first was dead
+     code that read as the live one — and it ignored prefers-reduced-motion,
+     which is the half somebody would have gone on trusting. */
   'scroll-features': () => scrollToAnchor('features'),
   'scroll-pricing': () => scrollToAnchor('pricing'),
 

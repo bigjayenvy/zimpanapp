@@ -1406,10 +1406,33 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 
   .blog-cover { width: 100%; border-radius: 14px; margin: 24px 0 0; display: block; }
   .blog-back {
-    margin-top: 34px; border: 0; background: transparent; padding: 0;
+    border: 0; background: transparent; padding: 0;
     font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
     color: var(--color-accent-700); text-decoration: underline; text-underline-offset: 3px;
   }
+
+  /* — where to go after the last paragraph —
+     The strip sits between the article and the way out, so it gets the rule
+     above it: what follows is a different thing to read, not more of the one
+     just finished. Its own top padding, because two stacked .blog-wraps would
+     otherwise put 74px of nothing between the text and its own heading. */
+  .blog-more {
+    padding-top: 30px; padding-bottom: 8px;
+    border-top: 1px solid var(--color-divider);
+  }
+  .blog-more-head {
+    font-family: var(--font-heading); font-weight: 700; font-size: 21px;
+    line-height: 1.3; margin: 0 0 4px;
+  }
+  .blog-wrap-back { padding-top: 8px; }
+  /* The article's own footer keeps the rule when there is no strip to carry it
+     — a post on a blog of one still ends rather than stopping. */
+  .blog-wrap-post + .blog-wrap-back { padding-top: 30px; border-top: 1px solid var(--color-divider); }
+
+  /* Its own corner, because the app's column of pads and Ask Zimpan has no
+     business on a public article. Same offsets, so the two never look like
+     different buttons on the two halves of the site. */
+  .blog-fabs { position: fixed; right: 16px; bottom: 20px; z-index: 46; }
 
   /* — a post's own body —
      Every rule here is scoped under .blog-body, because this is the one place
