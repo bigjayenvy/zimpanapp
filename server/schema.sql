@@ -375,7 +375,7 @@ CREATE TABLE IF NOT EXISTS team_projects (
    that are null eleven times out of twelve.
 
    Nothing personal is in here. The only entries an admin can touch are the
-   ones carrying a project, which is the team's own record; what somebody ate,
+   ones carrying a project, which is the team's own record. What somebody ate,
    spent or slept is not reachable by any route that writes to this table. */
 CREATE TABLE IF NOT EXISTS team_audit (
   id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,

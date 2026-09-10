@@ -150,10 +150,25 @@ export async function migrate() {
     await admin.end();
   }
 
-  // Comments are stripped before splitting, not filtered after: a leading
-  // comment block shares its chunk with the statement that follows it, so
-  // skipping chunks that start with '--' would drop that statement too.
-  const sql = readFileSync(join(HERE, 'schema.sql'), 'utf8').replace(/^\s*--.*$/gm, '');
+  /* Comments are stripped before splitting, not filtered after: a leading
+     comment block shares its chunk with the statement that follows it, so
+     skipping chunks that start with '--' would drop that statement too.
+
+     Both kinds now, and this is why. Statements are separated by splitting on
+     a semicolon, which knows nothing about what that semicolon is inside — so
+     one written in the middle of a block comment cut a table's comment in half
+     and handed MySQL two fragments, neither of which was a statement.
+     Migration then failed on every boot, and a whole deployment sat behind a
+     "the database is temporarily unavailable" banner on account of a semicolon
+     in a sentence.
+
+     No string literal in this schema opens a block comment, so a non-greedy
+     sweep is safe here. It also makes migrateStep name the DDL line rather
+     than the first line of the prose above it, which is what somebody reading
+     /api/health actually needs. */
+  const sql = readFileSync(join(HERE, 'schema.sql'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*--.*$/gm, '');
   for (const statement of sql.split(';')) {
     const trimmed = statement.trim();
     // multipleStatements stays off, so each DDL statement goes over on its own.
