@@ -358,6 +358,40 @@ CREATE TABLE IF NOT EXISTS team_projects (
   CONSTRAINT fk_tp_team FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+/* ── the audit trail ──
+
+   What an admin did to somebody else's record, kept because "an admin can edit
+   a member's hours" is only acceptable if the member can see that it happened.
+   A timesheet that can be changed silently is not a record of anything.
+
+   Append-only by intent: nothing in the app updates or deletes a row here, and
+   the trail outlives the accounts in it. actor_id is set to NULL when the
+   person who acted is removed, but actor_label keeps the address they acted
+   under, so a year-old change still says who made it.
+
+   `detail` is JSON because what a change consists of differs by kind — an hour
+   edit has a before and an after per field, a role change has two roles, a
+   plan change has two plan keys. A column per field would be a dozen columns
+   that are null eleven times out of twelve.
+
+   Nothing personal is in here. The only entries an admin can touch are the
+   ones carrying a project, which is the team's own record; what somebody ate,
+   spent or slept is not reachable by any route that writes to this table. */
+CREATE TABLE IF NOT EXISTS team_audit (
+  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  team_id     VARCHAR(64)  NOT NULL,
+  actor_id    INT UNSIGNED NULL,
+  actor_label VARCHAR(190) NOT NULL,
+  action      VARCHAR(40)  NOT NULL,
+  subject     VARCHAR(190) NULL,
+  detail      JSON         NULL,
+  created_at  BIGINT       NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_audit_team (team_id, created_at),
+  CONSTRAINT fk_audit_team FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
+  CONSTRAINT fk_audit_actor FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 /* ── the blog ──
 
    Posts written in the admin dashboard and read by anyone. The only table in

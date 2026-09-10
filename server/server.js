@@ -34,7 +34,7 @@ import {
   TeamError, membershipFor, createTeam, teamOverview, inviteMember, revokeInvite,
   acceptInvite, setMemberRole, removeMember, saveProject, deleteProject,
   memberEntries, editMemberEntry, teamDashboard, teamNow, setTeamPlan, resendInvite, PLANS,
-  teamHoursExport
+  teamHoursExport, teamAudit
 } from './teams.js';
 
 const ROOT = join(HERE, '..');
@@ -876,6 +876,11 @@ app.get('/api/team/dashboard', requireUser, team((req) =>
 app.get('/api/team/export', requireUser, team((req) =>
   teamHoursExport(req.user.id, req.query.from, req.query.to).then((rows) => ({ rows }))));
 
+/* What was done to this team's records, and by whom. requireUser and nothing
+   more: every member may read it, which is the point of keeping it. */
+app.get('/api/team/audit', requireUser, team((req) =>
+  teamAudit(req.user.id, { limit: req.query.limit, before: req.query.before })));
+
 /* Polled while the Members tab is open, so the date comes from the caller: the
    server has no idea what day it is where the team is sitting, and a timezone
    guessed here would put a whole office's morning on yesterday. Validated as a
@@ -887,7 +892,7 @@ app.get('/api/team/now', requireUser, team((req) => teamNow(req.user.id, req.que
 app.post('/api/admin/team-plan', requireUser, team(async (req) => {
   if (!isAdminRole(req.user.role)) throw new TeamError('Not yours to do.', 403);
   const b = req.body || {};
-  return setTeamPlan(b.teamId, b.plan);
+  return setTeamPlan(b.teamId, b.plan, { email: req.user.email });
 }));
 
 app.get('/api/team/plans', (req, res) => res.json({ plans: PLANS }));

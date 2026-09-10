@@ -18,6 +18,7 @@
 
 import crypto from 'node:crypto';
 import { query, one, now } from './db.js';
+import { record, changed, list as auditList } from './audit.js';
 
 export class TeamError extends Error {
   constructor(message, status) { super(message); this.status = status || 400; }
@@ -179,6 +180,15 @@ const ADMIN_ENTRY_WHERE = adminEntryWhere('');
 export const WORK_ACCOUNT_NEEDED =
   'Zimpan for Teams needs its own account. Sign up again with your work email — a personal Zimpan cannot become a team one.';
 
+/* Who did it, in a form the trail can keep after the account is gone. Read off
+   the membership row rather than fetched, because every write already has one
+   in hand and a second query per change would be a query per change. */
+const actor = (m, userId) => ({
+  teamId: m.teamId,
+  actorId: userId,
+  actorLabel: m.userName || m.userEmail || `user ${userId}`
+});
+
 export async function requireWorkAccount(userId) {
   const row = await one('SELECT kind FROM users WHERE id = ?', [userId]);
   if (!row) throw new TeamError('No such account.', 404);
@@ -192,8 +202,15 @@ export async function requireWorkAccount(userId) {
 export async function membershipFor(userId) {
   if (!userId) return null;
   return one(
-    `SELECT tm.team_id AS teamId, tm.role, t.name, t.plan, t.seat_cap AS seatCap, t.trial_ends_at AS trialEndsAt
-       FROM team_members tm JOIN teams t ON t.id = tm.team_id
+    /* The member's own address comes back with their membership. Every write in
+       this file already reads this row, and the audit trail needs to say who
+       acted — fetching that separately would be one more query on every change
+       for a fact this join already had. */
+    `SELECT tm.team_id AS teamId, tm.role, t.name, t.plan, t.seat_cap AS seatCap, t.trial_ends_at AS trialEndsAt,
+            u.email AS userEmail, u.display_name AS userName
+       FROM team_members tm
+       JOIN teams t ON t.id = tm.team_id
+       JOIN users u ON u.id = tm.user_id
       WHERE tm.user_id = ?`, [userId]);
 }
 
@@ -268,6 +285,10 @@ export async function createTeam(userId, name) {
       [id, newId(), name, color, i, t]);
   }
 
+  /* The first line of the trail, so a team's history starts where the team
+     does rather than at whatever somebody happened to change first. */
+  record({ teamId: id, actorId: userId, actorLabel: me.email,
+    action: 'team.create', subject: clean, detail: { plan: 'trial' } });
   return { id, name: clean, plan: 'trial', role: 'super' };
 }
 
@@ -346,6 +367,7 @@ export async function inviteMember(userId, email, role) {
      the letter needs them and the route has neither: membershipFor is the only
      thing that knows which team this is, and it is called in here. */
   const asker = await one('SELECT email FROM users WHERE id = ?', [userId]);
+  record({ ...actor(m, userId), action: 'member.invite', subject: addr, detail: { role: want } });
   return {
     email: addr, role: want, token,
     expiresAt: t + INVITE_DAYS * 86400000,
@@ -383,6 +405,7 @@ export async function resendInvite(userId, email) {
     [hashToken(token), t, t + INVITE_DAYS * 86400000, userId, m.teamId, addr]);
 
   const asker = await one('SELECT email FROM users WHERE id = ?', [userId]);
+  record({ ...actor(m, userId), action: 'member.invite.resend', subject: addr });
   return {
     email: addr, role: inv.role, token,
     expiresAt: t + INVITE_DAYS * 86400000,
@@ -392,7 +415,10 @@ export async function resendInvite(userId, email) {
 
 export async function revokeInvite(userId, email) {
   const m = await requireMembership(userId, 'admin');
-  await query('DELETE FROM team_invites WHERE team_id = ? AND email = ?', [m.teamId, normaliseEmail(email)]);
+  const addr = normaliseEmail(email);
+  const res = await query('DELETE FROM team_invites WHERE team_id = ? AND email = ?', [m.teamId, addr]);
+  // Only when there was one to revoke: a click on a stale button is not an act.
+  if (res.affectedRows) record({ ...actor(m, userId), action: 'member.invite.revoke', subject: addr });
   return { ok: true };
 }
 
@@ -424,6 +450,11 @@ export async function acceptInvite(userId, userEmail, token) {
   await query('INSERT INTO team_members (team_id, user_id, role, joined_at, updated_at) VALUES (?, ?, ?, ?, ?)',
     [inv.teamId, userId, inv.role, t, t]);
   await query('UPDATE team_invites SET accepted_at = ? WHERE id = ?', [t, inv.id]);
+  /* The one line in the trail whose actor is not an admin. Somebody arriving on
+     the team is the other half of the invitation above it, and a roster that
+     records who was asked but not who came is half a record. */
+  record({ teamId: inv.teamId, actorId: userId, actorLabel: normaliseEmail(userEmail),
+    action: 'member.join', subject: normaliseEmail(userEmail), detail: { role: inv.role } });
   return { teamId: inv.teamId, role: inv.role };
 }
 
@@ -442,6 +473,9 @@ export async function setMemberRole(userId, targetUserId, role) {
 
   await query('UPDATE team_members SET role = ?, updated_at = ? WHERE team_id = ? AND user_id = ?',
     [role, now(), m.teamId, targetUserId]);
+  const who = await one('SELECT email FROM users WHERE id = ?', [targetUserId]);
+  record({ ...actor(m, userId), action: 'member.role',
+    subject: who ? who.email : String(targetUserId), detail: { role: { from: target.role, to: role } } });
   return { userId: Number(targetUserId), role };
 }
 
@@ -456,7 +490,10 @@ export async function removeMember(userId, targetUserId) {
   /* Their hours stay. A team's record of what a project cost should not change
      because somebody left, so the rows are unhooked from the person rather
      than deleted — team_id and project survive, the membership does not. */
+  const who = await one('SELECT email FROM users WHERE id = ?', [targetUserId]);
   await query('DELETE FROM team_members WHERE team_id = ? AND user_id = ?', [m.teamId, targetUserId]);
+  record({ ...actor(m, userId), action: 'member.remove',
+    subject: who ? who.email : String(targetUserId), detail: { role: target.role } });
   return { ok: true };
 }
 
@@ -470,12 +507,28 @@ export async function saveProject(userId, project) {
   const position = Number.isFinite(Number(project && project.position)) ? Number(project.position) : 0;
   const archived = project && project.archived ? 1 : 0;
 
+  /* Read before the write so the trail can say what changed rather than only
+     what it became. A rename and an archive are different events to whoever
+     reads this back, and one upsert is both. */
+  const was = await one('SELECT name, color, archived, deleted FROM team_projects WHERE team_id = ? AND id = ?',
+    [m.teamId, id]);
   await query(
     `INSERT INTO team_projects (team_id, id, name, color, position, archived, updated_at, deleted)
      VALUES (?, ?, ?, ?, ?, ?, ?, 0)
      ON DUPLICATE KEY UPDATE name = VALUES(name), color = VALUES(color), position = VALUES(position),
        archived = VALUES(archived), updated_at = VALUES(updated_at), deleted = 0`,
     [m.teamId, id, name, color, position, archived, now()]);
+
+  const fresh = !was || was.deleted;
+  const moved = fresh ? {} : changed({ name: was.name, color: was.color, archived: was.archived },
+    { name, color, archived });
+  const action = fresh ? 'project.create'
+    : moved.archived ? (archived ? 'project.archive' : 'project.restore')
+      : 'project.rename';
+  // A save that changed nothing is not an event.
+  if (fresh || Object.keys(moved).length) {
+    record({ ...actor(m, userId), action, subject: name, detail: fresh ? null : moved });
+  }
   return { id, name, color, position, archived: !!archived };
 }
 
@@ -484,9 +537,12 @@ export async function deleteProject(userId, projectId) {
   /* Buried rather than dropped, like every other row this app deletes: the
      hours logged against it are still real, and a project row that vanishes
      turns them into time nobody can account for. */
+  const was = await one('SELECT name FROM team_projects WHERE team_id = ? AND id = ?',
+    [m.teamId, String(projectId || '')]);
   const res = await query('UPDATE team_projects SET deleted = 1, updated_at = ? WHERE team_id = ? AND id = ?',
     [now(), m.teamId, String(projectId || '')]);
   if (!res.affectedRows) throw new TeamError('No such project.', 404);
+  record({ ...actor(m, userId), action: 'project.delete', subject: was ? was.name : String(projectId) });
   return { ok: true };
 }
 
@@ -621,7 +677,12 @@ export async function editMemberEntry(userId, entryId, patch) {
   const fields = cleanEntryPatch(patch);
   if (!Object.keys(fields).length) throw new TeamError('Nothing to change.');
 
-  const row = await one(`SELECT user_id AS userId FROM entries WHERE ${ADMIN_ENTRY_WHERE} AND id = ?`,
+  /* The whole row, not just its owner. This is the change a member has the
+     most right to see recorded, and "an admin edited an hour" without what it
+     was before is not a record of anything. */
+  const row = await one(
+    `SELECT user_id AS userId, date, activity, from_min AS \`from\`, to_min AS \`to\`, project_id AS project
+       FROM entries WHERE ${ADMIN_ENTRY_WHERE} AND id = ?`,
     [m.teamId, String(entryId || '')]);
   if (!row) throw new TeamError('No such entry on this team.', 404);
 
@@ -638,7 +699,35 @@ export async function editMemberEntry(userId, entryId, patch) {
      happened only on the way in is a check that stops being true the moment
      anything runs between the two. */
   await query(`UPDATE entries SET ${sets.join(', ')} WHERE ${ADMIN_ENTRY_WHERE} AND id = ?`, args);
+
+  /* Project ids mean nothing to a person reading this back a month later, so
+     both sides are resolved to names. A project that has since been deleted
+     still has a row, so this keeps working after it goes. */
+  const moved = changed(row, fields);
+  if (moved.project) {
+    const names = await query('SELECT id, name FROM team_projects WHERE team_id = ? AND id IN (?, ?)',
+      [m.teamId, moved.project.from || '', moved.project.to || '']);
+    const byId = new Map(names.map((p) => [String(p.id), p.name]));
+    moved.project = { from: byId.get(String(moved.project.from)) || null,
+      to: byId.get(String(moved.project.to)) || null };
+  }
+  if (Object.keys(moved).length) {
+    const whose = await one('SELECT email FROM users WHERE id = ?', [row.userId]);
+    record({ ...actor(m, userId), action: 'entry.edit',
+      subject: whose ? whose.email : String(row.userId),
+      detail: { date: row.date, ...moved } });
+  }
   return { id: String(entryId), ...fields };
+}
+
+/* The trail, for anybody on the team.
+
+   Deliberately not admin-only. The point of recording what an admin did to a
+   member's hours is that the member can see it; a log only the people who can
+   write to it may read is not an audit trail, it is a diary. */
+export async function teamAudit(userId, { limit, before } = {}) {
+  const m = await requireMembership(userId);
+  return auditList(m.teamId, { limit, before });
 }
 
 /* ── the owner's dashboard ──
@@ -672,10 +761,25 @@ export async function teamDashboard(userId, from, to) {
 /* Set by hand once payment clears — there is no webhook. Called from the site
    admin surface, never by a team's own owner, who would otherwise be one
    request away from the unlimited plan. */
-export async function setTeamPlan(teamId, plan) {
+export async function setTeamPlan(teamId, plan, by) {
   if (!PLANS[plan]) throw new TeamError('No such plan.');
+  const id = String(teamId || '');
+  const was = await one('SELECT plan, seat_cap AS cap FROM teams WHERE id = ?', [id]);
   const res = await query('UPDATE teams SET plan = ?, seat_cap = ?, updated_at = ? WHERE id = ?',
-    [plan, capFor(plan), now(), String(teamId || '')]);
+    [plan, capFor(plan), now(), id]);
   if (!res.affectedRows) throw new TeamError('No such team.', 404);
+
+  /* The one change in the trail a team cannot make itself. It is set by hand
+     from the site's own dashboard once a payment is matched, and the team has
+     more right to see it than any of the others: it is the line that says why
+     their seat count moved. The actor is the site admin, named by the address
+     they were signed in as, and actorId stays null — they are not a member of
+     this team and never were. */
+  if (!was || was.plan !== plan) {
+    record({ teamId: id, actorId: null, actorLabel: (by && by.email) || 'Zimpan',
+      action: 'team.plan', subject: PLANS[plan].label,
+      detail: { plan: { from: was ? was.plan : null, to: plan },
+        seats: { from: was ? Number(was.cap) : null, to: capFor(plan) } } });
+  }
   return { teamId, plan, cap: capFor(plan) };
 }

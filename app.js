@@ -627,6 +627,7 @@ const API = {
     editEntry: (id, patch) => api(`/api/team/entry/${encodeURIComponent(id)}`, { method: 'POST', body: patch }),
     dashboard: (from, to) => api(`/api/team/dashboard?from=${encodeURIComponent(from || '')}&to=${encodeURIComponent(to || '')}`),
     exportHours: (from, to) => api(`/api/team/export?from=${encodeURIComponent(from || '')}&to=${encodeURIComponent(to || '')}`),
+    audit: (before) => api(`/api/team/audit${before ? `?before=${encodeURIComponent(before)}` : ''}`),
     /* The date is sent because the server cannot know it. It has no idea what
        day it is where the team is sitting, and a timezone guessed there would
        put a whole office's morning on yesterday. */
@@ -872,6 +873,11 @@ const state = {
   exportKind: 'time',
   exportAll: false,
   exportBusy: '',
+
+  /* The team's audit trail, as far as it has been read. Paged by the id of the
+     oldest line held rather than by an offset: the table is only ever appended
+     to, so an id is a stable place to carry on from. */
+  teamAudit: null,
 
   entries: stored.entries,
   money: stored.money,
@@ -10344,6 +10350,7 @@ function render() {
     padPickShow();
     paintTeamDrawer();
     teamLiveWatch();
+    teamHistoryWatch();
     return;
   }
 
@@ -10412,6 +10419,7 @@ function render() {
   padPickShow();
   paintTeamDrawer();
   teamLiveWatch();
+  teamHistoryWatch();
   // The dialog exists to be typed in, so put the caret there straight away.
   const note = root.querySelector('[data-k="note-draft"]');
   if (note && document.activeElement !== note) note.focus();
@@ -11346,6 +11354,16 @@ async function loadTeamLive(quiet) {
 let teamLiveTimer = null;
 const TEAM_LIVE_MS = 30000;
 
+/* The trail is read when its tab is showing and nothing has been read yet.
+   Driven from the paint rather than from the tab button, because the tab can
+   be the one already open when the panel is opened — a render is the only
+   moment that knows what is actually on screen. */
+function teamHistoryWatch() {
+  if (state.teamOpen && state.teamTab === 'history' && !state.teamAudit && state.teamBusy !== 'audit') {
+    loadTeamAudit();
+  }
+}
+
 function teamLiveWatch() {
   const wanted = !!(state.teamOpen && state.teamTab === 'people'
     && teamIsAdmin() && state.team && state.team.team);
@@ -11369,6 +11387,24 @@ function teamLiveWatch() {
     teamLiveTimer = null;
     state.teamLive = null;
     state.teamLiveOpen = null;
+  }
+}
+
+/* Appends rather than replaces when it is asked for more, so reading back
+   through a long history does not lose the lines already on screen. */
+async function loadTeamAudit(before) {
+  state.teamBusy = 'audit'; state.teamError = '';
+  render();
+  try {
+    const res = await API.team.audit(before);
+    state.teamAudit = before && state.teamAudit
+      ? { rows: state.teamAudit.rows.concat(res.rows || []), next: res.next }
+      : { rows: res.rows || [], next: res.next };
+  } catch (err) {
+    if (!before) state.teamAudit = { rows: [], next: null };
+    state.teamError = err.message || 'Could not read the history.';
+  } finally {
+    state.teamBusy = ''; render();
   }
 }
 
@@ -11403,7 +11439,8 @@ async function teamEdit(id, patch) {
 /* Billing is not in this list on purpose: it is the owner's errand rather than
    a view of the team, and it sits under the dialog's own buttons instead of
    competing with the four tabs that are about the work. */
-const TEAM_TABS = [['people', 'Members'], ['projects', 'Categories/Projects'], ['hours', 'Team Hours'], ['dashboard', 'Dashboard']];
+const TEAM_TABS = [['people', 'Members'], ['projects', 'Categories/Projects'], ['hours', 'Team Hours'],
+  ['dashboard', 'Dashboard'], ['history', 'History']];
 
 const teamStatusOf = () => (state.team && state.team.team && state.team.team.status) || 'trial';
 const teamExpired = () => teamStatusOf() === 'expired';
@@ -11725,12 +11762,68 @@ function teamStartBody() {
 
 /* Each tab is a different job, so the dialog says which one you are in rather
    than wearing the same shield for all five. */
+/* ── what has been changed ──
+
+   Every member can read this, not only the people who can write to it. An
+   admin may edit somebody's logged hour; the answer to "is that acceptable" is
+   that the person whose hour it was can see it happened, who did it and what
+   it was before. A log only admins could open would be the wrong answer.
+
+   Each line reads as a sentence — who, what they did, to whom — with the
+   before-and-after underneath it where there is one. The phrasing comes from
+   the server so the trail says the same thing wherever it is read. */
+function teamHistoryTab() {
+  const log = state.teamAudit;
+  /* Nothing read yet is not the same as nothing to read, and saying "nothing
+     has been changed" before asking would be a lie the panel tells itself. The
+     ask is kicked off after the paint — see teamHistoryWatch() — so this is
+     only ever the moment before it lands. */
+  if (!log) return '<p class="tm-empty">Reading…</p>';
+  if (!log.rows.length) return teamNothing('history', 'Nothing has been changed',
+    'When an admin edits an hour, moves somebody’s role or renames a project, it is written here — for everyone on the team to read, not only for admins.');
+
+  const when = (at) => {
+    const d = new Date(Number(at) || 0);
+    return `${dayLabel(iso(d))}, ${clock12(d.getHours() * 60 + d.getMinutes())}`;
+  };
+  /* Field names as a person would say them, and values in the units a person
+     reads. A minute count is the app's own storage, not something to show. */
+  const FIELD = { from: 'Start', to: 'End', date: 'Date', activity: 'Activity',
+    project: 'Project', role: 'Role', name: 'Name', color: 'Colour',
+    archived: 'Archived', plan: 'Plan', seats: 'Seats' };
+  const value = (key, v) => {
+    if (v == null || v === '') return '—';
+    if (key === 'from' || key === 'to') return clock12(Number(v));
+    if (key === 'archived') return Number(v) ? 'yes' : 'no';
+    return String(v);
+  };
+  const moved = (detail) => Object.keys(detail || {})
+    .filter((k) => detail[k] && typeof detail[k] === 'object' && 'to' in detail[k])
+    .map((k) => `<span class="tm-hist-move"><b>${esc(FIELD[k] || k)}</b>
+      <s>${esc(value(k, detail[k].from))}</s> → <em>${esc(value(k, detail[k].to))}</em></span>`).join('');
+
+  return `
+    ${log.rows.map((r) => `
+    <div class="tm-hist">
+      <div class="tm-hist-line">
+        <strong>${esc(r.actor)}</strong> ${esc(r.says)}${r.subject ? ` <strong>${esc(r.subject)}</strong>` : ''}
+      </div>
+      ${r.detail && r.detail.date ? `<div class="tm-hist-on">on ${esc(dayLabel(r.detail.date))}</div>` : ''}
+      ${moved(r.detail) ? `<div class="tm-hist-moves">${moved(r.detail)}</div>` : ''}
+      <div class="tm-hist-when">${esc(when(r.at))}</div>
+    </div>`).join('')}
+    ${log.next ? `<div class="tm-more"><button class="tm-mini" data-act="team-audit-more"${
+  state.teamBusy === 'audit' ? ' disabled' : ''}>${state.teamBusy === 'audit' ? 'Reading…' : 'Show older'}</button></div>` : ''}
+    <p class="tm-foot">Everyone on the team can read this. Nothing personal is in it — only hours logged against a project can be edited by an admin, and only those edits are recorded.</p>`;
+}
+
 const TEAM_TAB_FACE = {
   people: ['shield', 'Building Your Team', 'var(--color-accent)', 'Invite Team Members'],
   projects: ['clipboard', 'What they log against', '#0e9f6e', 'Add Projects or Tasks Categories'],
   hours: ['clock', 'What was logged', '#4f46e5', "See members' activities"],
   dashboard: ['insights', 'Where the hours went', '#7856f5', 'Your teams productivity insights'],
-  billing: ['scales', 'What it costs', 'var(--zg-donate)', 'Your plan and billing']
+  billing: ['scales', 'What it costs', 'var(--zg-donate)', 'Your plan and billing'],
+  history: ['history', 'What has been changed', '#4a2458', 'Who did what, and when']
 };
 
 function teamSheet() {
@@ -11754,6 +11847,7 @@ function teamSheet() {
         : state.teamTab === 'hours' && teamIsAdmin() ? teamHoursTab()
         : state.teamTab === 'dashboard' && teamIsSuper() ? teamDashboardTab()
         : state.teamTab === 'billing' && teamIsSuper() ? teamBillingTab()
+        : state.teamTab === 'history' ? teamHistoryTab()
         : teamPeopleTab()}
     </div>
     ${state.teamError ? `<p class="tm-err">${esc(state.teamError)}</p>` : ''}
@@ -12910,6 +13004,11 @@ const ACTIONS = {
     render();
   },
 
+  'team-audit-more': () => {
+    const at = state.teamAudit && state.teamAudit.next;
+    if (at) loadTeamAudit(at);
+  },
+
   'team-span': (el) => {
     const days = el.dataset.days;
     if (days === 'custom') {
@@ -12937,6 +13036,12 @@ const ACTIONS = {
     state.teamError = ''; state.teamNotice = '';
     // A different tab is a different list, so it starts at its own top.
     teamDrawerScroll = 0;
+    /* Cleared before the paint, not after it. This is the tab somebody opens to
+       find out what just happened, so a cached answer is the one thing it must
+       not give — and clearing it afterwards left the old lines on screen with
+       nothing scheduled to replace them. teamHistoryWatch() asks for the new
+       ones once this render has landed. */
+    if (state.teamTab === 'history') state.teamAudit = null;
     render();
     if (state.teamTab === 'dashboard') loadTeamDashboard();
   },

@@ -2375,6 +2375,30 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--color-neutral-600);
   }
   .tm-dates .input { width: 100%; min-width: 0; padding: 6px 10px; font-size: 12.5px; }
+  /* ── what has been changed ──
+     One line per change, read as a sentence, with the before-and-after under
+     it where there is one. Struck-through for what it was, accented for what
+     it became, so the direction is legible without reading the words. */
+  .tm-hist {
+    padding: 11px 0; border-bottom: 1px solid var(--color-divider);
+  }
+  .tm-hist:last-of-type { border-bottom: 0; }
+  .tm-hist-line { font-size: 13px; line-height: 1.5; color: var(--color-text); }
+  .tm-hist-line strong { font-weight: 600; }
+  .tm-hist-on { font-size: 12px; color: var(--color-neutral-600); margin-top: 2px; }
+  .tm-hist-moves { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; }
+  .tm-hist-move {
+    font-size: 12px; color: var(--color-neutral-700);
+    display: inline-flex; align-items: baseline; gap: 5px; flex-wrap: wrap;
+  }
+  .tm-hist-move b { font-weight: 600; color: var(--color-neutral-800); }
+  .tm-hist-move s { color: var(--color-neutral-500); text-decoration-thickness: 1px; }
+  .tm-hist-move em { font-style: normal; font-weight: 600; color: var(--color-accent-800); }
+  .tm-hist-when {
+    font-size: 11px; letter-spacing: .04em; color: var(--color-neutral-500); margin-top: 5px;
+  }
+  .tm-more { display: flex; justify-content: center; margin-top: 14px; }
+
   .tm-range-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .tm-span-note {
     font-size: 11.5px; color: var(--color-neutral-600); font-variant-numeric: tabular-nums;
