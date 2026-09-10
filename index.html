@@ -68,6 +68,32 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   @media (max-width: 560px) {
     .seg-opt { padding-inline: 9px; font-size: 12px; }
   }
+  /* ── a date field that stays inside its box ──
+
+     iOS lays input[type=date] out as a native control: it sizes itself to its
+     own content, centres the value, and puts its own padding outside the
+     author's box — so `width: 100%` on one overflows its container by the
+     padding it was given. Every desktop engine draws the same markup
+     correctly, which is why the two ends of a chosen window sat neatly inside
+     the card everywhere except on the phone somebody was actually using.
+
+     Dropping the native appearance makes it an ordinary field that obeys width
+     and box-sizing on every engine. The picker still opens on a tap — only the
+     chrome goes — and the value is pulled back to the left, because iOS
+     centres it in a control it has stretched. */
+  .date-in {
+    appearance: none; -webkit-appearance: none;
+    width: 100%; min-width: 0; max-width: 100%;
+    text-align: left; min-height: 36px;
+  }
+  /* iOS renders the value in a shadow element of its own, which does not
+     inherit the alignment above. */
+  .date-in::-webkit-date-and-time-value { text-align: left; margin: 0; }
+  .date-in::-webkit-datetime-edit { text-align: left; padding: 0; }
+  /* The calendar button goes with the appearance on some engines and stays on
+     others; asked for explicitly so the affordance is there wherever it can be. */
+  .date-in::-webkit-calendar-picker-indicator { opacity: .45; margin-left: 4px; }
+
   .seg { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
   .seg::-webkit-scrollbar { display: none; }
   .seg-opt { flex: none; }

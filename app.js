@@ -7688,7 +7688,7 @@ function customRange(name) {
   const field = (key, label, value, extra) => `
     <label class="seg-date">
       <span>${esc(label)}</span>
-      <input class="input" type="date" data-k="range-${esc(name)}-${key}"
+      <input class="input date-in" type="date" data-k="range-${esc(name)}-${key}"
         data-change="custom-${key}" value="${esc(value)}"${extra || ''}>
     </label>`;
   return `<div class="seg-dates">
@@ -8957,7 +8957,7 @@ function addEntryCard(v) {
           <span style="font-size: 12px; color: var(--color-neutral-600);">Date and time are filled in from where you are — change anything you like.</span>
         </div>
         <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: end;">
-          <div class="field" style="flex: 1 1 150px; min-width: 140px;"><label>Date</label><input class="input" type="date" data-k="form-date" data-sync="form.date" value="${esc(state.form.date)}"></div>
+          <div class="field" style="flex: 1 1 150px; min-width: 140px;"><label>Date</label><input class="input date-in" type="date" data-k="form-date" data-sync="form.date" value="${esc(state.form.date)}"></div>
           <div class="field" style="flex: 3 1 220px; min-width: 180px;"><label>Activity</label><input class="input" data-k="form-activity" data-sync="form.activity" placeholder="e.g. Wash car" value="${esc(state.form.activity)}"${state.formError.entry ? ' aria-invalid="true"' : ''}></div>
           ${pickerField('category', 'Category', pickCategories().map((c) => c.name), state.form.category, '+ New category…')}
           <!-- From and To share a wrapper so they wrap as a pair. Left as
@@ -9199,7 +9199,7 @@ function moneyDesktop(v) {
           </label>
         </div>
         <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: end;">
-          <div class="field" style="flex: 1 1 150px; min-width: 140px;"><label>Date</label><input class="input" type="date" data-k="m-date" data-sync="mForm.date" value="${esc(state.mForm.date)}"></div>
+          <div class="field" style="flex: 1 1 150px; min-width: 140px;"><label>Date</label><input class="input date-in" type="date" data-k="m-date" data-sync="mForm.date" value="${esc(state.mForm.date)}"></div>
           <div class="field" style="flex: 3 1 220px; min-width: 180px;"><label>Activity</label><input class="input" data-k="m-activity" data-sync="mForm.activity" placeholder="e.g. Grocery run" value="${esc(state.mForm.activity)}"${state.formError.money ? ' aria-invalid="true"' : ''}></div>
           ${pickerField('purpose', 'Purpose', pickPurposes().map((p) => p.name), state.mForm.purpose, '+ New purpose…')}
           <div class="field" style="flex: 0 1 130px; min-width: 118px;"><label>Received</label><input class="input" type="number" min="0" step="0.01" placeholder="0" data-k="m-in" data-sync="mForm.in" value="${esc(state.mForm.in)}"></div>
@@ -11275,9 +11275,9 @@ function teamRangeBar() {
       </div>
       ${chosen ? `
       <div class="tm-dates">
-        <label><span>From</span><input class="input" type="date" data-k="team-from"
+        <label><span>From</span><input class="input date-in" type="date" data-k="team-from"
           data-change="team-from" value="${esc(from)}" max="${esc(iso(new Date()))}"></label>
-        <label><span>To</span><input class="input" type="date" data-k="team-to"
+        <label><span>To</span><input class="input date-in" type="date" data-k="team-to"
           data-change="team-to" value="${esc(to)}" max="${esc(iso(new Date()))}"></label>
       </div>` : ''}
       <div class="tm-range-foot">
@@ -14947,7 +14947,7 @@ function mCustomRange() {
   const field = (key, label, value) => `
     <label style="flex:1 1 100%;min-width:0;display:block;">
       <span style="display:block;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;margin-bottom:4px;">${esc(label)}</span>
-      <input class="input" type="date" data-k="m-range-${key}" data-change="custom-${key}"
+      <input class="input date-in" type="date" data-k="m-range-${key}" data-change="custom-${key}"
         value="${esc(value)}" max="${esc(todayIso)}" style="width:100%;min-width:0;font-size:16px;min-height:46px;">
     </label>`;
   return `
