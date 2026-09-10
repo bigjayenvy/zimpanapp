@@ -85,6 +85,73 @@ const spanLabel = (w) => {
   return from === to ? label(from) : `${label(from)} – ${label(to)}`;
 };
 
+/* ── comma-separated values ──
+
+   A spreadsheet is where a log goes when somebody wants to do arithmetic to it
+   that this app does not do: invoice against it, pivot it, hand it to an
+   accountant. So the export is plain CSV rather than a format of our own, and
+   it is built here rather than fetched, because the browser already holds
+   every row it would ask for.
+
+   RFC 4180 to the letter: CRLF between records, double quotes around any field
+   carrying a comma, a quote or a newline, and an internal quote written twice.
+   A field is only quoted when it needs to be, which keeps the file readable in
+   a text editor as well as in Excel.
+
+   The byte-order mark is not decoration. Excel opens a UTF-8 file as the local
+   codepage unless it finds one, and a peso sign, a name with an accent or a
+   note in Tagalog comes out as mojibake — in the one program most of these
+   files are opened in. */
+const CSV_QUOTE = /[",\r\n]|^\s|\s$/;
+
+/* A spreadsheet treats a cell beginning =, +, - or @ as a formula, and these
+   cells hold text somebody else typed. Prefixed with an apostrophe, which
+   every spreadsheet reads as "this is text" and shows as nothing.
+
+   Numbers are exempt, or every negative figure in the file would arrive as a
+   string and nothing could be summed. Only what is genuinely a number is let
+   through, so "-see note" is still defused. */
+const csvSafe = (v) => {
+  const t = String(v == null ? '' : v);
+  if (!/^[=+\-@\t\r]/.test(t)) return t;
+  return /^-?\d+(\.\d+)?$/.test(t) ? t : `'${t}`;
+};
+
+const csvCell = (v) => {
+  const t = csvSafe(v);
+  return CSV_QUOTE.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+};
+
+/* Columns are [header, read] pairs, so the header and the value that goes
+   under it are written next to each other and cannot come to disagree about
+   what the column is. */
+function toCsv(columns, rows) {
+  const head = columns.map(([name]) => csvCell(name)).join(',');
+  const body = rows.map((row) => columns.map(([, read]) => csvCell(read(row))).join(','));
+  return `\uFEFF${[head].concat(body).join('\r\n')}\r\n`;
+}
+
+/* Handed to the browser as a file rather than opened in a tab: a tab of CSV is
+   a wall of text somebody then has to save by hand, and on a phone it is not
+   even that. Revoked on the next frame — the download has taken its copy by
+   then, and a blob URL left behind holds the whole file in memory for as long
+   as the page is open. */
+function downloadText(name, text, mime) {
+  const blob = new Blob([text], { type: `${mime || 'text/csv'};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+// Dated, so a folder of these sorts itself and two exports of the same thing
+// on different days do not overwrite each other.
+const csvName = (what, w) => `zimpan-${what}-${w && w.from ? `${w.from}-to-${w.to}` : todayIso}.csv`;
+
 /* ── entries that run past midnight ──
    An entry is a date plus two clock times inside it, which cannot express a
    sleep that starts at 9PM and ends at 6AM. A `to` earlier than its `from` is
@@ -559,6 +626,7 @@ const API = {
     entries: (userId, from, to) => api(`/api/team/member/${encodeURIComponent(userId)}/entries?from=${encodeURIComponent(from || '')}&to=${encodeURIComponent(to || '')}`),
     editEntry: (id, patch) => api(`/api/team/entry/${encodeURIComponent(id)}`, { method: 'POST', body: patch }),
     dashboard: (from, to) => api(`/api/team/dashboard?from=${encodeURIComponent(from || '')}&to=${encodeURIComponent(to || '')}`),
+    exportHours: (from, to) => api(`/api/team/export?from=${encodeURIComponent(from || '')}&to=${encodeURIComponent(to || '')}`),
     /* The date is sent because the server cannot know it. It has no idea what
        day it is where the team is sitting, and a timezone guessed there would
        put a whole office's morning on yesterday. */
@@ -796,6 +864,14 @@ const state = {
   teamDays: 0,
   teamFrom: '',
   teamTo: '',
+
+  /* The export dialog: whether it is open, which log it will write, and
+     whether it is bound by the window on screen. Session state — an export is
+     an errand, not a setting. */
+  exportOpen: false,
+  exportKind: 'time',
+  exportAll: false,
+  exportBusy: '',
 
   entries: stored.entries,
   money: stored.money,
@@ -5254,6 +5330,7 @@ function appbarMenu() {
         ${state.app === 'money'
           ? menuRow({ act: 'plan-open', icon: 'scales', label: 'Money Plan', badge: planOpenCount() || '' })
           : menuRow({ act: 'todo-open', icon: 'todo', label: 'To Do', badge: open || '' })}
+        ${menuRow({ act: 'export-open', icon: 'history', label: 'Export as CSV' })}
         ${menuRow({ act: 'go-blogs', icon: 'article', label: 'Blog' })}
         ${menuRow({ act: 'legal-faq', icon: 'question', label: 'FAQs' })}
         ${menuRow({ act: 'help-open', icon: 'support', label: 'Help' })}
@@ -6528,6 +6605,106 @@ function lightbox(o) {
       ${o.foot ? `<p class="lb-foot">${o.foot}</p>` : ''}
     </div>
   </div>`;
+}
+
+/* ── the export ──
+
+   One door for both trackers rather than a button on each card, because the
+   question a person arrives with is "get my log out", not "get this card out".
+   The dialog asks the two things the file depends on — which log, and over
+   what — and then hands over a file.
+
+   The window offered is the one already on screen, whatever it is: choosing a
+   fortnight and then exporting should not mean choosing it twice. "Everything"
+   is the other end, and is there because the commonest reason to want a CSV at
+   all is to have a copy that does not depend on this app. */
+const EXPORT_KINDS = [['time', 'Activity'], ['money', 'Money'], ['both', 'Both']];
+
+const exportRows = (kind) => {
+  const w = state.exportAll ? null : currentWindow();
+  const inside = (list) => (w ? list.filter((e) => e.date >= w.from && e.date <= w.to) : list.slice());
+  const by = (a, b) => (a.date === b.date ? (a.from || 0) - (b.from || 0) : (a.date < b.date ? -1 : 1));
+  if (kind === 'money') return inside(state.money).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return inside(state.entries).sort(by);
+};
+
+/* The columns, and what goes under each. Times are written twice on purpose:
+   the clock as a person reads it, and minutes since midnight as a spreadsheet
+   can subtract. Duration is written out rather than left to be derived,
+   because deriving it means knowing about entries that run past midnight and
+   nobody re-implements that in a formula correctly.
+
+   The category and the note are the person's own words, so they go through the
+   formula guard in csvSafe(). */
+const TIME_COLUMNS = [
+  ['Date', (e) => e.date],
+  ['Activity', (e) => e.activity || ''],
+  ['Category', (e) => e.category || ''],
+  ['From', (e) => clock12(e.from)],
+  ['To', (e) => clock12(e.to)],
+  ['From (minutes)', (e) => e.from],
+  ['To (minutes)', (e) => e.to],
+  ['Minutes', (e) => span(e)],
+  ['Hours', (e) => (span(e) / 60).toFixed(2)],
+  ['Note', (e) => e.note || '']
+];
+
+/* Money in and money out as separate columns rather than one signed figure:
+   a signed column has to be read before it can be summed, and these two can be
+   totalled where they stand. Amounts unformatted — no thousands separator and
+   no currency glyph — because a spreadsheet wants a number, and the currency
+   is a column of its own so the file still says what it is. */
+const MONEY_COLUMNS = [
+  ['Date', (e) => e.date],
+  ['Activity', (e) => e.activity || ''],
+  ['Purpose', (e) => e.purpose || ''],
+  ['In', (e) => money2(e.in).toFixed(2)],
+  ['Out', (e) => money2(e.out).toFixed(2)],
+  ['Currency', () => state.currency],
+  ['Off budget', (e) => (e.offBudget ? 'yes' : 'no')],
+  ['Note', (e) => e.note || '']
+];
+
+function exportDialog() {
+  if (!state.exportOpen) return '';
+  const kind = state.exportKind;
+  const w = state.exportAll ? null : currentWindow();
+  const counts = {
+    time: kind === 'money' ? 0 : exportRows('time').length,
+    money: kind === 'time' ? 0 : exportRows('money').length
+  };
+  const files = kind === 'both' ? 2 : 1;
+  const pill = (act, label, on, data) => `<button class="ex-pill${on ? ' is-on' : ''}" data-act="${act}"${data || ''} aria-pressed="${on}">${esc(label)}</button>`;
+
+  return lightbox({
+    icon: 'article',
+    tone: 'var(--color-accent)',
+    kicker: 'Your log, as a spreadsheet',
+    title: 'Export as CSV',
+    closeAct: 'export-close',
+    body: `
+      <div class="ex-row"><span class="ex-lab">Which log</span>
+        <div class="ex-pills">${EXPORT_KINDS
+    .filter(([k]) => !(workMode() && k !== 'time'))
+    .map(([k, label]) => pill('export-kind', label, kind === k, ` data-kind="${k}"`)).join('')}</div>
+      </div>
+      <div class="ex-row"><span class="ex-lab">How much</span>
+        <div class="ex-pills">
+          ${pill('export-window', w ? spanLabel(w) : spanLabel(currentWindow()), !state.exportAll)}
+          ${pill('export-everything', 'Everything', state.exportAll)}
+        </div>
+      </div>
+      <p class="ex-count">${counts.time + counts.money === 0
+    ? 'Nothing to export in that window.'
+    : `${[counts.time ? `${counts.time} ${counts.time === 1 ? 'entry' : 'entries'}` : '',
+      counts.money ? `${counts.money} ${counts.money === 1 ? 'payment' : 'payments'}` : '']
+      .filter(Boolean).join(' and ')} · ${files === 2 ? 'two files' : 'one file'}`}</p>`,
+    actions: `
+      <button class="btn btn-secondary" data-act="export-close">Cancel</button>
+      <button class="btn btn-primary" data-act="export-go"${counts.time + counts.money ? '' : ' disabled'}>Download</button>`,
+    foot: 'Times are written both as a clock and as minutes, so a spreadsheet can subtract them. '
+      + 'Amounts carry no currency symbol, for the same reason — the currency is its own column.'
+  });
 }
 
 /* ── the money-out question, drawn ──
@@ -10201,6 +10378,7 @@ function render() {
   ${chatSpeakDialog()}
   ${recapDialog()}
   ${prefsDialog()}
+  ${exportDialog()}
   ${teamSheet()}
   ${crossKindDialog()}
   ${calBreakdownDialog()}
@@ -11094,7 +11272,13 @@ function teamRangeBar() {
         <label><span>To</span><input class="input" type="date" data-k="team-to"
           data-change="team-to" value="${esc(to)}" max="${esc(iso(new Date()))}"></label>
       </div>` : ''}
-      <span class="tm-span-note">${esc(spanLabel({ from, to }))} · ${daysBetween(from, to)} days</span>
+      <div class="tm-range-foot">
+        <span class="tm-span-note">${esc(spanLabel({ from, to }))} · ${daysBetween(from, to)} days</span>
+        <!-- On the bar rather than beside a table, so what it writes is always
+             the window named next to it. -->
+        <button class="tm-mini" data-act="team-export"${state.teamBusy === 'export' ? ' disabled' : ''}>${
+  state.teamBusy === 'export' ? 'Building…' : 'Export CSV'}</button>
+      </div>
     </div>`;
 }
 
@@ -12663,6 +12847,69 @@ const ACTIONS = {
   /* Both tabs read the same window, so both are reloaded whichever one moved
      it — the other is one tap away and would otherwise still be showing the
      old window under a bar that says the new one. */
+  /* The team's timesheet. One row per logged hour, with the person's name in
+     it — a spreadsheet cannot follow an id — and the same two figures the
+     personal export writes: the clock for a reader, minutes for a formula. */
+  'team-export': async () => {
+    const [from, to] = teamWindow();
+    state.teamBusy = 'export'; state.teamError = ''; render();
+    try {
+      const res = await API.team.exportHours(from, to);
+      const rows = (res && res.rows) || [];
+      if (!rows.length) {
+        state.teamError = 'Nobody logged an hour against a project in that window.';
+        return;
+      }
+      downloadText(`zimpan-team-hours-${from}-to-${to}.csv`, toCsv([
+        ['Date', (r) => r.date],
+        ['Member', (r) => r.name || r.email],
+        ['Email', (r) => r.email],
+        ['Project', (r) => r.project || ''],
+        ['Activity', (r) => r.activity || ''],
+        ['From', (r) => clock12(r.from)],
+        ['To', (r) => clock12(r.to)],
+        ['From (minutes)', (r) => r.from],
+        ['To (minutes)', (r) => r.to],
+        ['Minutes', (r) => span(r)],
+        ['Hours', (r) => (span(r) / 60).toFixed(2)]
+      ], rows));
+    } catch (err) {
+      state.teamError = err.message || 'Could not build that file.';
+    } finally {
+      state.teamBusy = ''; render();
+    }
+  },
+
+  /* ── the export ── */
+  'export-open': () => {
+    state.menuOpen = false;
+    // Opens on the tracker you are reading, which is the one you meant.
+    state.exportKind = workMode() || state.app !== 'money' ? 'time' : 'money';
+    state.exportOpen = true;
+    render();
+  },
+  'export-close': () => { state.exportOpen = false; render(); },
+  'export-kind': (el) => { state.exportKind = el.dataset.kind || 'time'; render(); },
+  'export-window': () => { state.exportAll = false; render(); },
+  'export-everything': () => { state.exportAll = true; render(); },
+  /* Two files rather than one with a blank row between the two tables: a CSV
+     holds one table, and a spreadsheet opening a file with two headers in it
+     reads the second as data. */
+  'export-go': () => {
+    const w = state.exportAll ? null : currentWindow();
+    const kind = state.exportKind;
+    if (kind !== 'money') {
+      const rows = exportRows('time');
+      if (rows.length) downloadText(csvName('activity', w), toCsv(TIME_COLUMNS, rows));
+    }
+    if (kind !== 'time') {
+      const rows = exportRows('money');
+      if (rows.length) downloadText(csvName('money', w), toCsv(MONEY_COLUMNS, rows));
+    }
+    state.exportOpen = false;
+    render();
+  },
+
   'team-span': (el) => {
     const days = el.dataset.days;
     if (days === 'custom') {
@@ -15660,6 +15907,7 @@ function mobileApp() {
   ${chatSpeakDialog()}
   ${recapDialog()}
   ${prefsDialog()}
+  ${exportDialog()}
   ${teamSheet()}
   ${crossKindDialog()}
   <!-- Same reasoning, and it was missing: toggleTimer is shared with this

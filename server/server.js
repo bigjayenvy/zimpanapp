@@ -33,7 +33,8 @@ import { swapHead } from './head.js';
 import {
   TeamError, membershipFor, createTeam, teamOverview, inviteMember, revokeInvite,
   acceptInvite, setMemberRole, removeMember, saveProject, deleteProject,
-  memberEntries, editMemberEntry, teamDashboard, teamNow, setTeamPlan, resendInvite, PLANS
+  memberEntries, editMemberEntry, teamDashboard, teamNow, setTeamPlan, resendInvite, PLANS,
+  teamHoursExport
 } from './teams.js';
 
 const ROOT = join(HERE, '..');
@@ -866,6 +867,14 @@ app.post('/api/team/entry/:id', requireUser, team((req) =>
 
 app.get('/api/team/dashboard', requireUser, team((req) =>
   teamDashboard(req.user.id, req.query.from, req.query.to)));
+
+/* The whole team's hours over a window, for the spreadsheet an admin builds a
+   timesheet or an invoice from. JSON rather than a text/csv response: the
+   client already knows how to write a CSV — it writes two of them for the
+   personal log — and one place that knows the format is better than two that
+   can disagree about quoting. */
+app.get('/api/team/export', requireUser, team((req) =>
+  teamHoursExport(req.user.id, req.query.from, req.query.to).then((rows) => ({ rows }))));
 
 /* Polled while the Members tab is open, so the date comes from the caller: the
    server has no idea what day it is where the team is sitting, and a timezone

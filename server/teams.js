@@ -152,8 +152,18 @@ const INVITE_DAYS = 14;
 
 /* ── the predicate the whole privacy promise rests on ──
    Every read and every write of a member's entry in this file goes through it.
-   An entry with no project is personal, and personal is not the team's. */
-const ADMIN_ENTRY_WHERE = 'team_id = ? AND project_id IS NOT NULL AND deleted = 0';
+   An entry with no project is personal, and personal is not the team's.
+
+   Takes an alias because one of its readers joins two other tables, and both
+   of them have a `deleted` column of their own — an unqualified one there is
+   ambiguous to MySQL and, worse, would be one wrong guess away from filtering
+   on somebody else's flag. Prefixing the string by hand would have qualified
+   only its first column, which is exactly the bug that shape invites. */
+const adminEntryWhere = (alias) => {
+  const a = alias ? `${alias}.` : '';
+  return `${a}team_id = ? AND ${a}project_id IS NOT NULL AND ${a}deleted = 0`;
+};
+const ADMIN_ENTRY_WHERE = adminEntryWhere('');
 
 /* ── the wall between the two products ──
 
@@ -493,6 +503,34 @@ export async function memberEntries(userId, targetUserId, from, to) {
       WHERE ${ADMIN_ENTRY_WHERE} AND user_id = ? AND date BETWEEN ? AND ?
       ORDER BY date DESC, from_min`,
     [m.teamId, targetUserId, String(from || '0000-01-01'), String(to || '9999-12-31')]);
+}
+
+/* ── the whole team's hours, for a spreadsheet ──
+
+   memberEntries answers for one person because that is what the Hours tab
+   shows; an export is the other shape of the same question, and asking it one
+   member at a time would be one request per person and a file assembled on the
+   client out of pieces that arrived at different moments.
+
+   Same predicate, so the export can see exactly what the tab can and not one
+   row more: an entry with no project is personal, and personal is not the
+   team's. Names are joined here rather than looked up afterwards, because a
+   spreadsheet wants the person's name in the row, not an id to go and resolve.
+
+   Ordered by day and then by clock, which is the order the hours happened in
+   and the order a timesheet is read in. */
+export async function teamHoursExport(userId, from, to) {
+  const m = await requireLive(userId, 'admin');
+  return query(
+    `SELECT e.id, e.user_id AS userId, u.display_name AS name, u.email,
+            e.date, e.activity, e.from_min AS \`from\`, e.to_min AS \`to\`,
+            p.name AS project
+       FROM entries e
+       JOIN users u ON u.id = e.user_id
+       LEFT JOIN team_projects p ON p.team_id = e.team_id AND p.id = e.project_id
+      WHERE ${adminEntryWhere('e')} AND e.date BETWEEN ? AND ?
+      ORDER BY e.date, e.from_min, u.email`,
+    [m.teamId, String(from || '0000-01-01'), String(to || '9999-12-31')]);
 }
 
 /* ── who is working right now ──
