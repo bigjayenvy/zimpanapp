@@ -3950,6 +3950,60 @@ function options(names, selected, extra) {
   return names.map((n) => `<option value="${esc(n)}"${n === selected ? ' selected' : ''}>${esc(withIcon(n))}</option>`).join('') + (extra || '');
 }
 
+/* ── editing a logged time ──
+
+   Two native time fields used to sit on every entry card. They read back
+   fine, but changing one means typing into it, and nothing in this app takes
+   the keyboard unless the user asked for it. A <select> asks for nothing: it
+   opens the platform's own picker, spins a wheel on a phone, and matches the
+   category control already sitting on the card.
+
+   Three of them rather than one. A single list of every five-minute mark in
+   the day is 288 options, and a day holding fifteen entries then ships a
+   third of a megabyte of markup that costs about 400ms to parse and lay out
+   before the log appears. Split into hour, minute and meridiem it is 26
+   options — the whole card renders faster than the two fields it replaces.
+
+   Five-minute steps, plus whatever odd minute the row already holds. A timer
+   stopped at 2:03 keeps its 03 rather than being quietly rounded to the
+   nearest step the moment its card is drawn. */
+const TIME_STEPS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
+
+/* Each select owns one part of the number and leaves the rest of it alone.
+   Kept apart from the markup and from the DOM so it can be reasoned about —
+   and tested — as what it is: arithmetic on minutes since midnight. */
+function setTimePart(mins, part, value) {
+  const cur = Number(mins) || 0;
+  const h = Math.floor(cur / 60), m = cur % 60;
+  if (part === 'm') {
+    const n = Number(value);
+    return h * 60 + (Number.isFinite(n) ? Math.min(59, Math.max(0, n)) : m);
+  }
+  if (part === 'ap') {
+    const pm = value === 'PM';
+    if (pm === (h >= 12)) return cur;
+    return (pm ? h + 12 : h - 12) * 60 + m;
+  }
+  const n = Number(value);
+  const h12 = Number.isFinite(n) && n >= 1 && n <= 12 ? n : (h % 12 === 0 ? 12 : h % 12);
+  return ((h12 % 12) + (h >= 12 ? 12 : 0)) * 60 + m;
+}
+
+function timePick(id, key, mins) {
+  const h = Math.floor(mins / 60), m = mins % 60;
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  const ap = h >= 12 ? 'PM' : 'AM';
+  const steps = TIME_STEPS.includes(m) ? TIME_STEPS : TIME_STEPS.concat([m]).sort((a, b) => a - b);
+  const opt = (v, label, on) => `<option value="${v}"${on ? ' selected' : ''}>${label}</option>`;
+  const part = (kind, body, label) => `<select class="time-part${kind === 'ap' ? ' is-ap' : ''}" data-k="t-${esc(id)}-${key}-${kind}" data-change="entry-${key}-${kind}" data-id="${esc(id)}" aria-label="${label}">${body}</select>`;
+  return `<span class="time-pick">`
+    + part('h', Array.from({ length: 12 }, (_, i) => opt(i + 1, i + 1, i + 1 === h12)).join(''), 'Hour')
+    + `<span class="time-sep">:</span>`
+    + part('m', steps.map((v) => opt(v, pad(v), v === m)).join(''), 'Minute')
+    + part('ap', ['AM', 'PM'].map((v) => opt(v, v, v === ap)).join(''), 'AM or PM')
+    + `</span>`;
+}
+
 /* ── filing a logged row under something that does not exist yet ──
 
    The tables under both trackers file a row with a native <select>, which can
@@ -8662,9 +8716,9 @@ function timeTableCard(v) {
                     <select class="entry-select" data-change="entry-category" data-id="${esc(e.id)}" style="${rowChipStyle(tint)}">${options(pickCategories().map((c) => c.name), e.category, workMode() ? '' : newOption('New category'))}</select>
                   </div>
                   <div class="entry-times">
-                    <span class="entry-time"><span class="entry-leg">From</span><input class="cell-time" type="time" data-change="entry-from" data-id="${esc(e.id)}" value="${hm(e.from)}"></span>
+                    <span class="entry-time"><span class="entry-leg">From</span>${timePick(e.id, 'from', e.from)}</span>
                     <span class="entry-rule"></span>
-                    <span class="entry-time"><span class="entry-leg">To</span><input class="cell-time" type="time" data-change="entry-to" data-id="${esc(e.id)}" value="${hm(e.to)}"></span>
+                    <span class="entry-time"><span class="entry-leg">To</span>${timePick(e.id, 'to', e.to)}</span>
                   </div>
                   <div class="entry-foot">
                     <span class="entry-dur">${esc(dur(spent))}</span>
@@ -10283,11 +10337,15 @@ function scheduleRender() {
   setTimeout(() => { renderQueued = false; render(); }, 0);
 }
 
-/* A time field that has been emptied rather than changed. See the note on the
-   entry-from/entry-to handlers. */
-function editEntryTime(el, key) {
-  if (!String(el.value || '').trim()) { scheduleRender(); return; }
-  updateEntry(el.dataset.id, { [key]: parseHm(el.value) });
+/* One of the three selects on a logged time moved. The other two still hold
+   the parts they held, so the row's own stored minute is the thing to amend
+   rather than something to be rebuilt out of the DOM. */
+function editEntryTime(el, key, part) {
+  const row = state.entries.find((e) => e.id === el.dataset.id);
+  if (!row) return;
+  const next = setTimePart(row[key], part, el.value);
+  if (next === row[key]) return;
+  updateEntry(el.dataset.id, { [key]: next });
 }
 
 function updateEntry(id, patch) {
@@ -12644,8 +12702,12 @@ const CHANGES = {
     ? teamEdit(el.dataset.id, { to: parseHm(el.value) }) : scheduleRender()),
   'team-edit-project': (el) => teamEdit(el.dataset.id, { project: el.value }),
 
-  'entry-from': (el) => editEntryTime(el, 'from'),
-  'entry-to': (el) => editEntryTime(el, 'to'),
+  'entry-from-h': (el) => editEntryTime(el, 'from', 'h'),
+  'entry-from-m': (el) => editEntryTime(el, 'from', 'm'),
+  'entry-from-ap': (el) => editEntryTime(el, 'from', 'ap'),
+  'entry-to-h': (el) => editEntryTime(el, 'to', 'h'),
+  'entry-to-m': (el) => editEntryTime(el, 'to', 'm'),
+  'entry-to-ap': (el) => editEntryTime(el, 'to', 'ap'),
   'money-activity': (el) => updateMoney(el.dataset.id, { activity: el.value }),
   'money-purpose': (el) => (isNewOption(el)
     ? askRowName('money', el.dataset.id)

@@ -2568,7 +2568,25 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     font-size: 10px; letter-spacing: .09em; text-transform: uppercase;
     color: var(--color-neutral-600); flex: none;
   }
-  .entry-times .cell-time { font-size: 14px !important; font-variant-numeric: tabular-nums; }
+  /* The three parts of a time read as one control. The pill is the field; the
+     selects inside it are stripped of their own frames so a card shows one
+     affordance instead of three dropdown arrows fighting for a narrow column. */
+  .time-pick {
+    display: inline-flex; align-items: center; gap: 1px;
+    padding: 3px 9px; border-radius: 999px;
+    background: color-mix(in srgb, var(--color-neutral-900) 5%, transparent);
+    font-variant-numeric: tabular-nums;
+  }
+  .time-pick:focus-within { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+  .time-part {
+    appearance: none; -webkit-appearance: none;
+    border: 0; background: transparent; padding: 0; margin: 0;
+    font: inherit; font-size: 14px; color: inherit;
+    text-align: center; cursor: pointer;
+  }
+  .time-part:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: 4px; }
+  .time-part.is-ap { margin-left: 5px; font-size: 11.5px; letter-spacing: .04em; color: var(--color-neutral-700); }
+  .time-sep { color: var(--color-neutral-500); }
   .entry-rule { flex: 1 1 20px; height: 1px; background: var(--color-divider); min-width: 14px; }
   .entry-foot {
     display: flex; align-items: center; justify-content: space-between;
@@ -2901,7 +2919,6 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 
   /* — table cells — */
   .cell-input { width: 100%; border: 0; background: transparent; font: inherit; font-size: 14px; color: inherit; padding: 2px 0; }
-  .cell-time { border: 0; background: transparent; font: inherit; font-size: 14px; color: inherit; }
   .cell-num { width: 100%; text-align: right; border: 0; background: transparent; font: inherit; font-size: 14px; color: inherit; }
   /* Received and Spent, in the two colours the app reads money by. The tracker
      accent used to do for Received, which meant it changed with the tab and
@@ -3133,7 +3150,6 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
        supporting detail, so the content gets the larger type. */
     .rows .cell-input { font-size: 14.5px !important; font-weight: 600; }
     .rows td[data-col="category"] select { font-size: 13px !important; }
-    .rows .cell-time { font-size: 13px !important; }
     .rows td[data-label]::before {
       content: attr(data-label); margin-right: 5px;
       font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
@@ -3170,7 +3186,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   /* — mobile type scale — 2px down across the app's common sizes. */
   @media (max-width: 720px) {
     .blueprint h4 { font-size: 15px; }
-    .cell-input, .cell-time, .cell-num { font-size: 12px !important; }
+    .cell-input, .cell-num { font-size: 12px !important; }
     .cell-spent { font-size: 12px; }
     .drawer-btn { font-size: 11px; }
     .appbar-meta { font-size: 10.5px; }
@@ -3187,7 +3203,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     .entry-times { flex-direction: column; align-items: stretch; gap: 5px; }
     .entry-time { justify-content: space-between; }
     .entry-rule { display: none; }
-    .entry-times .cell-time { font-size: 12.5px !important; }
+    .time-pick { padding: 3px 8px; }
     .entry-foot { margin-top: 8px; padding-top: 8px; }
     .entry-dur { font-size: 11.5px; }
     /* Half a phone leaves no room beside the duration, so the chip takes its
@@ -3207,9 +3223,8 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      type, so rows grow a little but nothing overflows. */
   @media (max-width: 720px) {
     input, select, textarea,
-    .input, .cell-input, .cell-time, .cell-num, .entry-name, .entry-select,
-    .entry-times .cell-time, .rows .cell-input, .rows .cell-time,
-    .rows td[data-col="category"] select {
+    .input, .cell-input, .cell-num, .entry-name, .entry-select,
+    .rows .cell-input, .rows td[data-col="category"] select {
       font-size: 16px !important;
     }
     /* 16px in a half-width card needs the padding back. */
@@ -3220,6 +3235,16 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     .entry-leg { font-size: 9px; letter-spacing: .06em; }
     .entry-times { gap: 4px; }
     .entry-time { gap: 4px; }
+    .time-pick { padding: 2px 7px; gap: 0; }
+    .time-part.is-ap { font-size: 13px !important; margin-left: 4px; }
+    /* The smallest phones still in service put two of these cards side by
+       side in about 120px, and 16px numerals leave nothing to spare — so the
+       pill gives up its padding rather than the card giving up a column. */
+    @media (max-width: 359px) {
+      .time-pick { padding: 2px 4px; }
+      .time-part.is-ap { font-size: 11.5px !important; margin-left: 2px; }
+      .entry-leg { font-size: 8.5px; letter-spacing: .04em; }
+    }
     .cell-note { font-size: 10px; padding: 3px 8px; }
   }
 
