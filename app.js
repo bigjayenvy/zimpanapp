@@ -8408,6 +8408,34 @@ function moneyLines(series) {
   const inSum = pts.reduce((a, d) => a + d.up, 0);
   const outSum = pts.reduce((a, d) => a + d.down, 0);
 
+  /* ── the hover readout ──
+
+     A line chart says which way a fortnight went and refuses to say what any
+     one day was worth, which is the first thing anybody asks it. The dots are
+     2.6px across, so hanging the answer off the dots would mean hitting them;
+     the whole column answers instead — one invisible band per day, from the
+     midpoint of the gap before it to the midpoint of the gap after.
+
+     Everything the readout needs is written onto the band: the day, the two
+     figures already formatted, and where its two dots sit. The pointer handler
+     then moves a card and two markers and touches nothing else — no state, no
+     render. A render per mouse move would rebuild the page under the cursor
+     forty times a second.
+
+     Formatted here rather than in the handler because this is where the
+     currency is known, and a number formatted twice in two places is a number
+     that will disagree with itself. */
+  const bands = pts.map((d, i) => {
+    const here = x(i);
+    const from = i === 0 ? 0 : (here + x(i - 1)) / 2;
+    const to = i === pts.length - 1 ? W : (here + x(i + 1)) / 2;
+    return `<rect class="mline-hit" data-mline-pt="${i}" x="${from.toFixed(1)}" y="0"
+      width="${Math.max(0.1, to - from).toFixed(1)}" height="${H}"
+      data-cx="${here.toFixed(1)}" data-uy="${y(d.up).toFixed(1)}" data-dy="${y(d.down).toFixed(1)}"
+      data-day="${esc(dayLabel(d.date))}"${d.logged ? '' : ' data-none="1"'}
+      data-in="${esc(amount(d.up))}" data-out="${esc(amount(d.down))}"></rect>`;
+  }).join('');
+
   return `
           <div class="mline">
             <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="mline-svg" role="img"
@@ -8416,7 +8444,17 @@ function moneyLines(series) {
               <path d="${line('up')}" fill="none" stroke="${IN}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"></path>
               <path d="${line('down')}" fill="none" stroke="${OUT}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"></path>
               ${dots('up', IN)}${dots('down', OUT)}
+              <line class="mline-guide" x1="0" y1="${T}" x2="0" y2="${H - B}"></line>
+              <circle class="mline-hi" r="4.4" fill="none" stroke="${IN}" stroke-width="2.2"></circle>
+              <circle class="mline-hi" r="4.4" fill="none" stroke="${OUT}" stroke-width="2.2"></circle>
+              ${bands}
             </svg>
+            <div class="mline-tip" aria-hidden="true">
+              <span class="mline-tip-day"></span>
+              <span class="mline-tip-none">Nothing logged</span>
+              <span class="mline-tip-row"><i style="background:${IN};"></i>In<b class="mline-tip-in"></b></span>
+              <span class="mline-tip-row"><i style="background:${OUT};"></i>Out<b class="mline-tip-out"></b></span>
+            </div>
             <div class="mline-foot">
               <span class="mline-key"><i style="background:${IN};"></i>In · ${esc(amount(inSum))}</span>
               <span class="mline-key"><i style="background:${OUT};"></i>Out · ${esc(amount(outSum))}</span>
@@ -17148,6 +17186,87 @@ function tickLive() {
 }
 
 mDragWire();
+
+/* ── reading one day off the money lines ──
+
+   Bound once at the root and driven straight off the pointer, for the same
+   reason the back-to-top button below is: a render per mouse move would
+   rebuild the whole page under the cursor, and the only things that actually
+   change are a card's position and two markers.
+
+   Held by element rather than by index. Every render replaces the tree, so an
+   index would still match after one and quietly leave the card describing the
+   day that used to be under the cursor; a detached node never matches the
+   band the pointer is over now. */
+let mlineBand = null;
+
+function mlineHide() {
+  if (!mlineBand) return;
+  mlineBand = null;
+  root.querySelectorAll('.mline.is-reading').forEach((box) => box.classList.remove('is-reading'));
+}
+
+function mlineShow(band) {
+  if (band === mlineBand) return;
+  const box = band.closest('.mline');
+  const svg = box && box.querySelector('.mline-svg');
+  if (!svg) return;
+  mlineBand = band;
+
+  const vb = svg.viewBox.baseVal;
+  const cx = Number(band.dataset.cx) || 0;
+  const uy = Number(band.dataset.uy) || 0;
+  const dy = Number(band.dataset.dy) || 0;
+  const none = band.dataset.none === '1';
+
+  /* The guide runs from the upper of the two dots down to the axis rather than
+     from the top of the frame: dropped from the frame it reads as a boundary
+     of the chart on a day whose points both sit on the floor, and the thing
+     being pointed at is the pair of readings, not the ceiling. */
+  const guide = box.querySelector('.mline-guide');
+  guide.setAttribute('x1', cx); guide.setAttribute('x2', cx);
+  guide.setAttribute('y1', Math.min(uy, dy).toFixed(1));
+  const hi = box.querySelectorAll('.mline-hi');
+  hi[0].setAttribute('cx', cx); hi[0].setAttribute('cy', uy);
+  hi[1].setAttribute('cx', cx); hi[1].setAttribute('cy', dy);
+
+  const tip = box.querySelector('.mline-tip');
+  tip.querySelector('.mline-tip-day').textContent = band.dataset.day || '';
+  tip.querySelector('.mline-tip-in').textContent = band.dataset.in || '';
+  tip.querySelector('.mline-tip-out').textContent = band.dataset.out || '';
+  tip.classList.toggle('is-none', none);
+
+  /* The card hangs off the higher of the two dots, and both axes pull it back
+     inside rather than centring it blindly: a card centred on the first day
+     hangs off the left edge of the panel it sits in, and one hung above the
+     tallest peak — which is exactly the day anybody hovers first — clears the
+     top of the chart and lands on the sentence above it.
+
+     Measured rather than guessed, because the card is two lines on a day with
+     nothing on it and three on a day with something, and the taller one is the
+     one that would not have fitted. The read is a layout flush, but only when
+     the day under the pointer changes, not on every mouse move. */
+  const room = svg.getBoundingClientRect().height / (vb.height || 1);
+  const px = (cx / (vb.width || 1)) * 100;
+  const near = Math.min(uy, dy);
+  const under = near * room < tip.offsetHeight + 13;
+  tip.style.left = `${px.toFixed(2)}%`;
+  tip.style.top = `${(near / (vb.height || 1) * 100).toFixed(2)}%`;
+  tip.style.transform = `translate(${px < 18 ? '0%' : px > 82 ? '-100%' : '-50%'}, ${
+    under ? '13px' : 'calc(-100% - 13px)'})`;
+  box.classList.add('is-reading');
+}
+
+root.addEventListener('pointermove', (ev) => {
+  /* Only when hovered, and only by something that hovers. A finger has no
+     hover state — it would leave the card stranded over the chart with no
+     gesture that dismisses it. */
+  if (ev.pointerType === 'touch') return;
+  const band = ev.target.closest && ev.target.closest('[data-mline-pt]');
+  if (band) mlineShow(band); else mlineHide();
+});
+root.addEventListener('pointerleave', mlineHide);
+window.addEventListener('scroll', mlineHide, { passive: true });
 
 /* The back-to-top button appears past a screen and a half of scrolling. Bound
    once and driven straight off the scroll position: a render per scroll frame

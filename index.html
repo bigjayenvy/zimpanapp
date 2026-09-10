@@ -1962,6 +1962,41 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .mline-key i { width: 10px; height: 3px; border-radius: 2px; flex: none; }
   .mline-span { margin-left: auto; color: var(--color-neutral-600); font-weight: 400; }
 
+  /* — reading one day off the lines —
+     The bands are the whole hit area: a 2.6px dot is not something anybody
+     aims at, and the column above and below it means the same day. Hidden by
+     opacity rather than by display, because the markers are moved before they
+     are shown and an element with no box has no attributes worth setting. */
+  .mline { position: relative; }
+  .mline-hit { fill: transparent; }
+  .mline-guide {
+    stroke: color-mix(in srgb, var(--color-text) 26%, transparent);
+    stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke;
+  }
+  .mline-guide, .mline-hi { opacity: 0; }
+  .mline-hi { vector-effect: non-scaling-stroke; }
+  .mline.is-reading .mline-guide, .mline.is-reading .mline-hi { opacity: 1; }
+  .mline-tip {
+    position: absolute; left: 0; top: 0; z-index: 2;
+    display: flex; flex-direction: column; gap: 3px;
+    padding: 8px 11px; border-radius: 10px; white-space: nowrap;
+    background: var(--color-neutral-900); color: #fff;
+    font-size: 11.5px; line-height: 1.35;
+    box-shadow: 0 6px 18px color-mix(in srgb, #16131f 26%, transparent);
+    opacity: 0; pointer-events: none; transition: opacity .1s ease;
+  }
+  .mline.is-reading .mline-tip { opacity: 1; }
+  .mline-tip-day { font-weight: 700; letter-spacing: .02em; }
+  .mline-tip-row { display: flex; align-items: center; gap: 7px; font-variant-numeric: tabular-nums; }
+  .mline-tip-row i { width: 9px; height: 3px; border-radius: 2px; flex: none; }
+  .mline-tip-row b { margin-left: auto; padding-left: 10px; font-weight: 600; }
+  /* A day with no payment on it has no reading, and printing two zeroes would
+     dress "nothing happened" up as a measurement. */
+  .mline-tip-none { color: var(--color-neutral-400); }
+  .mline-tip .mline-tip-none { display: none; }
+  .mline-tip.is-none .mline-tip-none { display: block; }
+  .mline-tip.is-none .mline-tip-row { display: none; }
+
   /* — sleep, night by night —
      A column per night in the window, coloured by the band it falls in. Fixed
      height rather than aspect-driven: the bars are read against each other and
