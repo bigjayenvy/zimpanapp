@@ -72,6 +72,18 @@ const hm = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 const parseHm = (s) => { const [h, m] = (s || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
 const clock12 = (m) => { const h = Math.floor(m / 60), mm = m % 60; const ap = h >= 12 ? 'PM' : 'AM'; const h12 = h % 12 === 0 ? 12 : h % 12; return `${h12}:${pad(mm)} ${ap}`; };
 const dayLabel = (d) => new Date(d + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+/* Two ends of a window, said the way a person would. A year's window runs from
+   one August to the next, and "22 Aug – 21 Aug" reads as a day short of
+   nothing at all — so once the ends fall in different years, both of them say
+   which. A window of one day is one date, not the same date twice. */
+const spanLabel = (w) => {
+  const { from, to } = w || {};
+  if (!from || !to) return '';
+  const label = from.slice(0, 4) === to.slice(0, 4)
+    ? dayLabel
+    : (d) => new Date(d + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  return from === to ? label(from) : `${label(from)} – ${label(to)}`;
+};
 
 /* ── entries that run past midnight ──
    An entry is a date plus two clock times inside it, which cannot express a
@@ -762,6 +774,28 @@ const state = {
   app: 'time',
   range: CONFIG.defaultRange,
   selectedDate: todayIso,
+  /* The two ends of a window somebody chose. Every other range is a rule —
+     the last seven days, this calendar month — and a rule can be evaluated
+     whenever it is asked; this one is two dates, so it has to be kept.
+
+     Held for the session rather than stored, like `range` itself: which window
+     you were reading last is not a preference, and a saved one would open the
+     app on a fortnight in March. One pair for the whole personal app, so
+     picking a window on the time tracker and crossing to money shows the same
+     window rather than a second one that has to be chosen again. */
+  customFrom: '',
+  customTo: '',
+  /* The team's own window, and the same idea: a preset length, or two dates
+     that replace it. Kept apart from the personal pair above because a work
+     login can be reading a pay period in the team panel and its own fortnight
+     on the page behind it. */
+  /* Zero means "whatever the default is", which is declared with the rest of
+     the team panel a long way below this literal. Naming the constant here
+     would read it before it exists — see the note above LONG_RANGES — and the
+     fallback in teamWindow() keeps the default in one place either way. */
+  teamDays: 0,
+  teamFrom: '',
+  teamTo: '',
 
   entries: stored.entries,
   money: stored.money,
@@ -2087,7 +2121,17 @@ function windowStart(endIso, days) {
    trailing range still answers exactly as it did — windowStart is the same
    arithmetic — but the callers now ask for two dates and stop assuming the
    second one is today. */
+/* Whichever way round the two were typed. A "to" before its "from" describes
+   no days at all, and an empty report is a poor way to tell somebody they put
+   the dates in the wrong boxes. */
+function customWindow() {
+  const a = state.customFrom || windowStart(todayIso, 30);
+  const b = state.customTo || todayIso;
+  return a <= b ? { from: a, to: b } : { from: b, to: a };
+}
+
 function rangeWindow(range, endIso) {
+  if (range === 'custom') return customWindow();
   const anchor = new Date(endIso + 'T00:00:00');
   if (range === 'thismonth') {
     return { from: iso(new Date(anchor.getFullYear(), anchor.getMonth(), 1)), to: endIso };
@@ -3726,7 +3770,11 @@ function compute() {
       : s.range === 'thismonth' ? 'this month'
         : s.range === 'lastmonth' ? 'last month'
           : s.range === 'all' ? 'everything logged'
-            : `last ${winDays} days`,
+            /* Named by its ends rather than by its length. "last 34 days" is a
+               true count of a window somebody set from the 1st to the 3rd and
+               tells them nothing about which window they set. */
+            : s.range === 'custom' ? spanLabel(currentWindow())
+              : `last ${winDays} days`,
     leaderboard: totals.map((t) => ({ name: t.name, color: t.color, label: fmtShort(t.mins), width: `${Math.round((t.mins / top) * 100)}%` })),
     /* Where the money came from, ranked the same way. Money only — the hours
        have no second direction to rank. */
@@ -7420,7 +7468,9 @@ const PAGE_RANGES = [
   ['thismonth', 'This Month'],
   ['lastmonth', 'Last Month'],
   ...LONG_RANGES.map(([key, label]) => [key, label]),
-  ['all', 'All Time']
+  ['all', 'All Time'],
+  // Last, and the only one that asks a question rather than answering it.
+  ['custom', 'Custom']
 ];
 
 /* `labels` is still accepted so the three callers can keep naming their own
@@ -7429,7 +7479,40 @@ const PAGE_RANGES = [
 function segRange(name, labels) {
   const over = labels || [];
   const opt = (val, label) => `<label class="seg-opt"><input type="radio" name="${name}" data-act="range-${val}"${state.range === val ? ' checked' : ''}><span>${label}</span></label>`;
-  return `<div class="seg">${PAGE_RANGES.map(([val, label], i) => opt(val, over[i] || label)).join('')}</div>`;
+  return `<div class="seg-wrap">
+    <div class="seg">${PAGE_RANGES.map(([val, label], i) => opt(val, over[i] || label)).join('')}</div>
+    ${state.range === 'custom' ? customRange(name) : ''}
+  </div>`;
+}
+
+/* ── the two ends of a chosen window ──
+
+   Only drawn once Custom is picked, which is what makes these fields legal
+   under this app's rule about the keyboard: nothing here takes focus until
+   somebody asks for it, and picking Custom is the asking.
+
+   type="date" rather than a text field parsed by hand. It is what the entry
+   form already uses, the platform supplies its own calendar and its own idea
+   of which way round a date goes, and a phone opens a wheel rather than a
+   keyboard — so choosing a window never puts a keyboard over the report it is
+   about to change.
+
+   The picker appears in all three places a range is picked, because there is
+   one window and all three are looking at it. `name` keeps the two fields
+   apart from another copy of themselves elsewhere on the page. */
+function customRange(name) {
+  const w = customWindow();
+  const field = (key, label, value, extra) => `
+    <label class="seg-date">
+      <span>${esc(label)}</span>
+      <input class="input" type="date" data-k="range-${esc(name)}-${key}"
+        data-change="custom-${key}" value="${esc(value)}"${extra || ''}>
+    </label>`;
+  return `<div class="seg-dates">
+    ${field('from', 'From', w.from, ` max="${esc(todayIso)}"`)}
+    ${field('to', 'To', w.to, ` max="${esc(todayIso)}"`)}
+    <span class="seg-span">${esc(spanLabel(w))} · ${daysBetween(w.from, w.to)} days</span>
+  </div>`;
 }
 
 /* The centre overlay covers the whole ring, so it stays click-through and only
@@ -8580,7 +8663,7 @@ function pastCard(v) {
           <!-- The same window the chart above runs on, reachable from down
                here too. "Yesterday" rather than "Day": this section only ever
                counts days that have finished. -->
-          <div style="margin-left: auto;">${segRange('lookrange', ['Yesterday'])}</div>
+          <div style="margin-left: auto; min-width: 0; max-width: 100%;">${segRange('lookrange', ['Yesterday'])}</div>
         </div>
         <div style="font-size: 12px; color: var(--color-neutral-600); margin-bottom: 12px;">${esc(v.pastLabel)}</div>
         <div style="font-size: 13.5px; line-height: 1.6;">${esc(v.pastHeadline)}</div>
@@ -10074,6 +10157,7 @@ function render() {
     const search = root.querySelector('[data-pick-search]');
     if (search) { search.value = state.pickQuery; filterPicker(search); }
     // The tree was just replaced, so the scroll-driven button has to be told.
+    paintSeg();
     mPaintTop();
     mPaintBars();
     paintDeck();
@@ -10141,6 +10225,7 @@ function render() {
   if (scrollY && window.scrollY !== scrollY) window.scrollTo(0, scrollY);
   restoreFocus(f);
   paintBusy();
+  paintSeg();
   // The tree was just replaced, so the scroll-driven classes have to be put back.
   paintScrollChrome();
   paintChatLog();
@@ -10953,7 +11038,65 @@ async function acceptPendingInvite() {
 /* Thirty days: long enough to be a picture of the month, short enough that a
    busy team's roster does not arrive as a thousand rows. */
 const TEAM_WINDOW_DAYS = 30;
-const teamWindow = () => [mShiftIso(iso(new Date()), -(TEAM_WINDOW_DAYS - 1)), iso(new Date())];
+/* The last thirty days, or the two dates an admin set instead.
+
+   Its own pair rather than the personal app's: a work login can be reading a
+   pay period here and a fortnight of its own hours on the page behind, and one
+   shared pair would drag each into the other. The default is what it always
+   was, so nothing changes until somebody chooses. */
+const teamWindow = () => {
+  const today = iso(new Date());
+  if (state.teamFrom && state.teamTo) {
+    // Whichever way round they were typed. See customWindow().
+    return state.teamFrom <= state.teamTo
+      ? [state.teamFrom, state.teamTo] : [state.teamTo, state.teamFrom];
+  }
+  const days = Number(state.teamDays) || TEAM_WINDOW_DAYS;
+  return [mShiftIso(today, -(days - 1)), today];
+};
+const teamWindowChosen = () => !!(state.teamFrom && state.teamTo);
+
+/* Whichever tab is open reads the window from the server, so moving it has to
+   ask again. Only the open one: the other is rebuilt from state when it is
+   opened, and fetching for a panel nobody is looking at is a request the team
+   pays for and never sees. */
+function teamReload() {
+  if (state.teamTab === 'dashboard' && teamIsSuper()) loadTeamDashboard();
+  else if (state.teamTab === 'hours' && state.teamMemberId) loadTeamHours();
+}
+
+/* One control, on both tabs that read a window. Presets first, because a pay
+   period is usually one of them, and the two dates underneath for when it is
+   not. Choosing a preset clears the pair rather than filling it in: "the last
+   30 days" is a rule that stays true tomorrow, and writing today's answer into
+   two boxes would freeze it. */
+const TEAM_SPANS = [['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days']];
+
+function teamRangeBar() {
+  const [from, to] = teamWindow();
+  const chosen = teamWindowChosen();
+  const preset = ([days, label]) => {
+    const on = !chosen && String(Number(state.teamDays) || TEAM_WINDOW_DAYS) === days;
+    return `<button class="tm-span${on ? ' is-on' : ''}" data-act="team-span" data-days="${days}"
+      aria-pressed="${on}">${esc(label)}</button>`;
+  };
+  return `
+    <div class="tm-range">
+      <div class="tm-spans">
+        ${TEAM_SPANS.map(preset).join('')}
+        <button class="tm-span${chosen ? ' is-on' : ''}" data-act="team-span" data-days="custom"
+          aria-pressed="${chosen}">Custom</button>
+      </div>
+      ${chosen ? `
+      <div class="tm-dates">
+        <label><span>From</span><input class="input" type="date" data-k="team-from"
+          data-change="team-from" value="${esc(from)}" max="${esc(iso(new Date()))}"></label>
+        <label><span>To</span><input class="input" type="date" data-k="team-to"
+          data-change="team-to" value="${esc(to)}" max="${esc(iso(new Date()))}"></label>
+      </div>` : ''}
+      <span class="tm-span-note">${esc(spanLabel({ from, to }))} · ${daysBetween(from, to)} days</span>
+    </div>`;
+}
 
 async function loadTeamHours() {
   if (!state.teamMemberId) return;
@@ -11328,13 +11471,16 @@ function teamHoursTab() {
     </select>`;
 
   if (!state.teamMemberId) return picker + teamNothing('clock', 'Pick someone',
-    'You will see the hours they logged against your projects over the last 30 days, and you can correct any of them. Nothing else of theirs is here.');
-  if (state.teamBusy === 'hours') return `${picker}<p class="tm-empty">Reading…</p>`;
-  if (!state.teamRows.length) return picker + teamNothing('clock', 'Nothing in this window',
-    'They have logged no hours against a project in the last 30 days.');
+    'You will see the hours they logged against your projects over the window you choose, and you can correct any of them. Nothing else of theirs is here.');
+  const bar = teamRangeBar();
+  if (state.teamBusy === 'hours') return `${picker}${bar}<p class="tm-empty">Reading…</p>`;
+  if (!state.teamRows.length) {
+    return `${picker}${bar}` + teamNothing('clock', 'Nothing in this window',
+      'They logged no hours against a project between those two dates.');
+  }
 
   const opts = teamProjects();
-  return `${picker}
+  return `${picker}${bar}
     <div class="tm-hours">
       ${state.teamRows.map((r) => `
       <div class="tm-hrow">
@@ -11352,7 +11498,7 @@ function teamHoursTab() {
 
 function teamDashboardTab() {
   const d = state.teamDash;
-  if (!d) return '<p class="tm-empty">Loading…</p>';
+  if (!d) return `${teamRangeBar()}<p class="tm-empty">Loading…</p>`;
   const top = Math.max(1, ...d.byProject.map((p) => Number(p.minutes)), ...d.byMember.map((m) => Number(m.minutes)));
   const bar = (label, minutes, color) => `
     <div class="tm-bar">
@@ -11361,14 +11507,16 @@ function teamDashboardTab() {
       <span class="tm-bval">${esc(durShort(Number(minutes)))}</span>
     </div>`;
 
+  const [from, to] = teamWindow();
   return `
+    ${teamRangeBar()}
     <div class="tm-sub">By project</div>
     ${d.byProject.map((p) => bar(p.name, p.minutes, p.color)).join('') || '<p class="tm-empty">No projects yet.</p>'}
     ${d.byProject.length && d.byProject.every((p) => !Number(p.minutes))
       ? '<p class="tm-empty">Nothing logged against them yet — this fills in as the team tracks.</p>' : ''}
     <div class="tm-sub">By person</div>
     ${d.byMember.map((m) => bar(m.name || m.email, m.minutes, null)).join('')}
-    <p class="tm-foot">Hours logged against your projects, over the last 30 days.</p>`;
+    <p class="tm-foot">Hours logged against your projects, ${esc(spanLabel({ from, to }))}.</p>`;
 }
 
 function teamStartBody() {
@@ -11670,6 +11818,15 @@ const ACTIONS = {
   'range-thismonth': () => { state.range = 'thismonth'; render(); },
   'range-lastmonth': () => { state.range = 'lastmonth'; render(); },
   'range-all': () => { state.range = 'all'; render(); },
+  /* Seeded with the last thirty days rather than left blank, so the report
+     under it changes to something readable the moment Custom is picked and the
+     two fields have a window to be an edit of. */
+  'range-custom': () => {
+    if (!state.customFrom) state.customFrom = windowStart(todayIso, 30);
+    if (!state.customTo) state.customTo = todayIso;
+    state.range = 'custom';
+    render();
+  },
   /* Toggles a class rather than re-rendering: a render rebuilds the deck and
      would throw the reader back to the first card, which is a steep price for
      a drawer. */
@@ -12503,6 +12660,22 @@ const ACTIONS = {
     // added or removed since this tab was loaded.
     loadTeam().then(render);
   },
+  /* Both tabs read the same window, so both are reloaded whichever one moved
+     it — the other is one tap away and would otherwise still be showing the
+     old window under a bar that says the new one. */
+  'team-span': (el) => {
+    const days = el.dataset.days;
+    if (days === 'custom') {
+      const [from, to] = teamWindow();
+      state.teamFrom = from; state.teamTo = to;
+    } else {
+      state.teamFrom = ''; state.teamTo = '';
+      state.teamDays = Number(days) || TEAM_WINDOW_DAYS;
+    }
+    render();
+    teamReload();
+  },
+
   'team-close': () => {
     // Nothing behind it means anything yet. See teamSheet().
     if (workMode() && state.team && !state.team.team) return;
@@ -12751,6 +12924,13 @@ const CHANGES = {
   'team-edit-to': (el) => (String(el.value || '').trim()
     ? teamEdit(el.dataset.id, { to: parseHm(el.value) }) : scheduleRender()),
   'team-edit-project': (el) => teamEdit(el.dataset.id, { project: el.value }),
+
+  /* A cleared date is not a date. The field keeps whatever it had rather than
+     the window collapsing to the epoch under somebody mid-edit. */
+  'custom-from': (el) => { if (el.value) { state.customFrom = el.value; render(); } else scheduleRender(); },
+  'custom-to': (el) => { if (el.value) { state.customTo = el.value; render(); } else scheduleRender(); },
+  'team-from': (el) => { if (el.value) { state.teamFrom = el.value; render(); teamReload(); } else scheduleRender(); },
+  'team-to': (el) => { if (el.value) { state.teamTo = el.value; render(); teamReload(); } else scheduleRender(); },
 
   'entry-from-h': (el) => editEntryTime(el, 'from', 'h'),
   'entry-from-m': (el) => editEntryTime(el, 'from', 'm'),
@@ -13010,7 +13190,25 @@ const mDayEnd = () => (state.sleepMin == null ? 1320 : state.sleepMin);
 const mRangeKey = () => state.m.range || 'today';
 const mRangeDef = (key) => DECK_RANGES.find((r) => r[0] === (key || mRangeKey())) || DECK_RANGES[0];
 
+/* A window somebody chose, on the phone.
+
+   Kept out of DECK_RANGES rather than added to it. That list is the report
+   deck's set of fixed windows — every one of them a rule with a length, which
+   is what the deck's cards are built from — and a sixth entry with no length
+   would have to be special-cased everywhere the deck reads it anyway. So it is
+   special-cased here, once, in the four places the phone asks what its window
+   is. The two dates are the same pair the desktop picker sets, so a window
+   chosen on one is the window the other opens on. */
+const M_CUSTOM = 'custom';
+const mIsCustom = (key) => (key || mRangeKey()) === M_CUSTOM;
+
 function mRangeDates(key) {
+  if (mIsCustom(key)) {
+    const w = customWindow();
+    const out = [];
+    for (let d = w.from; d <= w.to; d = mShiftIso(d, 1)) out.push(d);
+    return out.length ? out : [w.to];
+  }
   const def = mRangeDef(key);
   const days = RANGE_DAYS[def[2]] || 1;
   const end = mShiftIso(todayIso, -def[3]);
@@ -13025,6 +13223,7 @@ const mSelectedDay = () => mRangeDates()[mRangeDates().length - 1];
 
 const mRangeHeading = (key) => {
   const k = key || mRangeKey();
+  if (k === M_CUSTOM) return 'Your window';
   if (k === 'today') return 'Today';
   if (k === 'yesterday') return 'Yesterday';
   return { week: 'This week', fortnight: 'Last 2 weeks', month: 'This month',
@@ -13182,12 +13381,15 @@ const mInsightDates = () => mRangeDates(mInsightKey());
 const mInsightPhrase = () => ({
   today: 'today', yesterday: 'yesterday', week: 'your logged week',
   fortnight: 'your last two weeks', month: 'your logged month',
-  quarter: 'your last three months', half: 'your last six months', year: 'your logged year'
+  quarter: 'your last three months', half: 'your last six months', year: 'your logged year',
+  // A window nobody named cannot be described as a length of one.
+  custom: 'the window you chose'
 }[mInsightKey()] || 'your logged week');
 const mInsightWhen = () => ({
   today: 'today', yesterday: 'yesterday', week: 'this week',
   fortnight: 'over the last two weeks', month: 'this month',
-  quarter: 'over the last three months', half: 'over the last six months', year: 'over the last year'
+  quarter: 'over the last three months', half: 'over the last six months', year: 'over the last year',
+  custom: 'in that window'
 }[mInsightKey()] || 'this week');
 
 /* The bars. Over several days that is one bar per day; over a single day a
@@ -14373,12 +14575,33 @@ const mScrollHint = (text) => `
   </div>`;
 
 function mRangeChips(act, on) {
+  const chip = ([key, label]) => `
+    <button data-act="${esc(act || 'm-range')}" data-key="${esc(key)}" aria-pressed="${key === on}"
+      style="flex:none;padding:9px 15px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;white-space:nowrap;min-height:40px;${mChip(key === on)}">${esc(label)}</button>`;
   return `
 ${mScrollHint('Scroll for more')}
-<div class="m-chiprow" style="display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;margin-bottom:16px;padding-bottom:2px;">
-  ${DECK_RANGES.map(([key, label]) => `
-    <button data-act="${esc(act || 'm-range')}" data-key="${key}" aria-pressed="${key === on}"
-      style="flex:none;padding:9px 15px;border-radius:999px;cursor:pointer;font-family:var(--font-body);font-size:13.5px;font-weight:600;white-space:nowrap;min-height:40px;${mChip(key === on)}">${esc(label)}</button>`).join('')}
+<div class="m-chiprow" style="display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;margin-bottom:${on === M_CUSTOM ? '10' : '16'}px;padding-bottom:2px;">
+  ${DECK_RANGES.map(chip).join('')}
+  ${chip([M_CUSTOM, 'Custom'])}
+</div>
+${on === M_CUSTOM ? mCustomRange() : ''}`;
+}
+
+/* The two ends, on the phone. Native date fields for the same reason the
+   desktop picker uses them: they open the platform's own calendar rather than
+   a keyboard, which is the only way a field belongs on this screen at all. */
+function mCustomRange() {
+  const w = customWindow();
+  const field = (key, label, value) => `
+    <label style="flex:1 1 100%;min-width:0;display:block;">
+      <span style="display:block;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:#756f88;margin-bottom:4px;">${esc(label)}</span>
+      <input class="input" type="date" data-k="m-range-${key}" data-change="custom-${key}"
+        value="${esc(value)}" max="${esc(todayIso)}" style="width:100%;min-width:0;font-size:16px;min-height:46px;">
+    </label>`;
+  return `
+<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;">
+  ${field('from', 'From', w.from)}
+  ${field('to', 'To', w.to)}
 </div>`;
 }
 
@@ -15684,6 +15907,24 @@ function mDragWire() {
   window.addEventListener('pointercancel', end);
 }
 
+/* The pill row scrolls inside itself once there are more windows than fit, so
+   the one you are on can be off the end of it — which on a narrow screen meant
+   picking All Time or Custom and then seeing seven pills none of which looked
+   chosen. Nudged into view after every render, by hand rather than through
+   scrollIntoView: that scrolls every scrollable ancestor, and the page moving
+   because a range changed is not what anybody asked for. */
+function paintSeg() {
+  const nudge = (row, on) => {
+    if (!on || row.scrollWidth <= row.clientWidth) return;
+    const left = on.offsetLeft, right = left + on.offsetWidth;
+    if (left < row.scrollLeft) row.scrollLeft = Math.max(0, left - 8);
+    else if (right > row.scrollLeft + row.clientWidth) row.scrollLeft = right - row.clientWidth + 8;
+  };
+  root.querySelectorAll('.seg').forEach((seg) => nudge(seg, seg.querySelector('.seg-opt:has(input:checked)')));
+  // The phone's own version of the same row, with the same problem.
+  root.querySelectorAll('.m-chiprow').forEach((row) => nudge(row, row.querySelector('[aria-pressed="true"]')));
+}
+
 /* The running timer repaints its own two lines every second. Re-rendering for
    a clock would rebuild the screen underneath whatever the user was reaching
    for, once a second, forever. */
@@ -15801,7 +16042,15 @@ const M_ACTIONS = {
   },
   'm-go-home': () => mGo('home'),
   'm-go-insights': () => mGo('insights'),
-  'm-range': (el) => mSet({ range: el.dataset.key }),
+  'm-range': (el) => {
+    // Seeded on the way in, so the screen behind the chips changes to something
+    // readable rather than to whatever two empty fields describe.
+    if (el.dataset.key === M_CUSTOM) {
+      if (!state.customFrom) state.customFrom = windowStart(todayIso, 30);
+      if (!state.customTo) state.customTo = todayIso;
+    }
+    mSet({ range: el.dataset.key });
+  },
   'm-insight-range': (el) => mSet({ insightRange: el.dataset.key }),
   'm-go-review': (el) => mSet({ reviewDay: (el && el.dataset.day) || todayIso, screen: 'review' }),
   // Refused as well as hidden, the same way the money tracker is: a hidden
@@ -16084,8 +16333,11 @@ const M_ACTIONS = {
     state.app = state.m.insightTab === 'money' ? 'money' : 'time';
     /* The deck opens on the window Insights is already showing. Both read the
        same five spans off DECK_RANGES, so handing one to the other is a
-       straight assignment rather than a translation. */
-    state.deckRange = mInsightKey();
+       straight assignment rather than a translation — except for a window
+       somebody chose, which is not one of the deck's spans. Handing that over
+       would land on the deck's fallback and silently open a week while the
+       screen behind it said something else, so the deck keeps what it had. */
+    if (!mIsCustom(mInsightKey())) state.deckRange = mInsightKey();
     ACTIONS['open-report']();
   },
 
@@ -16228,8 +16480,12 @@ function searchWindow() {
     const days = mRangeDates();
     return { from: days[0], to: days[days.length - 1] };
   }
-  const days = RANGE_DAYS[state.range] || 1;
-  return { from: windowStart(state.selectedDate, days), to: state.selectedDate };
+  /* The window the page is on, not a second reading of it. Built by hand here,
+     this fell through to a single day for every range RANGE_DAYS does not
+     name — This Month, Last Month, All Time — so a search while reading
+     September looked at one day of it and reported the rest as "outside the
+     window". Custom would have been the fourth. */
+  return currentWindow();
 }
 
 /* The suggestions and the results, which are the only parts that change per
@@ -16290,7 +16546,9 @@ function searchBody() {
 
 // What the window is called, so the scope can be stated rather than implied.
 function searchRangeLabel() {
-  if (mobileOn()) return String((mRangeDef(mRangeKey()) || [])[1] || 'this window').toLowerCase();
+  // A chosen window has no name, so it is called by its ends.
+  if (mobileOn()) return mIsCustom() ? spanLabel(customWindow())
+    : String((mRangeDef(mRangeKey()) || [])[1] || 'this window').toLowerCase();
   const named = { day: 'this day', week: 'this week', fortnight: 'this fortnight', month: 'this month',
     quarter: 'these 3 months', half: 'these 6 months', year: 'this year' };
   return named[state.range] || 'this window';

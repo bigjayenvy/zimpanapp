@@ -71,6 +71,46 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .seg { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
   .seg::-webkit-scrollbar { display: none; }
   .seg-opt { flex: none; }
+
+  /* ── a window somebody chose ──
+     The pill row and the two dates it can reveal, kept together so a caller
+     that placed the pills has placed the dates too. The wrapper is a column,
+     not a row: the dates belong under the control they came from, and beside
+     it they would push the pills into their own scroll on every width. */
+  /* min-width on both: a flex item defaults to min-width:auto, so wrapping the
+     pill row in a column made it as wide as its content and took the scroll
+     the row relies on away with it — seven pills then pushed the whole card
+     off the side of a phone. */
+  .seg-wrap {
+    display: flex; flex-direction: column; gap: 9px;
+    min-width: 0; max-width: 100%; align-items: flex-end;
+  }
+  .seg-wrap > .seg { min-width: 0; max-width: 100%; align-self: stretch; }
+  .seg-dates {
+    display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap;
+    justify-content: flex-end; max-width: 100%;
+  }
+  .seg-date { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .seg-date > span {
+    font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--color-neutral-600);
+  }
+  .seg-date .input { padding: 6px 10px; font-size: 12.5px; width: auto; min-width: 0; }
+  .seg-span {
+    font-size: 11.5px; color: var(--color-neutral-600); padding-bottom: 7px;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  /* One field per line on a phone. The anti-zoom rule sets every field to 16px
+     there, and a native date at 16px carries a calendar button and a full
+     mm/dd/yyyy — about 190px of it — so two of them and a gap do not fit the
+     card they sit in. Side by side they were clipped; stacked they are read. */
+  @media (max-width: 560px) {
+    .seg-wrap { align-items: stretch; }
+    .seg-dates { justify-content: flex-start; }
+    .seg-date { flex: 1 1 100%; min-width: 0; }
+    .seg-date .input { width: 100%; min-width: 0; }
+    .seg-span { flex-basis: 100%; padding-bottom: 0; }
+  }
   input[type="time"]::-webkit-calendar-picker-indicator { opacity: .35; }
 
   /* ── the mobile logging flow ──
@@ -2289,6 +2329,35 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     color: var(--color-neutral-600); margin: 14px 0 8px;
   }
 
+  /* ── the window an admin is reading ──
+     Presets and, when none of them is it, two dates. Sits above whatever the
+     tab draws, so what is on screen always has the window that made it
+     directly above it rather than in a footnote below. */
+  .tm-range {
+    display: flex; flex-direction: column; gap: 9px;
+    margin: 12px 0 14px; padding-bottom: 12px;
+    border-bottom: 1px solid var(--color-divider);
+  }
+  .tm-spans { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tm-span {
+    border: 1px solid var(--color-divider); background: var(--color-bg);
+    color: var(--color-neutral-700); font: inherit; font-size: 12px; font-weight: 600;
+    padding: 6px 12px; border-radius: 999px; cursor: pointer; min-height: 32px;
+  }
+  .tm-span:hover { border-color: var(--color-accent); color: var(--color-accent-700); }
+  .tm-span.is-on {
+    background: var(--color-accent); border-color: var(--color-accent); color: #fff;
+  }
+  .tm-dates { display: flex; gap: 10px; flex-wrap: wrap; }
+  .tm-dates label { display: flex; flex-direction: column; gap: 3px; flex: 1 1 140px; min-width: 0; }
+  .tm-dates span {
+    font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--color-neutral-600);
+  }
+  .tm-dates .input { width: 100%; min-width: 0; padding: 6px 10px; font-size: 12.5px; }
+  .tm-span-note {
+    font-size: 11.5px; color: var(--color-neutral-600); font-variant-numeric: tabular-nums;
+  }
+
   /* Somebody else's hours, editable in place. Scrolls inside itself so a busy
      month does not make the dialog taller than the screen. */
   .tm-hours { max-height: 46vh; overflow: auto; margin-top: 12px; }
@@ -2554,7 +2623,10 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     display: block; margin-top: 3px; font-size: 11.5px; line-height: 1.45;
     color: color-mix(in srgb, #fff 74%, transparent);
   }
-  .card-head-right { display: flex; align-items: center; gap: 8px; flex: none; }
+  /* Allowed to shrink. `flex: none` meant the range switch inside it was never
+     asked to fit, so its own overflow-x never engaged and seven pills pushed
+     the card off the side of a narrow screen instead of scrolling inside it. */
+  .card-head-right { display: flex; align-items: center; gap: 8px; flex: 0 1 auto; min-width: 0; }
   /* The range switch sits on a dark ground here, so its own light styling
      would vanish into it — the white pill and the brand gradient the switch
      wears everywhere else both disappear against this head. Transparent
@@ -2563,6 +2635,8 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .card-head .seg-opt + .seg-opt { border-left-color: color-mix(in srgb, #fff 26%, transparent); }
   .card-head .seg-opt span { color: color-mix(in srgb, #fff 82%, transparent); }
   .card-head .seg-opt:has(input:checked) { background: #fff; }
+  /* The chosen window's labels sit on the same dark ground as the pills. */
+  .card-head .seg-date > span, .card-head .seg-span { color: color-mix(in srgb, #fff 74%, transparent); }
   .card-head .seg-opt input:checked + span { color: var(--color-accent-900); }
   .head-btn {
     width: 34px; height: 34px; border-radius: 10px; cursor: pointer;
