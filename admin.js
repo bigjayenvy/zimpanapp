@@ -63,6 +63,13 @@ const state = {
   editing: null,
   blogMsg: null,
   blogBusy: false,
+  /* The demo account. `demo` is what the server last said about it; `demoPass`
+     is the password just set, held for this page view only — the server hashes
+     it and cannot be asked for it again, so this is the one chance to copy it. */
+  demo: null,
+  demoBusy: false,
+  demoMsg: null,
+  demoPass: '',
   rows: [],
   total: 0,
   q: '',
@@ -374,6 +381,49 @@ function modalBlock() {
       </div>`;
   }
 
+  if (m.kind === 'demo-password') {
+    return `
+      <div class="ad-back" data-backdrop>
+        <div class="ad-modal" role="dialog" aria-modal="true">
+          <h3>${m.first ? 'Build the demo account' : 'Set the demo password'}</h3>
+          <p class="ad-sub">${esc(m.email)}</p>
+          ${m.first ? `<p class="ad-warn" style="background: var(--color-neutral-100); color: var(--color-neutral-700);">
+            This makes a real account that anyone with the password can sign in to.
+            Give it one you are willing to hand out, and never one you use elsewhere.</p>` : ''}
+          <div class="field">
+            <label for="ad-demo-pass">Password</label>
+            <input class="input" id="ad-demo-pass" type="text" autocomplete="off" spellcheck="false"
+              value="${esc(m.suggestion || '')}" placeholder="At least 10 characters">
+          </div>
+          ${state.msg ? `<p class="ad-msg ${state.msg.tone}">${esc(state.msg.text)}</p>` : ''}
+          <footer>
+            <button class="btn btn-ghost" data-act="close-modal">Cancel</button>
+            <button class="btn btn-primary" data-act="demo-save"${state.busy ? ' disabled' : ''}>${
+              state.busy ? 'Building…' : m.first ? 'Build it' : 'Set it'}</button>
+          </footer>
+        </div>
+      </div>`;
+  }
+
+  if (m.kind === 'demo-remove') {
+    return `
+      <div class="ad-back" data-backdrop>
+        <div class="ad-modal" role="dialog" aria-modal="true">
+          <h3>Remove the demo account</h3>
+          <p class="ad-sub">${esc(m.email)}</p>
+          <p class="ad-warn">The account and everything generated under it go together. Nothing
+            real is in there, and building it again makes a fresh log — but the password
+            you handed out stops working the moment this is done.</p>
+          ${state.msg ? `<p class="ad-msg ${state.msg.tone}">${esc(state.msg.text)}</p>` : ''}
+          <footer>
+            <button class="btn btn-ghost" data-act="close-modal">Cancel</button>
+            <button class="btn ad-danger" data-act="demo-confirm-remove"${state.busy ? ' disabled' : ''}>${
+              state.busy ? 'Removing…' : 'Remove it'}</button>
+          </footer>
+        </div>
+      </div>`;
+  }
+
   const today = new Date().toISOString().slice(0, 10);
   return `
       <div class="ad-back" data-backdrop>
@@ -492,6 +542,64 @@ function ticketsBlock() {
         <span class="ad-sub" style="margin:0;">Reply by email — the address is a link</span>
       </div>
       ${rows || '<div class="ad-empty">Nobody has asked for help yet.</div>'}
+    </div>`;
+}
+
+/* ── the demo account ──
+
+   One fictional person's log, kept behind a real login, so the app can be
+   shown to somebody without showing them a real user's life. The dashboard's
+   job here is small: say whether it exists and how much is in it, and offer
+   the three things anyone would want — build it, refresh it, take it away.
+
+   The log is regenerated from today backwards, so the useful button is the
+   second one: a demo built in March shows March. */
+function demoBlock() {
+  const d = state.demo;
+  /* A load that failed leaves nothing to describe. Without this the card sat
+     on "Loading the demo…" for good, which reads as a slow server rather than
+     as one that already answered and said no. */
+  if (!d) {
+    return `<div class="ad-card" style="margin-top: 16px;"><div class="ad-card-head"><h3>Demo account</h3></div>
+      ${state.demoMsg
+        ? `<p class="ad-msg bad">${esc(state.demoMsg.text)}</p>
+           <div class="ad-demo-acts"><button class="ad-mini" data-act="demo-reload">Try again</button></div>`
+        : '<div class="ad-empty">Loading the demo…</div>'}</div>`;
+  }
+  const p = d.persona || {};
+  const facts = d.exists ? [
+    ['Sign in as', d.email],
+    ['Logging as', d.name || p.name],
+    ['Activity', `${num(d.counts.entries)} entries`],
+    ['Money', `${num(d.counts.money)} payments`],
+    ['Pad and plan', `${num(d.counts.todos)} notes · ${num(d.counts.plans)} planned`],
+    ['Covering', d.first && d.last ? `${d.first} → ${d.last}` : '—'],
+    ['Last built', d.builtAt ? `${day(d.builtAt)} · ${ago(d.builtAt)}` : '—']
+  ] : [];
+
+  return `
+    <div class="ad-card" style="margin-top: 16px;">
+      <div class="ad-card-head">
+        <h3>Demo account</h3>
+        ${may() ? `<button class="btn btn-primary" data-act="demo-build" style="font-size:13px;"${state.demoBusy ? ' disabled' : ''}>${
+          state.demoBusy ? 'Working…' : d.exists ? 'Rebuild the log' : 'Build the demo'}</button>`
+          : '<span style="font-size: 11px; color: var(--color-neutral-500);">view only</span>'}
+      </div>
+      <p class="ad-sub">${esc(p.blurb || '')} Nobody real — the log is generated, and it is
+        counted back from today, so rebuilding brings it up to date.</p>
+      ${state.demoPass ? `<p class="ad-msg good">Password set to <strong>${esc(state.demoPass)}</strong> —
+        copy it now. It is stored only as a hash, so this is the last time it can be shown.</p>` : ''}
+      ${state.demoMsg ? `<p class="ad-msg ${state.demoMsg.tone === 'bad' ? 'bad' : 'good'}">${esc(state.demoMsg.text)}</p>` : ''}
+      ${d.exists ? `
+        <div class="ad-demo">
+          ${facts.map(([k, v]) => `<div><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')}
+        </div>
+        ${may() ? `<div class="ad-demo-acts">
+          <button class="ad-mini" data-act="demo-password">Set a new password</button>
+          <button class="ad-mini danger" data-act="demo-remove">Remove the demo</button>
+        </div>` : ''}`
+        : `<div class="ad-empty">Not built yet. ${may() ? 'Building it makes one ordinary account at '
+            + esc(d.email) + ' with six weeks of a made-up life in it.' : ''}</div>`}
     </div>`;
 }
 
@@ -693,6 +801,7 @@ function render() {
       ${o ? overviewBlock(o) : '<div class="ad-empty">Loading the numbers…</div>'}
       ${usersBlock()}
       ${ticketsBlock()}
+      ${demoBlock()}
       ${blogBlock()}
     </div>
     ${modalBlock()}
@@ -728,6 +837,16 @@ async function loadPosts() {
   } catch (err) {
     state.posts = [];
     state.blogMsg = { tone: 'bad', text: err.message };
+  }
+  render();
+}
+
+async function loadDemo() {
+  try {
+    state.demo = await api('/api/admin/demo');
+  } catch (err) {
+    state.demo = null;
+    state.demoMsg = { tone: 'bad', text: err.message };
   }
   render();
 }
@@ -772,13 +891,87 @@ async function boot() {
   render();
   await loadUsers(false);
   await loadTickets();
+  await loadDemo();
   await loadPosts();
 }
 
 /* ── actions ── */
 
+/* Suggested rather than imposed: the field is editable, and this is only here
+   so nobody has to invent a password for an account whose whole purpose is to
+   be handed out. Two words and a number is memorable enough to read down a
+   phone line, which a demo password often is. */
+const DEMO_WORDS = ['tuesday', 'mango', 'harbour', 'lantern', 'compass', 'ginger', 'meadow', 'pebble'];
+function suggestPassword() {
+  const pick = () => DEMO_WORDS[Math.floor(Math.random() * DEMO_WORDS.length)];
+  let a = pick(), b = pick();
+  while (b === a) b = pick();
+  return `${a}-${b}-${100 + Math.floor(Math.random() * 900)}`;
+}
+
+async function saveDemo(password) {
+  state.busy = true; state.demoBusy = true; state.msg = null; render();
+  try {
+    const out = await api('/api/admin/demo', { method: 'POST', body: password ? { password } : {} });
+    state.demo = out;
+    // Held for this page view only. See the note on state.demoPass.
+    if (password) state.demoPass = password;
+    state.demoMsg = {
+      tone: 'good',
+      text: out.created
+        ? `Built — ${num(out.counts.entries)} entries and ${num(out.counts.money)} payments, ending ${out.last}.`
+        : `Rebuilt — ${num(out.counts.entries)} entries and ${num(out.counts.money)} payments, ending ${out.last}.`
+    };
+    state.modal = null;
+  } catch (err) {
+    if (state.modal) state.msg = { tone: 'bad', text: err.message };
+    else state.demoMsg = { tone: 'bad', text: err.message };
+  } finally {
+    state.busy = false; state.demoBusy = false; render();
+  }
+}
+
 const ACTIONS = {
   more: () => { state.page += 1; loadUsers(true); },
+
+  /* ── the demo account ── */
+  /* A first build has to be given a password; a rebuild is only the log, and
+     asking for one again would invalidate what was already handed out. */
+  'demo-reload': () => { state.demoMsg = null; render(); loadDemo(); },
+  'demo-build': () => {
+    state.demoMsg = null; state.demoPass = '';
+    if (state.demo && state.demo.exists) { saveDemo(null); return; }
+    state.msg = null;
+    state.modal = { kind: 'demo-password', first: true, email: (state.demo || {}).email, suggestion: suggestPassword() };
+    render();
+  },
+  'demo-password': () => {
+    state.demoMsg = null; state.demoPass = ''; state.msg = null;
+    state.modal = { kind: 'demo-password', first: false, email: (state.demo || {}).email, suggestion: suggestPassword() };
+    render();
+  },
+  'demo-save': () => {
+    const el = document.getElementById('ad-demo-pass');
+    saveDemo(el ? el.value.trim() : '');
+  },
+  'demo-remove': () => {
+    state.demoMsg = null; state.demoPass = ''; state.msg = null;
+    state.modal = { kind: 'demo-remove', email: (state.demo || {}).email };
+    render();
+  },
+  'demo-confirm-remove': async () => {
+    state.busy = true; render();
+    try {
+      await api('/api/admin/demo', { method: 'DELETE' });
+      state.modal = null;
+      state.demoMsg = { tone: 'good', text: 'Removed. The password that was handed out no longer works.' };
+      await loadDemo();
+    } catch (err) {
+      state.msg = { tone: 'bad', text: err.message };
+    } finally {
+      state.busy = false; render();
+    }
+  },
 
   /* ── the blog ── */
   'post-new': () => {

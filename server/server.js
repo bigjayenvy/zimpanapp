@@ -27,6 +27,7 @@ import {
   overview as adminOverview, users as adminUsers, donationsFor,
   setRole, addDonation, removeDonation, deleteAccount, noteDonateClick, touchSeen, isAdminRole, ROLES
 } from './admin.js';
+import { demoStatus, buildDemo, removeDemo } from './demo.js';
 import {
   TeamError, membershipFor, createTeam, teamOverview, inviteMember, revokeInvite,
   acceptInvite, setMemberRole, removeMember, saveProject, deleteProject,
@@ -724,6 +725,43 @@ app.delete('/api/admin/donations/:id', requireSuper, wrap(async (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+}));
+
+/* ── the demo account ──
+
+   A real login holding a fictional person's log, so the app can be shown to
+   somebody without showing them a real user's life. Reading its state is a
+   manager's business; building or removing it is a superadmin's, because both
+   write to a user row.
+
+   The password is supplied by the admin and only ever leaves here as a hash.
+   Nothing stores the plaintext, so the dashboard says it once and cannot be
+   asked again — rebuilding with a new one is the way back. */
+app.get('/api/admin/demo', requireAdmin, wrap(async (req, res) => {
+  res.json(await demoStatus());
+}));
+
+app.post('/api/admin/demo', requireSuper, wrap(async (req, res) => {
+  const password = String((req.body || {}).password || '');
+  const existing = await demoStatus();
+  // Only a first build insists on one: a rebuild that leaves the password
+  // alone is how the log is refreshed without invalidating what was handed out.
+  if (!existing.exists && password.length < MIN_PASSWORD) {
+    return res.status(400).json({ error: `Password must be at least ${MIN_PASSWORD} characters.` });
+  }
+  if (password && password.length < MIN_PASSWORD) {
+    return res.status(400).json({ error: `Password must be at least ${MIN_PASSWORD} characters.` });
+  }
+  if (password.length > 400) return res.status(400).json({ error: 'Password is too long.' });
+  try {
+    res.json({ ok: true, ...(await buildDemo({ password: password || null })) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}));
+
+app.delete('/api/admin/demo', requireSuper, wrap(async (req, res) => {
+  res.json({ ok: true, ...(await removeDemo()) });
 }));
 
 /* Interest, recorded as interest. Fire-and-forget from the app, so it answers

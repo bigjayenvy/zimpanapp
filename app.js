@@ -13385,15 +13385,19 @@ function mSignin() {
     </div>
     <ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;">${checks}</ul>
     <div style="display:flex;flex-direction:column;gap:10px;">
+      <!-- One door rather than two. "Create an account" and "Continue with
+           Google" both opened the same panel, and that panel offers Google,
+           email and a way across to signing in — so the phone was asking
+           which credential you wanted before it had said what it was for.
+           This says what happens next instead, and the panel behind it is
+           still where the choice is made. -->
       <button class="btn btn-primary" data-act="m-signup"
-        style="width:100%;min-height:52px;font-size:16px;box-shadow:0 6px 18px rgba(79,70,229,.34);">Create an account</button>
-      <button class="btn btn-secondary" data-act="m-signin"
-        style="width:100%;min-height:52px;font-size:16px;">Continue with Google</button>
-      <!-- The way back in for someone who already has an account. It opens the
-           same panel the Google button does — that panel is where both the
-           Google button and the email form live — but it is the wording people
-           look for, and looking for it under a button that says "Google" is
-           how a returning user decides the app has forgotten them. -->
+        style="width:100%;min-height:52px;font-size:16px;box-shadow:0 6px 18px rgba(79,70,229,.34);">Start Tracking</button>
+      <!-- The way back in for someone who already has an account. It opens
+           the same panel Start Tracking does, but lands it on the sign-in
+           side and says the words a returning user is looking for: nobody
+           coming back to their own log reads "Start Tracking" as the door
+           they want. -->
       <div style="text-align:center;font-size:13.5px;color:#756f88;margin-top:2px;">
         Already have an account?
         <button data-act="m-signin"
