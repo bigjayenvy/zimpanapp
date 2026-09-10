@@ -6173,11 +6173,16 @@ function teamsScreen() {
     <section class="hero">
       <div class="hero-copy">
         <span class="hero-eyebrow">For teams · From $9 a month</span>
-        <h1 class="hero-h1">Measure Your Team&rsquo;s Productivity</h1>
+        <!-- One heading, two voices. The first sentence is the headline and
+             wears the page's caps; the two that follow are the promise and the
+             limit, and setting them in caps at headline size would shout three
+             times over. They stay inside the h1 because they are part of the
+             title, and a crawler reading the markup should find the whole of
+             it in one place rather than a fragment. -->
+        <h1 class="hero-h1">Know where your team&rsquo;s week went.<span class="hero-h1-sub">One flat price. Nothing personal.</span></h1>
         <p class="hero-lede">
-          Zimpan for Teams turns the hours your people actually work into something
-          you can read: which project took them, who they belonged to, and where the
-          week really went.
+          Your team logs hours against real projects. You see where the time went.
+          Nobody sees anything else.
         </p>
 
         <ul class="hero-checks">

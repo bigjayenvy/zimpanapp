@@ -28,6 +28,8 @@ import {
   setRole, addDonation, removeDonation, deleteAccount, noteDonateClick, touchSeen, isAdminRole, ROLES
 } from './admin.js';
 import { demoStatus, buildDemo, removeDemo } from './demo.js';
+import { teamsHead, teamsPrerender } from './teamspage.js';
+import { swapHead } from './head.js';
 import {
   TeamError, membershipFor, createTeam, teamOverview, inviteMember, revokeInvite,
   acceptInvite, setMemberRole, removeMember, saveProject, deleteProject,
@@ -959,8 +961,24 @@ app.get('/index.html', sendRoot('index.html'));
 /* The team page is the same document — app.js reads the path and draws the
    other page — so it is another name for index.html rather than a file of its
    own. Named explicitly, like everything else here: this is an allowlist, and
-   a route that is not in it is the 404 below however real the page is. */
-app.get('/teams', sendRoot('index.html'));
+   a route that is not in it is the 404 below however real the page is.
+
+   It arrives filled in, though. This is the product's shop window: it is meant
+   to be searched for, linked to and unfurled in a chat, and all three read the
+   markup they are served rather than the page a browser eventually builds. So
+   the head is replaced with the page's own, and the body carries a plain
+   reading of it — which app.js throws away on its first render, long before
+   anybody looks. See teamspage.js.
+
+   A failure to read the file falls back to sending it untouched, the same way
+   the blog routes do: an unfilled page is a page, and no page is not. */
+app.get('/teams', wrap(async (req, res) => {
+  const file = join(ROOT, 'index.html');
+  let html;
+  try { html = await readFile(file, 'utf8'); } catch (err) { return res.sendFile(file); }
+  res.type('html').send(swapHead(html, teamsHead())
+    .replace('<div id="app"></div>', `<div id="app">${teamsPrerender()}</div>`));
+}));
 app.get('/blogs', wrap(async (req, res) => {
   const file = join(ROOT, 'index.html');
   let html;
@@ -977,7 +995,7 @@ app.get('/blogs', wrap(async (req, res) => {
     `<meta property="og:description" content="${htmlAttr(desc)}">`,
     `<meta property="og:url" content="https://zimpan.com/blogs">`
   ].join('\n  ');
-  res.type('html').send(html.replace(/<title>[\s\S]*?<\/title>/i, head));
+  res.type('html').send(swapHead(html, head));
 }));
 
 /* A post's own page, with its own title and description written into the HTML
@@ -1023,8 +1041,9 @@ app.get('/blogs/:slug', wrap(async (req, res) => {
   ].filter(Boolean).join('\n  ');
 
   /* The document's own <title> is replaced rather than added to — two titles
-     and a crawler picks the first, which would be the app's. */
-  res.type('html').send(html.replace(/<title>[\s\S]*?<\/title>/i, head));
+     and a crawler picks the first, which would be the app's. See swapHead()
+     for the rest of the head. */
+  res.type('html').send(swapHead(html, head));
 }));
 app.get('/app.js', sendRoot('app.js'));
 
