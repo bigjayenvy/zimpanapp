@@ -5110,8 +5110,15 @@ function header(v) {
   <div class="appbar">
     ${wordmark(26, 20)}
     <div class="appbar-tabs" style="display: flex; border: 1px solid var(--color-divider); border-radius: 999px; overflow: hidden;">
-      <button data-act="app-time" style="${tabStyle(!v.isMoney)}">Activity Tracker</button>
-      ${workMode() ? '' : `<button data-act="app-money" style="${tabStyle(v.isMoney)}">Money Tracker</button>`}
+      <!-- A team has one tracker, so this pill had nothing to switch to: it
+           named the page you were already on and did nothing when pressed.
+           It says whose hours these are now, and it is the door to the team
+           itself — the roster, the projects, the dashboard — which was
+           otherwise only reachable from the menu at the other end of the bar. -->
+      ${workMode()
+        ? `<button data-act="team-open" style="${tabStyle(true)}">Your Team’s Activity</button>`
+        : `<button data-act="app-time" style="${tabStyle(!v.isMoney)}">Activity Tracker</button>
+           <button data-act="app-money" style="${tabStyle(v.isMoney)}">Money Tracker</button>`}
     </div>
     <div class="appbar-meta">
       <span data-geo>${esc(v.geoLabel)}</span><span style="opacity:.4">/</span><span data-now>${esc(v.nowLabel)}</span>
@@ -15254,7 +15261,9 @@ function mTabs() {
 <div style="position:fixed;left:0;right:0;bottom:0;z-index:10;height:92px;display:flex;align-items:center;padding:0 10px 22px;background:linear-gradient(180deg,rgba(248,247,251,0),rgba(248,247,251,.96) 42%);backdrop-filter:blur(8px);">
   ${side(`
     ${tab('m-go-home', nodeIcon('home', 21), 'Home', on === 'home')}
-    ${workMode() ? '' : tab('m-donate-open', nodeIcon('heart', 21), 'Donate', false, '#e08a1e')}`)}
+    ${workMode()
+      ? tab('team-open', nodeIcon('people', 21), 'Your Team', state.teamOpen)
+      : tab('m-donate-open', nodeIcon('heart', 21), 'Donate', false, '#e08a1e')}`)}
   <button data-act="m-flow-open" aria-label="Log something"
     style="width:58px;height:58px;flex:none;border:0;border-radius:50%;cursor:pointer;background:${M_GRAD_FLAT};box-shadow:0 10px 24px rgba(79,70,229,.4);color:#fff;font-size:26px;font-weight:300;line-height:1;margin-bottom:12px;">+</button>
   ${side(`
