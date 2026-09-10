@@ -2623,6 +2623,11 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   /* — net calories, day by day —
      Bars from a zero line, deficit above and surplus below. The two sides are
      scaled independently so the smaller one stays visible. */
+  /* Money in beside money out, on the money tracker's wide column. Stacks
+     under 720px, where two columns of bars are two columns of nothing. */
+  .rank-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 28px; }
+  @media (max-width: 900px) { .rank-pair { grid-template-columns: minmax(0, 1fr); gap: 4px; } }
+
   .net-block { margin-top: 16px; }
   .net-chart { margin-top: 4px; }
   .net-bars {
@@ -2648,8 +2653,12 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .net-up { align-items: flex-end; }
   .net-down { align-items: flex-start; }
   .net-half i { width: 100%; border-radius: 2px; position: relative; }
-  .net-up i { background: var(--zg-strong); border-radius: 3px 3px 0 0; }
-  .net-down i { background: var(--zg-alert); border-radius: 0 0 3px 3px; }
+  /* Which colour goes on which side is the chart's caller's to say: money puts
+     what came in on top, calories put a surplus there, and those are not the
+     same news. The defaults are what every chart drew before there was a
+     choice. See barChart(). */
+  .net-up i { background: var(--net-up-ink, var(--zg-strong)); border-radius: 3px 3px 0 0; }
+  .net-down i { background: var(--net-down-ink, var(--zg-alert)); border-radius: 0 0 3px 3px; }
 
   /* The number the bar is worth, printed at its outer end. Outside the bar
      rather than inside it: a short bar has no room within itself, and a figure
@@ -2659,8 +2668,8 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     font-size: 9.5px; font-weight: 600; line-height: 1; white-space: nowrap;
     font-variant-numeric: tabular-nums; pointer-events: none;
   }
-  .net-up b { bottom: 100%; margin-bottom: 3px; color: var(--zg-strong); }
-  .net-down b { top: 100%; margin-top: 3px; color: var(--zg-alert); }
+  .net-up b { bottom: 100%; margin-bottom: 3px; color: var(--net-up-ink, var(--zg-strong)); }
+  .net-down b { top: 100%; margin-top: 3px; color: var(--net-down-ink, var(--zg-alert)); }
   /* Centred on its column everywhere except the two ends, where centring would
      hang half the number off the side of the chart. */
   .net-col:first-child b { left: 0; transform: none; }
@@ -2682,8 +2691,8 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .net-legend span { display: inline-flex; align-items: center; gap: 5px; }
   .net-key { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
-  .net-key-up { background: var(--zg-strong); }
-  .net-key-down { background: var(--zg-alert); }
+  .net-key-up { background: var(--net-up-ink, var(--zg-strong)); }
+  .net-key-down { background: var(--net-down-ink, var(--zg-alert)); }
   .net-avg { margin-left: auto; font-weight: 600; color: var(--color-text); }
   .net-note { margin-top: 7px; font-size: 11.5px; line-height: 1.55; color: var(--color-neutral-600); }
 

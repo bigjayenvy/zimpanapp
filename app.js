@@ -987,7 +987,7 @@ const state = {
   accountId: Number(stored.accountId) || null,
 
   // Collapsed by default; whether you left one open is remembered.
-  drawers: Object.assign({ categories: false, activities: false, lookback: false, legend: false, leaderboard: false, today: false, mEntries: false }, stored.drawers),
+  drawers: Object.assign({ categories: false, activities: false, lookback: false, legend: false, leaderboard: false, today: false, mEntries: false, rankIn: false, rankOut: false }, stored.drawers),
 
   /* ── session (per-load) ── */
   booted: false,
@@ -1034,6 +1034,9 @@ const state = {
   planArm: '',
   // The line whose "log it" is being answered. See planLogDialog().
   planLogAsk: null,
+  /* 'in', 'out', or null: which money figure has its entries open. See
+     moneyBreakdownDialog(). */
+  moneyMade: null,
   /* Which pad line is having a new category or purpose named for it, and the
      name being typed. Held here rather than per-pad: only one popover is open
      at a time, so only one of these can be in flight. */
@@ -2181,6 +2184,20 @@ function totalsByPurpose(list) {
   list.filter((e) => e.out > 0).forEach((e) => {
     if (!map[e.purpose]) map[e.purpose] = { name: e.purpose, mins: 0, count: 0, color: purposeColor(e.purpose) };
     map[e.purpose].mins += e.out; map[e.purpose].count += 1;
+  });
+  return Object.values(map).sort((a, b) => b.mins - a.mins);
+}
+
+/* The same, for money arriving. The tracker had no picture of it at all: the
+   donut, the leaderboard and the drill-down were every one of them built on
+   `out > 0`, so a page headed "Money in Dhs 27,940" could not say where a
+   penny of it came from. `mins` keeps the name the shared code reads — it is
+   the magnitude field, whatever the magnitude is of. */
+function totalsBySource(list) {
+  const map = {};
+  list.filter((e) => e.in > 0).forEach((e) => {
+    if (!map[e.purpose]) map[e.purpose] = { name: e.purpose, mins: 0, count: 0, color: purposeColor(e.purpose) };
+    map[e.purpose].mins += e.in; map[e.purpose].count += 1;
   });
   return Object.values(map).sort((a, b) => b.mins - a.mins);
 }
@@ -3711,6 +3728,16 @@ function compute() {
           : s.range === 'all' ? 'everything logged'
             : `last ${winDays} days`,
     leaderboard: totals.map((t) => ({ name: t.name, color: t.color, label: fmtShort(t.mins), width: `${Math.round((t.mins / top) * 100)}%` })),
+    /* Where the money came from, ranked the same way. Money only — the hours
+       have no second direction to rank. */
+    sources: isMoney ? (() => {
+      const src = totalsBySource(mRangeList);
+      const head = src[0] ? src[0].mins : 1;
+      return src.map((t) => ({
+        name: t.name, color: t.color, count: t.count,
+        label: fmtShort(t.mins), width: `${Math.round((t.mins / head) * 100)}%`
+      }));
+    })() : [],
 
     // Every date in the window, enumerated — a chart needs the nights with
     // nothing logged as much as the ones with something.
@@ -7956,7 +7983,7 @@ function foodBlock(food, scope, canRefine) {
 }
 
 /* ── net calories, drawn ──
-   Bars from a zero line: above it a deficit, below it a surplus. Two scales
+   Bars from a zero line: above it a surplus, below it a deficit. Two scales
    rather than one, so the taller side fills its half and the shorter one is
    still visible — a fortnight of small deficits against one enormous surplus
    would otherwise be a flat line and a spike.
@@ -8111,10 +8138,15 @@ const briefHours = (m) => `${(m / 60).toFixed(1).replace(/\.0$/, '')}h`;
 
 /* ── the diverging bar chart ──
 
-   One drawing, two readings: calories put a deficit above the line and a
-   surplus below it, money puts what came in above and what went out below.
-   Both are "two quantities that oppose each other, per day", which is why they
-   share a function rather than each growing their own.
+   One drawing, two readings: money puts what came in above the line and what
+   went out below; calories put a surplus above and a deficit below, because a
+   surplus is the day going up and a deficit is the day coming down. Both are
+   "two quantities that oppose each other, per day", which is why they share a
+   function rather than each growing their own.
+
+   Which side a thing sits on is the caller's, and so is its colour — the two
+   have to travel together or a deficit ends up drawn in the colour of a
+   warning purely because it moved below the line. `tones` carries them.
 
    Two scales rather than one, so the taller side fills its half and the shorter
    one is still visible — a fortnight of small deficits against one enormous
@@ -8168,8 +8200,10 @@ function barChart(series, o) {
   }).join('');
 
   const missing = series.length - shown.length;
+  const tones = o.tones || {};
+  const ink = `--net-up-ink:${tones.up || 'var(--zg-strong)'};--net-down-ink:${tones.down || 'var(--zg-alert)'};`;
   return `
-      <div class="net-chart">
+      <div class="net-chart" style="${ink}">
         <div class="net-bars${dense}${densePhone}" style="--zero: ${zeroPct}%;">${cols}</div>
         <div class="net-axis">
           <span>${esc(dayLabel(series[0].date))}</span>
@@ -8188,10 +8222,19 @@ function barChart(series, o) {
       </div>`;
 }
 
-// Signed net folded into the two magnitudes the chart draws.
+/* Signed net folded into the two magnitudes the chart draws.
+
+   A surplus goes up and a deficit goes down, which is the direction each one
+   moves you: eating more than you spent is the day going up. It was the other
+   way round, on the reasoning that a deficit is the thing most people are
+   after and the good news belongs above the line — but a chart is read as a
+   picture before it is read as a scoreboard, and a picture of "more than I
+   burned" pointing downwards is a picture of the wrong thing. The colours
+   follow the meaning rather than the side, so a deficit is still green under
+   the line and a surplus still red over it. */
 const netCols = (series) => series.map((d) => ({
   date: d.date, logged: d.logged,
-  up: d.net > 0 ? d.net : 0, down: d.net < 0 ? -d.net : 0
+  up: d.net < 0 ? -d.net : 0, down: d.net > 0 ? d.net : 0
 }));
 
 function netChart(series) {
@@ -8204,8 +8247,11 @@ function netChart(series) {
   const avg = Math.round(shown.reduce((a, d) => a + d.net, 0) / shown.length);
 
   return barChart(netCols(series), {
-    upLabel: 'Deficit',
-    downLabel: 'Surplus',
+    // Up is a surplus and down is a deficit — see netCols. The colours go with
+    // the meaning, so the legend keys match the bars whichever side they sit on.
+    upLabel: 'Surplus',
+    downLabel: 'Deficit',
+    tones: { up: 'var(--zg-alert)', down: 'var(--zg-strong)' },
     /* Not "nothing logged": most of these days have plenty logged, they just
        have no meal on them, and a day cannot be weighed against what was not
        eaten. See hasFood(). */
@@ -8213,7 +8259,7 @@ function netChart(series) {
     average: `${avg >= 0 ? '+' : '−'}${Math.abs(avg).toLocaleString('en-US')} kcal a day on average`,
     title: (d) => (!d.logged
       ? `${dayLabel(d.date)} · nothing logged`
-      : `${dayLabel(d.date)} · ${(d.up || d.down).toLocaleString('en-US')} kcal ${d.up ? 'deficit' : 'surplus'}`),
+      : `${dayLabel(d.date)} · ${(d.up || d.down).toLocaleString('en-US')} kcal ${d.up ? 'surplus' : 'deficit'}`),
     note: netRange(shown, best, worst)
   });
 }
@@ -8750,10 +8796,15 @@ function moneyDesktop(v) {
                 <td data-col="remove" style="text-align: right;"><button class="cell-del" data-act="money-remove" data-id="${esc(e.id)}" title="Delete entry">×</button></td>
               </tr>`).join('');
 
-  const stat = (kicker, value, note, color) => `
+  /* `made` is the direction whose entries this figure is the sum of, where
+     there is one. The net has none — it is the two of them subtracted, and a
+     list of "what made up a subtraction" is not a thing. */
+  const stat = (kicker, value, note, color, made) => `
         <div class="blueprint" style="padding: 18px 20px 20px;">          <div style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--color-accent-700); margin-bottom: 8px;">${kicker}</div>
           <div style="font-family: var(--font-heading); font-size: 32px; line-height: 1;${color ? ` color: ${color};` : ''}">${esc(value)}</div>
           <div style="font-size: 12px; color: var(--color-neutral-600); margin-top: 8px;">${esc(note)}</div>
+          ${made ? `<button class="cal-more" data-act="money-made" data-dir="${esc(made)}"
+            aria-haspopup="dialog" style="margin-top:10px;">See what made it up</button>` : ''}
         </div>`;
 
   return `
@@ -8762,8 +8813,8 @@ function moneyDesktop(v) {
     <div style="display: flex; flex-direction: column; gap: 22px; min-width: 0;">
 
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 22px;">
-        ${stat('Money in', v.moneyIn, v.rangeLabel)}
-        ${stat('Money out', v.moneyOut, `across ${v.moneyOutCount} entries`)}
+        ${stat('Money in', v.moneyIn, v.rangeLabel, MONEY_IN_INK, 'in')}
+        ${stat('Money out', v.moneyOut, `across ${v.moneyOutCount} entries`, MONEY_OUT_INK, 'out')}
         ${stat('Net', v.moneyNet, v.netNote, v.netColor)}
       </div>
 
@@ -8809,6 +8860,22 @@ function moneyDesktop(v) {
           ${shown.length === 0 ? `<div style="padding: 26px 0 30px; text-align: center; font-size: 13px; color: var(--color-neutral-600);">${state.logFilter ? `Nothing in ${esc(state.logFilter)} on this day.` : 'Nothing logged for this day yet.'}</div>` : ''}
         </div>`}
       </div>
+
+      <!-- Both directions, under the log rather than at the foot of the right
+           column. It ranked spending only, on a page whose first figure is
+           what came in — a tracker that cannot say where a salary came from is
+           half a tracker. Side by side because they are the same question
+           asked twice, and the left column is wide enough to hold the pair. -->
+      <div class="blueprint" style="padding: 18px 22px 22px;">
+        <div style="display: flex; align-items: baseline; gap: 4px 10px; margin-bottom: 4px; flex-wrap: wrap;">
+          <h4 style="margin: 0; margin-right: auto;">Where it came from, where it went</h4>
+          <span style="font-size: 12px; color: var(--color-neutral-600);">${esc(v.rangeLabel)}</span>
+        </div>
+        <div class="rank-pair">
+          ${rankCol('Money in', v.sources, MONEY_IN_INK, 'in', 'Nothing came in during this window.')}
+          ${rankCol('Money out', v.leaderboard, MONEY_OUT_INK, 'out', 'Nothing went out during this window.')}
+        </div>
+      </div>
     </div>
 
     <div style="display: flex; flex-direction: column; gap: 22px; min-width: 0;">
@@ -8831,11 +8898,40 @@ function moneyDesktop(v) {
 
       ${insightsHeading()}
       ${insightsCard(v)}
-
-      <div class="blueprint" style="padding: 18px 22px 22px;">        <h4 style="margin: 0 0 14px;">Biggest purposes</h4>
-        <div style="display: flex; flex-direction: column; gap: 13px;">${bars(v)}</div>
-      </div>
     </div>
+  </div>`;
+}
+
+/* One side of the pair. Ranked biggest first and scaled against its own
+   largest, so each column fills its own width — scaling both against the
+   larger of the two would draw a month of spending as four slivers beside one
+   salary, which says "your income is big" rather than "here is where your
+   money goes", and the second is what the column is for. The figures are
+   printed, which is what keeps the two comparable. */
+function rankCol(title, rows, tone, dir, empty) {
+  const all = rows || [];
+  const key = dir === 'in' ? 'rankIn' : 'rankOut';
+  const shown = state.drawers[key] || all.length <= LIST_COLLAPSED ? all : all.slice(0, LIST_COLLAPSED);
+  return `
+  <div style="min-width: 0;">
+    <div style="display:flex;align-items:baseline;gap:8px;margin:10px 0 12px;">
+      <span style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:${tone};font-weight:600;">${esc(title)}</span>
+      <span style="flex:1;height:1px;background:var(--color-divider);"></span>
+      <button class="cal-more" data-act="money-made" data-dir="${esc(dir)}" aria-haspopup="dialog"
+        style="margin:0;">See what made it up</button>
+    </div>
+    ${all.length ? `<div style="display:flex;flex-direction:column;gap:13px;">${shown.map((l) => `
+      <div>
+        <div style="display: flex; justify-content: space-between; gap: 10px; font-size: 13px; margin-bottom: 5px;">
+          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(withIcon(l.name))}</span>
+          <span style="flex:none;color: var(--color-neutral-700); font-variant-numeric: tabular-nums;">${esc(l.label)}</span>
+        </div>
+        <div style="height: 8px; background: var(--track);">
+          <div style="height: 100%; width: ${l.width}; background: ${esc(l.color)};"></div>
+        </div>
+      </div>`).join('')}</div>${all.length > LIST_COLLAPSED
+    ? drawerToggle(key, all.length - LIST_COLLAPSED, dir === 'in' ? 'sources' : 'purposes') : ''}`
+    : `<p style="margin:0;font-size:12.5px;line-height:1.6;color:var(--color-neutral-600);">${esc(empty)}</p>`}
   </div>`;
 }
 
@@ -9293,8 +9389,10 @@ function timeCards(v) {
         kicker: 'Net calories, day by day',
         big: `${avg >= 0 ? '+' : '−'}${Math.abs(avg).toLocaleString('en-US')}`,
         title: `a day on average · ${avg >= 0 ? 'deficit' : 'surplus'}`,
-        chart: { cols: netCols(v.rangeNet), fmt: briefNum, html: netChart(v.rangeNet) },
-        note: `${shown.length} of ${v.rangeNet.length} days carry a reading. Green above the line is a deficit, red below it a surplus.`
+        // The tones ride with the columns, so the shared image colours a
+        // surplus the same way the chart on screen does. See netCols().
+        chart: { cols: netCols(v.rangeNet), fmt: briefNum, html: netChart(v.rangeNet), tones: { up: '#d92d20', down: '#0e9f6e' } },
+        note: `${shown.length} of ${v.rangeNet.length} days carry a reading. Red above the line is a surplus, green below it a deficit.`
       }));
     }
   }
@@ -9918,6 +10016,7 @@ function render() {
   ${teamSheet()}
   ${crossKindDialog()}
   ${calBreakdownDialog()}
+  ${moneyBreakdownDialog()}
   ${deductDialog()}
   ${donateSheet()}
   ${aiConsentDialog()}
@@ -12405,6 +12504,9 @@ const ACTIONS = {
   },
   'cal-close': () => { state.calOpen = null; render(); },
 
+  'money-made': (el) => { state.moneyMade = el.dataset.dir === 'in' ? 'in' : 'out'; render(); },
+  'money-made-close': () => { state.moneyMade = null; render(); },
+
   'pick-rename': (el) => {
     state.pickRename = { kind: el.dataset.pick, name: el.dataset.name };
     state.pickRenameName = el.dataset.name || '';
@@ -13902,6 +14004,81 @@ function mCalSheet() {
 
    `scope` names which of the two blocks was asked — the page draws them twice,
    for today and for the window behind it, and they describe different days. */
+/* ── what a money figure is made of ──
+
+   The two headline figures on the money tracker were totals with nothing
+   behind them. The day table under them shows one day, the donut ranks
+   purposes rather than entries, and neither answers "which things add up to
+   that". The calorie dials have answered exactly this since they were built —
+   "See what made it up" — so this is the same affordance on the figures that
+   were missing it, for both directions rather than only for spending.
+
+   Biggest first, because the question anyone opens this with is which entry is
+   responsible. The purpose rides with each row rather than grouping them: a
+   grouped list answers "which purpose", which is the card the page already
+   carries, and buries the single large entry that is usually the real answer. */
+function moneyBreakdown(v, dir) {
+  const income = dir === 'in';
+  const tone = income ? MONEY_IN_INK : MONEY_OUT_INK;
+  const rows = (v.mRangeList || [])
+    .filter((e) => (income ? e.in : e.out) > 0)
+    .map((e) => ({ e, amt: Number(income ? e.in : e.out) || 0 }))
+    .sort((a, b) => b.amt - a.amt);
+  const total = rows.reduce((a, r) => a + r.amt, 0);
+  const days = new Set(rows.map((r) => r.e.date)).size;
+
+  const row = ({ e, amt }) => `
+    <div style="display:flex;align-items:baseline;gap:10px;padding:11px 0;border-top:1px solid var(--color-divider);">
+      <span style="flex:1;min-width:0;">
+        <span style="display:block;font-weight:600;font-size:14.5px;color:var(--color-text);overflow-wrap:anywhere;">${
+  esc(String(e.activity || '').trim() || 'Untitled entry')}</span>
+        <span style="display:block;font-size:12px;color:var(--color-neutral-600);margin-top:2px;">
+          ${esc(dayLabel(e.date))}${e.purpose ? ` · ${esc(withIcon(e.purpose))}` : ''}${
+  e.offBudget ? ' · off budget' : ''}</span>
+        ${String(e.note || '').trim() ? `<span style="display:block;font-size:11.5px;color:var(--color-neutral-600);margin-top:3px;line-height:1.45;">${esc(e.note)}</span>` : ''}
+      </span>
+      <span style="flex:none;font-family:var(--font-heading);font-weight:700;font-size:15px;
+                   font-variant-numeric:tabular-nums;color:${tone};">${esc(amount(amt))}</span>
+      <span style="flex:none;width:42px;text-align:right;font-size:11.5px;color:var(--color-neutral-600);
+                   font-variant-numeric:tabular-nums;">${total ? `${Math.round((amt / total) * 100)}%` : ''}</span>
+    </div>`;
+
+  return `
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;">
+    <span style="display:flex;align-items:center;gap:9px;">
+      <span style="width:34px;height:34px;flex:none;border-radius:11px;display:grid;place-items:center;
+                   background:${income ? '#e3f5ed' : '#fdecf1'};color:${tone};">
+        <!-- The one arrow the icon set has, turned round for the direction it
+             is not drawn for. There has never been a "down" in it, so asking
+             for one drew an empty badge. -->
+        <span style="display:grid;place-items:center;${income ? 'transform:rotate(180deg);' : ''}">${nodeIcon('up', 18)}</span>
+      </span>
+      <span style="font-family:var(--font-heading);font-weight:700;font-size:20px;color:var(--color-text);">${
+  income ? 'Where it came from' : 'Where it went'}</span>
+    </span>
+    <button class="focus-x" data-act="money-made-close" aria-label="Close">×</button>
+  </div>
+  <div style="font-size:12.5px;color:var(--color-neutral-600);margin-bottom:14px;">
+    ${esc(amount(total))} ${income ? 'in' : 'out'} across ${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}${
+  days ? ` on ${days} ${days === 1 ? 'day' : 'days'}` : ''} · ${esc(v.rangeLabel)}.
+  </div>
+  ${rows.length ? `<div style="max-height:min(52vh,440px);overflow:auto;overscroll-behavior:contain;">${rows.map(row).join('')}</div>`
+    : `<p style="margin:0;font-size:13px;line-height:1.6;color:var(--color-neutral-700);">Nothing ${
+  income ? 'came in' : 'went out'} in this window. Change the range above the chart, or log an entry.</p>`}`;
+}
+
+function moneyBreakdownDialog() {
+  const dir = state.moneyMade;
+  if (!dir) return '';
+  return `
+    <div class="no-print" style="position:fixed;inset:0;background:color-mix(in srgb, var(--color-neutral-900) 55%, transparent);display:flex;align-items:safe center;justify-content:safe center;padding:20px;z-index:60;overflow:auto;"
+         data-backdrop="money-made-close">
+      <div class="blueprint" style="width:520px;max-width:100%;margin:auto;padding:22px 24px 24px;background:var(--color-bg);">
+        ${moneyBreakdown(compute(), dir)}
+      </div>
+    </div>`;
+}
+
 function calBreakdownDialog() {
   const o = state.calOpen;
   if (!o) return '';
@@ -16360,6 +16537,7 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && state.rowNew) { ACTIONS['row-new-cancel'](); return; }
   if (ev.key === 'Escape' && state.refineAsk) { ACTIONS['refine-no'](); return; }
   if (ev.key === 'Escape' && state.chat.open) { ACTIONS['chat-close'](); return; }
+  if (ev.key === 'Escape' && state.moneyMade) { ACTIONS['money-made-close'](); return; }
   if (ev.key === 'Escape' && state.calOpen) { ACTIONS['cal-close'](); return; }
   if (ev.key === 'Escape' && state.pickDelete) { ACTIONS['pick-del-cancel'](); return; }
   if (ev.key === 'Escape' && String(state.searchQuery || '').trim()) { ACTIONS['search-clear'](); return; }
@@ -16653,6 +16831,9 @@ function paintCard(x, c, v, draw, offsetY) {
     const peakUp = maxUp > 0 ? cols.findIndex((d) => d.logged && d.up === maxUp) : -1;
     const peakDown = maxDown > 0 ? cols.findIndex((d) => d.logged && d.down === maxDown) : -1;
 
+    // Defaults are what every card drew before a card could choose.
+    const upInk = (c.chart.tones && c.chart.tones.up) || '#0e9f6e';
+    const downInk = (c.chart.tones && c.chart.tones.down) || '#d92d20';
     if (draw) {
       x.textAlign = 'center';
       cols.forEach((d, i) => {
@@ -16660,7 +16841,7 @@ function paintCard(x, c, v, draw, offsetY) {
         const bx = L + i * (cw + gap), mid = bx + cw / 2;
         if (d.up > 0) {
           const h = Math.max(3, Math.round((d.up / (maxUp || 1)) * (zeroY - top)));
-          x.fillStyle = '#0e9f6e'; x.fillRect(bx, zeroY - h, cw, h);
+          x.fillStyle = upInk; x.fillRect(bx, zeroY - h, cw, h);
           if (all || i === peakUp) {
             x.font = `${all ? 600 : 700} 19px Barlow, sans-serif`;
             x.fillText(fmt(d.up), mid, zeroY - h - 7);
@@ -16668,7 +16849,7 @@ function paintCard(x, c, v, draw, offsetY) {
         }
         if (d.down > 0) {
           const h = Math.max(3, Math.round((d.down / (maxDown || 1)) * (floor - zeroY)));
-          x.fillStyle = '#d92d20'; x.fillRect(bx, zeroY, cw, h);
+          x.fillStyle = downInk; x.fillRect(bx, zeroY, cw, h);
           if (all || i === peakDown) {
             x.font = `${all ? 600 : 700} 19px Barlow, sans-serif`;
             x.fillText(fmt(d.down), mid, zeroY + h + 21);
