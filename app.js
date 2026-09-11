@@ -528,6 +528,7 @@ function save() {
       categories: state.categories, purposes: state.purposes,
       todos: state.todos, todosRequeued: state.todosRequeued,
       plans: state.plans, syncedKinds: state.syncedKinds,
+      planSeen: state.planSeen,
       aiRequeued: state.aiRequeued,
       currency: state.currency, currencyUpdatedAt: state.currencyUpdatedAt,
       steps: state.steps, stepsAt: state.stepsAt,
@@ -816,6 +817,10 @@ function rollDay() {
   /* Someone watching today keeps watching today. Someone who navigated back to
      an earlier day stays where they put themselves. */
   if (state && state.selectedDate === was) state.selectedDate = now;
+  /* A dismissal lasts the day it was made. Cleared here rather than compared
+     against on every render, so a device left open overnight raises tomorrow's
+     reminders the same way one opened fresh does. */
+  if (state) state.planAlertHid = false;
   return true;
 }
 const storedRaw = load();
@@ -1158,6 +1163,19 @@ const state = {
   planArm: '',
   // The line whose "log it" is being answered. See planLogDialog().
   planLogAsk: null,
+  /* Which lines have been waved away today, as { id: 'YYYY-MM-DD' }.
+
+     Kept on the device rather than synced. A dismissal is a statement about
+     this screen — "yes, I have seen it" — and not about the bill, so seeing it
+     on the laptop should not stop the phone mentioning it when that is picked
+     up instead. Stored so a reload does not bring the dialog straight back.
+
+     planAlertHid is the same answer for the whole dialog, for this session and
+     this day; rollDay clears it. */
+  planSeen: (stored.planSeen && typeof stored.planSeen === 'object') ? stored.planSeen : {},
+  planAlertHid: false,
+  // The to-do waiting on "stop the running timer and start this one instead".
+  todoStart: null,
   /* 'in', 'out', or null: which money figure has its entries open. See
      moneyBreakdownDialog(). */
   moneyMade: null,
@@ -1244,15 +1262,15 @@ function serialise(kind, r) {
      treats it as the thing an admin cannot see. */
   if (kind === 'entries') return { id: r.id, date: r.date, activity: r.activity, category: r.category, project: r.project || undefined, from: r.from, to: r.to, note: r.note || '', updatedAt: r.updatedAt || 0 };
   if (kind === 'money') return { id: r.id, date: r.date, activity: r.activity, purpose: r.purpose, in: Number(r.in) || 0, out: Number(r.out) || 0, note: r.note || '', updatedAt: r.updatedAt || 0 };
-  if (kind === 'todos') return { id: r.id, text: r.text || '', status: r.status || 'pending', blocked: r.blocked || undefined, category: r.category || undefined, createdAt: r.createdAt || 0, updatedAt: r.updatedAt || 0 };
-  if (kind === 'plans') return { id: r.id, text: r.text || '', amount: money2(r.amount), purpose: r.purpose || undefined, dir: r.dir === 'in' ? 'in' : 'out', status: r.status || 'planned', createdAt: r.createdAt || 0, updatedAt: r.updatedAt || 0 };
+  if (kind === 'todos') return { id: r.id, text: r.text || '', status: r.status || 'pending', blocked: r.blocked || undefined, category: r.category || undefined, date: r.date || undefined, createdAt: r.createdAt || 0, updatedAt: r.updatedAt || 0 };
+  if (kind === 'plans') return { id: r.id, text: r.text || '', amount: money2(r.amount), purpose: r.purpose || undefined, dir: r.dir === 'in' ? 'in' : 'out', status: r.status || 'planned', kind: planKind(r), due: r.due || undefined, day: r.day || undefined, every: r.every || undefined, lastPaid: r.lastPaid || undefined, createdAt: r.createdAt || 0, updatedAt: r.updatedAt || 0 };
   return { name: r.name, color: r.color, position: r.position || 0, updatedAt: r.updatedAt || 0 };
 }
 function deserialise(kind, r) {
   if (kind === 'entries') return { id: r.id, date: r.date, activity: r.activity, category: r.category, project: r.project || undefined, from: r.from, to: r.to, note: r.note || '', updatedAt: r.updatedAt };
   if (kind === 'money') return { id: r.id, date: r.date, activity: r.activity, purpose: r.purpose, in: r.in, out: r.out, note: r.note || '', updatedAt: r.updatedAt };
-  if (kind === 'todos') return { id: r.id, text: r.text || '', status: r.status || 'pending', blocked: r.blocked || undefined, category: r.category || undefined, createdAt: r.createdAt || 0, updatedAt: r.updatedAt };
-  if (kind === 'plans') return { id: r.id, text: r.text || '', amount: money2(r.amount), purpose: r.purpose || undefined, dir: r.dir === 'in' ? 'in' : 'out', status: r.status || 'planned', createdAt: r.createdAt || 0, updatedAt: r.updatedAt };
+  if (kind === 'todos') return { id: r.id, text: r.text || '', status: r.status || 'pending', blocked: r.blocked || undefined, category: r.category || undefined, date: r.date || undefined, createdAt: r.createdAt || 0, updatedAt: r.updatedAt };
+  if (kind === 'plans') return { id: r.id, text: r.text || '', amount: money2(r.amount), purpose: r.purpose || undefined, dir: r.dir === 'in' ? 'in' : 'out', status: r.status || 'planned', kind: planKind(r), due: r.due || undefined, day: r.day || undefined, every: r.every || undefined, lastPaid: r.lastPaid || undefined, createdAt: r.createdAt || 0, updatedAt: r.updatedAt };
   return { name: r.name, color: r.color, position: r.position, updatedAt: r.updatedAt };
 }
 
@@ -4575,19 +4593,22 @@ function stickyBar(v) {
    the header carries a menu rather than a row of buttons, and Ask Zimpan is not
    there to fall back to. */
 function backToTop() {
-  /* One button, carrying whichever pad belongs to the tracker on screen. The
-     to-do pad is about the hours and the money pad is about the money, so
-     showing both at once would be offering a list that has nothing to do with
-     what is being looked at. Teams never reaches the money side at all — see
-     the guard in render() — so the plan pad cannot appear there. */
+  /* One button, opening whichever planner belongs to the tracker on screen.
+     The activity planner is about the hours and the money planner is about the
+     money, so offering both at once would be offering a list that has nothing
+     to do with what is being looked at. Teams never reaches the money side at
+     all — see the guard in render() — so the money planner cannot appear
+     there. */
   const money = state.app === 'money';
-  const open = money ? planOpenCount() : todoOpenCount();
+  /* What is on the badge is what needs attention today, not how much is on the
+     list. See todoDueCount and planDueCount: a badge that is always lit is one
+     nobody reads. */
+  const open = money ? planDueCount() : todoDueCount();
   return `
   <div class="fabs no-print">
-    ${money ? planPad() : todoPad()}
     <button class="${money ? 'fab-plan' : 'fab-todo'}" data-act="${money ? 'plan-toggle' : 'todo-toggle'}"
       aria-expanded="${!!(money ? state.planOpen : state.todoOpen)}">
-      ${nodeIcon(money ? 'scales' : 'todo', 16)}<span>${money ? 'Money Plan' : 'To Do'}</span>${open ? `<b class="fab-tally">${open}</b>` : ''}
+      ${nodeIcon(money ? 'scales' : 'todo', 16)}<span>${money ? 'Money Planner' : 'Activity Planner'}</span>${open ? `<b class="fab-tally">${open}</b>` : ''}
     </button>
     ${state.aiEstimates ? `
     <button class="fab-ask" data-act="chat-open">
@@ -4599,18 +4620,76 @@ function backToTop() {
   </div>`;
 }
 
-/* ── the to-do pad ──
+/* ── the calendar, as this app counts it ──
 
-   A sticky pad rather than a page: the notes are a handful of lines, they are
-   read at a glance, and they belong beside whatever is on screen instead of
-   somewhere you have to go. So it hangs off the same fixed column as Ask
-   Zimpan on a wide screen, and comes up as a sheet on a phone, where a panel
-   pinned to a corner would cover the thing it is meant to sit beside.
+   Built from the parts rather than from Date.parse. "2026-03-01" parsed as a
+   date is midnight UTC, which is the evening of the 28th of February in half
+   the world — and every day in this app is a local day. */
+const dParts = (s) => String(s || '').split('-').map(Number);
+const dLocal = (s) => { const [y, m, d] = dParts(s); return new Date(y, (m || 1) - 1, d || 1); };
+const monthLen = (y, m) => new Date(y, m, 0).getDate();
 
-   A note is text and a status. No dates, no priorities, no ordering by hand:
-   every one of those is a second thing to maintain, and the pad exists to be
-   written on and glanced at. Nothing here is shown to anyone else — a team
-   admin sees hours against projects and never this. */
+/* The nth of a month, or the last day of it when the month is too short, with
+   the month allowed to run past December so "one month on" is arithmetic
+   rather than a branch.
+
+   The clamp is why the intended day is stored rather than read back off the
+   date: a subscription on the 31st lands on the 28th in February, and a next
+   date worked out from that would have it on the 28th for the rest of its
+   life. */
+function monthDay(y, m, day) {
+  const yy = y + Math.floor((m - 1) / 12);
+  const mm = ((m - 1) % 12 + 12) % 12 + 1;
+  return iso(new Date(yy, mm - 1, Math.min(Math.max(1, day || 1), monthLen(yy, mm))));
+}
+
+/* Whole days from one local day to another; negative when the second is
+   earlier. Rounded because an hour goes missing twice a year and a difference
+   of 23 hours is still one day. */
+const daysApart = (from, to) => Math.round((dLocal(to) - dLocal(from)) / 86400000);
+
+// One month on from a date, landing on the day of the month asked for.
+const nextMonthly = (from, day) => { const [y, m] = dParts(from); return monthDay(y, m + 1, day); };
+// One year on, keeping the month and the day. A 29th of February becomes a 28th.
+const nextYearly = (from) => { const [y, m, d] = dParts(from); return monthDay(y + 1, m, d); };
+/* The first time a day of the month falls on or after today. "The 3rd" means
+   the next 3rd, not one that has already gone. */
+function firstMonthly(day) {
+  const [y, m] = dParts(todayIso);
+  const here = monthDay(y, m, day);
+  return here >= todayIso ? here : monthDay(y, m + 1, day);
+}
+
+/* How a date reads against today. The near ones are said in words because
+   that is how they are thought about — nobody plans "the 14th", they plan
+   tomorrow — and anything further off is given its date, which is the only
+   thing that still means something at that distance. */
+function dayNear(day) {
+  const left = daysApart(todayIso, day);
+  if (left < -1) return { label: `${-left} days late`, late: true };
+  if (left === -1) return { label: 'Yesterday', late: true };
+  if (left === 0) return { label: 'Today', soon: true };
+  if (left === 1) return { label: 'Tomorrow', soon: true };
+  if (left <= 6) return { label: `In ${left} days` };
+  return { label: dayLabel(day) };
+}
+
+/* ── the activity planner ──
+
+   A lightbox rather than a pad. The notes outgrew the corner they were pinned
+   in: a note can now carry a day, which means the list has an order that is
+   about the calendar rather than about what was typed last, and it can be
+   started, which means the pad is a place work begins rather than only a place
+   it is written down. A 340px panel could hold neither.
+
+   Two lists, split on one field. A to-do with a day is planned; a to-do
+   without one is a note. Nothing else distinguishes them, so moving a note
+   into the schedule is typing a date into the field already on it, and taking
+   it back out is clearing that field — there is no "convert", and no second
+   state to keep in step with the first.
+
+   Nothing here is shown to anyone else. A team admin sees hours against
+   projects and never this. */
 const TODO_STATUSES = [
   /* Listed in the order the picker offers them, which is the order a piece of
      work moves through. `rank` is where the note then sits in the pad, and the
@@ -4635,11 +4714,23 @@ const todoStatus = (k) => TODO_STATUSES.find((s) => s.key === k) || TODO_STATUSE
    picture of where things stand, and it is worth rearranging to keep that
    true. The chip and the rank come from one table, so the two cannot disagree
    about where a status belongs. */
-const todoRows = () => state.todos.slice().sort((a, b) => (
+const byTodoRank = (a, b) => (
   todoStatus(a.status).rank - todoStatus(b.status).rank
   || (b.createdAt || 0) - (a.createdAt || 0)
-));
+);
+/* The schedule is ordered by the calendar instead, soonest first, because the
+   question a dated list answers is "what is next" — and what is late is
+   soonest of all, which is why nothing is filtered out of the top of it. */
+const todoPlanned = () => state.todos.filter((t) => t.date)
+  .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : byTodoRank(a, b)));
+const todoNotes = () => state.todos.filter((t) => !t.date).sort(byTodoRank);
 const todoOpenCount = () => state.todos.filter((t) => t.status !== 'done').length;
+/* What the button outside wears. Not the open count: eleven notes written over
+   a month is not news, and a badge that is always lit is a badge nobody reads.
+   This is the count of things planned for today or already late — the ones
+   that are worth interrupting for. */
+const todoDueCount = () => state.todos
+  .filter((t) => t.date && t.status !== 'done' && t.date <= todayIso).length;
 
 /* Client-minted, like every other id in this app, and checked for a collision
    because two notes made inside the same millisecond would otherwise be one
@@ -4651,6 +4742,11 @@ function newTodoId() {
   return id;
 }
 
+/* Whether the timer could take this on. Its name becomes the entry's name, and
+   an entry called nothing is a row nobody can read a week later — the same
+   rule toggleTimer enforces on the field above it. */
+const todoStartable = (t) => !!String(t.text || '').trim() && t.status !== 'done';
+
 function todoNote(t) {
   const st = todoStatus(t.status);
   const armed = state.todoArm === t.id;
@@ -4658,6 +4754,7 @@ function todoNote(t) {
      something blocked twice is usually blocked on the same thing — but showing
      it under a note that is running again would be a lie about the present. */
   const why = t.status === 'stuck' ? String(t.blocked || '').trim() : '';
+  const near = t.date && t.status !== 'done' ? dayNear(t.date) : null;
   return `
   <div class="todo-note" style="--tone:${st.tone};--tint:${st.tint};">
     <textarea class="todo-text" rows="1" maxlength="${TODO_MAX}"
@@ -4668,10 +4765,20 @@ function todoNote(t) {
       ${why ? `<span class="todo-why-mark">Stuck:</span> ${esc(why)}` : 'Say why this is stuck'}
     </button>` : ''}
     <div class="todo-row">${padPickField('todos', t)}</div>
+    <div class="pl-when">
+      <input class="input date-in pl-date" type="date" data-k="tdate-${esc(t.id)}"
+        data-change="todo-date" data-id="${esc(t.id)}" value="${esc(t.date || '')}"
+        aria-label="Planned for">
+      ${near ? `<span class="pl-near${near.late ? ' is-late' : near.soon ? ' is-soon' : ''}">${esc(near.label)}</span>`
+    : `<span class="pl-hint">${t.date ? '' : 'No day yet — a note'}</span>`}
+    </div>
     <div class="todo-foot">
       <select class="todo-status" data-change="todo-status" data-id="${esc(t.id)}" aria-label="Status">
         ${TODO_STATUSES.map((o) => `<option value="${o.key}"${o.key === st.key ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}
       </select>
+      <button class="pl-start" data-act="todo-start" data-id="${esc(t.id)}"
+        ${todoStartable(t) ? '' : 'disabled'}
+        title="Start tracking this now">${nodeIcon('pulse', 14)}<span>Start</span></button>
       <button class="todo-del${armed ? ' is-armed' : ''}" data-act="todo-del" data-id="${esc(t.id)}"
         aria-label="${armed ? 'Delete this note for good' : 'Delete note'}">${armed ? 'Delete?' : nodeIcon('trash', 15)}</button>
     </div>
@@ -4697,48 +4804,139 @@ function padWaitNote(kind, what) {
     the moment it catches up.</p>`;
 }
 
-/* The pad's contents, shared by the panel and the sheet so the two can never
-   drift into being different features. */
-function todoBody() {
-  const rows = todoRows();
+/* One section of a planner, on either side. The heading, the count, the way to
+   add to this list, and the list. Written once because a section is a section:
+   the money planner has three of them and the activity planner two, and a
+   heading that looked different on one side would read as a different kind of
+   thing rather than the same idea twice. */
+function plSection(o) {
   return `
-  <div class="todo-head">
-    <span class="todo-name">To Do</span>
-    ${rows.length ? `<span class="todo-count">${todoOpenCount()} open</span>` : ''}
-    <button class="todo-x" data-act="todo-close" aria-label="Close the pad">✕</button>
-  </div>
-  ${padWaitNote('todos', 'The To Do pad')}
-  <button class="todo-new" data-act="todo-add">+ New note</button>
-  <div class="todo-list" data-todo-list>
-    ${rows.length
-    ? rows.map(todoNote).join('')
-    : `<p class="todo-empty">Nothing on the pad yet. A note is a line of text and a status — write one and it follows you to your other devices.</p>`}
+  <section class="pl-sec">
+    <div class="pl-sec-head">
+      <h3 class="pl-sec-name">${esc(o.name)}</h3>
+      ${o.count ? `<span class="pl-sec-n">${o.count}</span>` : ''}
+    </div>
+    ${o.blurb ? `<p class="pl-sec-blurb">${esc(o.blurb)}</p>` : ''}
+    <button class="todo-new" data-act="${esc(o.addAct)}"${o.addData || ''}>+ ${esc(o.add)}</button>
+    ${o.rows.length ? o.rows.join('') : `<p class="todo-empty">${esc(o.empty)}</p>`}
+  </section>`;
+}
+
+/* The planner's contents. One scroller holding both sections rather than one
+   each: two lists that scroll independently inside a dialog is two places to
+   lose your position, and the picker popovers already know how to keep
+   themselves inside whatever [data-todo-list] turns out to be. */
+function todoBody() {
+  const planned = todoPlanned();
+  const notes = todoNotes();
+  return `
+  ${padWaitNote('todos', 'The Activity Planner')}
+  <div class="todo-list pl-list" data-todo-list>
+    ${plSection({
+    name: 'Planned',
+    count: planned.length,
+    blurb: 'Things with a day against them. Start one and the timer takes its name and its category.',
+    addAct: 'todo-add',
+    addData: ` data-when="${esc(todayIso)}"`,
+    add: 'Plan an activity',
+    rows: planned.map(todoNote),
+    empty: 'Nothing planned. Put a date on a note below and it moves up here.'
+  })}
+    ${plSection({
+    name: 'Notes',
+    count: notes.length,
+    blurb: 'No day attached. Write it down now, give it one when you know.',
+    addAct: 'todo-add',
+    add: 'New note',
+    rows: notes.map(todoNote),
+    empty: 'Nothing on the pad yet. A note is a line of text and a status — write one and it follows you to your other devices.'
+  })}
   </div>`;
 }
 
-/* Two surfaces, one for each shape of screen. The phone gets a sheet because a
-   panel pinned to the bottom-right of a phone is the whole screen anyway, and
-   a sheet is the gesture the rest of the phone app already uses. */
-/* The entrance runs on the way in and never again.
+/* The whole planner, as one dialog.
 
-   Every render replaces the whole tree, so the pad is a new element each time —
-   and an animation declared on the class replayed on every one of them. A sync
-   landing behind an open pad made it drop to nothing and slide back up, which
-   is not an entrance, it is a flicker. `is-new` is on only for the render that
-   puts the pad on screen; paintTodo clears it once it is there, and sets it
-   again when the pad has gone, so the next opening still arrives. */
-let todoFresh = true;
+   Wide, because it holds a list rather than a question, and modal because it
+   is now a place you go to rather than something that hangs at the edge of
+   whatever you were already doing. One surface for both shapes of screen:
+   lb-back is already the phone's full-width sheet, so the panel-and-drawer
+   pair the pad needed is a distinction with nothing left behind it. */
+function todoPlanner() {
+  if (!state.todoOpen) return '';
+  const open = todoOpenCount();
+  const late = todoDueCount();
+  return lightbox({
+    icon: 'todo',
+    tone: '#8a7a35',
+    wide: true,
+    kicker: late ? `${late} for today or earlier` : `${open} open`,
+    title: 'Activity Planner',
+    body: `<div class="pl-wrap is-todo">${todoBody()}</div>`,
+    closeAct: 'todo-close',
+    actions: `<button class="btn btn-primary" data-act="todo-close">Done</button>`
+  });
+}
 
-const todoPad = () => (!state.todoOpen || isPhone() ? '' : `
-  <div class="todo-pad${todoFresh ? ' is-new' : ''}" role="dialog" aria-label="To Do">${todoBody()}</div>`);
+/* Starting a to-do is starting the timer, with the note's own words in it.
 
-const todoSheet = () => (!state.todoOpen || !isPhone() ? '' : `
-  <div class="todo-scrim${todoFresh ? ' is-new' : ''}" data-backdrop="todo-close">
-    <div class="todo-drawer" role="dialog" aria-label="To Do">
-      <div class="todo-grab" aria-hidden="true"></div>
-      ${todoBody()}
-    </div>
-  </div>`);
+   The category comes across only when the account still has one by that name —
+   in work mode the list is the team's projects, and a note filed under a
+   category that has since been renamed would otherwise start a timer pointing
+   at nothing. The status moves to In progress, because it is; stopping the
+   timer does not mark it done, because a piece of work is usually more than
+   one sitting and guessing otherwise would put things in the Complete group
+   that are not. */
+function startTodo(row) {
+  const text = String(row.text || '').trim();
+  if (!text) return;
+  state.timerActivity = text.slice(0, 200);
+  if (row.category && pickCategories().some((c) => c.name === row.category)) {
+    state.timerCategory = row.category;
+  }
+  state.timerStart = Date.now();
+  state.timerUpdatedAt = Date.now();
+  state.dirty.timer = true;
+  state.formError.timer = '';
+  if (row.status !== 'doing' && row.status !== 'done') {
+    row.status = 'doing';
+    touch('todos', row);
+  }
+  /* The planner closes behind it. What was asked for was to begin, and a
+     dialog still covering the running clock would be the app disagreeing. */
+  state.todoOpen = false;
+  state.todoStart = null;
+  state.todoArm = '';
+  todoTidy();
+  save(); queueSync(0); render();
+  flash(`Started · ${text}`);
+}
+
+/* Asked only when there is something to lose. One timer at a time is the whole
+   model — an entry is a stretch of the day, and two of them running is two
+   claims on the same minutes — so starting a second one has to end the first,
+   and ending it writes a row. That is worth a sentence before it happens. */
+function todoStartDialog() {
+  const ask = state.todoStart;
+  if (!ask) return '';
+  const row = findRow('todos', ask.id);
+  if (!row) return '';
+  const running = state.timerActivity.trim() || 'Untitled activity';
+  return lightbox({
+    icon: 'pulse',
+    tone: 'var(--color-accent)',
+    kicker: 'A timer is already running',
+    title: 'Stop that one and start this?',
+    closeAct: 'todo-start-cancel',
+    body: `
+      <p><strong>${esc(running)}</strong> has been running ${esc(elapsedClock())}. Starting
+      “${esc(String(row.text || '').slice(0, 60))}” saves it first, as an entry ending now.</p>
+      <p>Nothing is lost either way — the question is only whether you want that entry written
+      at this minute.</p>`,
+    actions: `
+      <button class="btn btn-secondary" data-act="todo-start-cancel">Keep it running</button>
+      <button class="btn btn-primary" data-act="todo-start-go">Stop it and start this</button>`
+  });
+}
 
 /* Asked when a note is marked stuck, and reachable afterwards from the line
    under it. Skippable on purpose: "stuck" is worth recording even when there
@@ -4777,8 +4975,7 @@ function paintTodo() {
   const list = root.querySelector('[data-todo-list]');
   /* Nothing on screen: the next one to open is a new one, and starts at its
      own top rather than where the last one was left. */
-  if (!list) { todoScroll = 0; todoFresh = true; return; }
-  todoFresh = false;
+  if (!list) { todoScroll = 0; return; }
   /* Sized here rather than by rows, because a note is as tall as what is
      written in it. Done before the frame is painted, in the same task as the
      tree that was just built, so no half-height box is ever shown. */
@@ -4828,16 +5025,108 @@ const PLAN_STATUSES = [
 // What a status is called on a line going that way.
 const planStatusLabel = (st, dir) => (dir === 'in' && st.inLabel ? st.inLabel : st.label);
 const planDir = (row) => (row && row.dir === 'in' ? 'in' : 'out');
+
+/* The planner's three lists.
+
+   A subscription is a standing charge: it has a day of the month and no end,
+   so paying it does not finish it, it moves it on a month. A due happens on a
+   date — a bill, a rent renewal, a tuition instalment — and may or may not
+   come round again. A note has no schedule at all, which is what makes it a
+   note: it is something worth writing down before it is worth scheduling.
+
+   `kind` is stored rather than inferred, unlike the activity planner's split
+   on a date, because here three shapes share one column. A due with no date
+   yet and a note both have nothing in `due`, and they are not the same thing:
+   one is a bill nobody has looked up, the other is an idea. */
+const PLAN_KINDS = [
+  { key: 'sub', name: 'Subscriptions', one: 'subscription',
+    blurb: 'Charged every month on the same day. Logging one moves it on to next month.',
+    add: 'Add a subscription',
+    empty: 'Nothing here yet. Google One, Claude, Capcut — the charges that arrive whether or not you think about them.' },
+  { key: 'due', name: 'Dues', one: 'due',
+    blurb: 'One date, one payment. Said three days before, the day before, and on the day.',
+    add: 'Add a due',
+    empty: 'Nothing due. Electricity, rent, tuition — anything with a date on it.' },
+  { key: 'note', name: 'Notes', one: 'note',
+    blurb: 'No date, no reminder. Move one across when it turns into something real.',
+    add: 'New note',
+    empty: 'Nothing written down. A note is money you are thinking about rather than money with a date on it.' }
+];
+const planKindOf = (k) => PLAN_KINDS.find((o) => o.key === k) || PLAN_KINDS[1];
+/* A line carrying no kind is a due — the answer the server's column default
+   gives the rows written before the planner existed, and the answer an older
+   device's push gives too, so both are read the same way. */
+const planKind = (row) => (row && PLAN_KINDS.some((k) => k.key === row.kind) ? row.kind : 'due');
+
+// How a due repeats, when it does. A subscription is monthly by definition.
+const PLAN_REPEATS = [['', 'One-off'], ['month', 'Every month'], ['year', 'Every year']];
+const planEvery = (row) => (planKind(row) === 'sub' ? 'month'
+  : (row && (row.every === 'month' || row.every === 'year') ? row.every : ''));
+
+/* When a line next lands, once this one has been paid. Rolled off the date it
+   already carries rather than off today, so a subscription nobody logged for
+   two months catches up one month at a time instead of skipping the ones that
+   were missed — and the ledger ends up with the payments that actually
+   happened rather than one payment and a hole. */
+function planRoll(row) {
+  const every = planEvery(row);
+  if (!every) return '';
+  const from = row.due || todayIso;
+  if (every === 'year') return nextYearly(from);
+  return nextMonthly(from, row.day || dParts(from)[2] || 1);
+}
+
+/* When each kind wants saying out loud, counted in days from today.
+
+   Three days, one day and the day itself for a due, which is the shape of the
+   request: far enough out to move money, near enough to act, and then on the
+   morning. Two days is deliberately quiet — a reminder that arrives every day
+   is a reminder nobody reads. A subscription gets the day before and the day,
+   because there is nothing to arrange, only something to know about.
+
+   Anything already past its date is said every day until it is dealt with. A
+   bill that was due on Tuesday does not stop being due on Wednesday. */
+const PLAN_WARN = { sub: [1, 0], due: [3, 1, 0] };
+
+/* Lines that need attention today: dated, still owed, and at one of the
+   distances above. Cancelled subscriptions are not owed, which is how "only
+   active subscriptions notify" is enforced — in one place, by the same
+   `planOwed` the totals use, rather than by a second rule that could disagree
+   with it. */
+function planAlerts() {
+  return state.plans.filter((r) => {
+    if (planKind(r) === 'note' || !r.due || !planOwed(r)) return false;
+    const left = daysApart(todayIso, r.due);
+    return left <= 0 || PLAN_WARN[planKind(r)].indexOf(left) >= 0;
+  }).sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : 0));
+}
+// The ones not already waved away today. See state.planSeen.
+const planAlertsNew = () => planAlerts().filter((r) => state.planSeen[r.id] !== todayIso);
+
 const PLAN_MAX = 500;
 const planStatus = (k) => PLAN_STATUSES.find((s) => s.key === k) || PLAN_STATUSES[1];
 // Whether a line is still money you expect to part with.
 const planOwed = (row) => planStatus(row.status).owed;
 
-const planRows = () => state.plans.slice().sort((a, b) => (
-  planStatus(a.status).rank - planStatus(b.status).rank
-  || (b.createdAt || 0) - (a.createdAt || 0)
-));
-const planOpenCount = () => state.plans.filter(planOwed).length;
+/* Money the planner counts against you. Notes are left out on purpose: a note
+   is something being weighed up, and adding it to "to pay" would make the
+   figure an estimate of your intentions rather than a total of your
+   commitments. */
+const planLive = (r) => planKind(r) !== 'note' && planOwed(r);
+
+/* Inside a list: soonest first, undated last, and then the order the pad
+   always used. A dated list is read for what is next. */
+const byPlanDate = (a, b) => {
+  const ad = a.due || '', bd = b.due || '';
+  if (ad !== bd) { if (!ad) return 1; if (!bd) return -1; return ad < bd ? -1 : 1; }
+  return planStatus(a.status).rank - planStatus(b.status).rank
+    || (b.createdAt || 0) - (a.createdAt || 0);
+};
+const planRows = (kind) => state.plans.filter((r) => planKind(r) === kind).sort(byPlanDate);
+const planOpenCount = () => state.plans.filter(planLive).length;
+/* What the button outside wears, on the same rule the activity planner's badge
+   follows: what needs attention, not what exists. */
+const planDueCount = () => planAlerts().length;
 
 function newPlanId() {
   let id;
@@ -4854,7 +5143,7 @@ function newPlanId() {
    what you actually have, not out of what happened to fall inside the range
    the tracker is showing. */
 function planTotals() {
-  const live = state.plans.filter(planOwed);
+  const live = state.plans.filter(planLive);
   const out = live.filter((r) => planDir(r) === 'out');
   const inn = live.filter((r) => planDir(r) === 'in');
   const owedCents = out.reduce((a, r) => a + mCents(r.amount), 0);
@@ -4906,19 +5195,16 @@ function planSumInner() {
    has to already be there for paintPlanSum to reach it. */
 const planSum = () => `<div class="plan-sum" data-plan-sum${planTotals().count ? '' : ' hidden'}>${planSumInner()}</div>`;
 
-/* The totals, and the two things beside them that a typed figure changes: how
-   many lines are owed, and whether a line has enough on it to be logged. */
+/* The totals, and the other thing a typed figure changes: whether a line has
+   enough on it to be logged at all. Both are painted rather than rendered,
+   because typing a figure deliberately does not re-render — the caret would
+   not survive it. */
 function paintPlanSum() {
   const box = root.querySelector('[data-plan-sum]');
   if (!box) return;
   const t = planTotals();
   box.hidden = !t.count;
   box.innerHTML = planSumInner();
-  const chip = root.querySelector('[data-plan-count]');
-  if (chip) {
-    chip.hidden = !t.count;
-    chip.textContent = `${t.count} planned`;
-  }
   root.querySelectorAll('[data-plan-log]').forEach((btn) => {
     const row = findRow('plans', btn.dataset.planLog);
     btn.hidden = !row || !planOwed(row) || !mCents(row.amount);
@@ -5082,19 +5368,34 @@ function padPickShow() {
   if (list.hasAttribute('data-todo-list')) todoScroll = top; else planScroll = top;
 }
 
+/* One line of the planner, in whichever list it is in.
+
+   The top half is the same three things everywhere — what it is, how much, and
+   where it will be filed — because they are the same three questions. The
+   middle is what the list is about: a day of the month for a subscription, a
+   date and a repeat for a due, and for a note the two ways out of being one.
+
+   The amount is an ordinary number field rather than the phone's tap-pad: this
+   is written on with a keyboard already, so summoning one for the figure
+   changes nothing, where routing through the pad would mean leaving the list
+   to type a number and coming back. */
 function planLine(row) {
+  const kind = planKind(row);
   const st = planStatus(row.status);
   const armed = state.planArm === row.id;
-  const owed = st.owed;
   const cents = mCents(row.amount);
   const dir = planDir(row);
+  const cancelled = kind === 'sub' && !planOwed(row);
+  const near = row.due && planOwed(row) ? dayNear(row.due) : null;
+  const tone = cancelled ? '#6b6580' : st.tone;
+  const tint = cancelled ? '#efedf5' : st.tint;
   return `
-  <div class="todo-note plan-note" style="--tone:${st.tone};--tint:${st.tint};">
+  <div class="todo-note plan-note${cancelled ? ' is-off' : ''}" style="--tone:${tone};--tint:${tint};">
     <textarea class="todo-text" rows="1" maxlength="${PLAN_MAX}"
       data-k="plan-${esc(row.id)}" data-plan-text="${esc(row.id)}" data-todo-grow
-      placeholder="${dir === 'in' ? 'What is coming in?' : 'What is coming out?'}"
-      aria-label="Planned ${dir === 'in' ? 'income' : 'spend'}">${esc(row.text || '')}</textarea>
-    ${planWay(row)}
+      placeholder="${kind === 'sub' ? 'What are you subscribed to?' : dir === 'in' ? 'What is coming in?' : 'What is coming out?'}"
+      aria-label="${esc(planKindOf(kind).one)}">${esc(row.text || '')}</textarea>
+    ${kind === 'sub' ? '' : planWay(row)}
     <div class="plan-row">
       <label class="plan-amt is-${dir}">
         <span aria-hidden="true">${esc(currency().symbol)}</span>
@@ -5104,17 +5405,89 @@ function planLine(row) {
       </label>
       ${padPickField('plans', row)}
     </div>
+    ${planWhen(row, kind, near)}
     <div class="todo-foot">
-      <select class="todo-status" data-change="plan-status" data-id="${esc(row.id)}" aria-label="Status">
-        ${PLAN_STATUSES.map((o) => `<option value="${o.key}"${o.key === st.key ? ' selected' : ''}>${esc(planStatusLabel(o, dir))}</option>`).join('')}
-      </select>
-      <button class="todo-del${armed ? ' is-armed' : ''}" data-act="plan-del" data-id="${esc(row.id)}"
-        aria-label="${armed ? 'Delete this line for good' : 'Delete line'}">${armed ? 'Delete?' : nodeIcon('trash', 15)}</button>
+      ${kind === 'sub'
+    ? `<button class="pl-chip${cancelled ? '' : ' is-on'}" data-act="plan-active" data-id="${esc(row.id)}"
+          aria-pressed="${!cancelled}">${cancelled ? 'Cancelled' : 'Active'}</button>`
+    : kind === 'due'
+      ? `<select class="todo-status" data-change="plan-status" data-id="${esc(row.id)}" aria-label="Status">
+          ${PLAN_STATUSES.map((o) => `<option value="${o.key}"${o.key === st.key ? ' selected' : ''}>${esc(planStatusLabel(o, dir))}</option>`).join('')}
+        </select>`
+      : `<span class="pl-hint">No date, no reminder</span>`}
+    <button class="todo-del${armed ? ' is-armed' : ''}" data-act="plan-del" data-id="${esc(row.id)}"
+      aria-label="${armed ? 'Delete this line for good' : 'Delete line'}">${armed ? 'Delete?' : nodeIcon('trash', 15)}</button>
     </div>
+    ${row.lastPaid ? `<p class="pl-paid">Last ${dir === 'in' ? 'received' : 'paid'} ${esc(dayLabel(row.lastPaid))}</p>` : ''}
     <button class="plan-log" data-act="plan-log" data-id="${esc(row.id)}" data-plan-log="${esc(row.id)}"
-      ${owed && cents > 0 ? '' : 'hidden'}>Log it as ${dir === 'in' ? 'received' : 'spent'} today</button>
+      ${planOwed(row) && cents > 0 ? '' : 'hidden'}>Log it as ${dir === 'in' ? 'received' : 'spent'} today</button>
   </div>`;
 }
+
+/* The middle of a line: when it happens, said in the terms its own list uses.
+
+   A subscription is asked for a day of the month and shows the date that works
+   out to, because "the 15th" is how a standing charge is remembered and "15
+   Oct" is what you need to know. A due is asked for the date directly, and for
+   whether it comes round again. A note is asked for neither, and is offered
+   the two lists it could join instead — moving it sets the kind and leaves the
+   field it now needs sitting empty and waiting, which is the shortest honest
+   path between "I wrote this down" and "this has a date". */
+function planWhen(row, kind, near) {
+  const chip = near
+    ? `<span class="pl-near${near.late ? ' is-late' : near.soon ? ' is-soon' : ''}">${esc(near.label)}</span>`
+    : '';
+  /* The way back, and only while there is nothing to lose by taking it. A line
+     that has not been given a date yet is one somebody may have put in the
+     wrong list a moment ago; one that has a date is a commitment, and the way
+     to demote that is to clear the date first — which says what is happening
+     rather than making it a side effect of a button. */
+  const back = `<button class="pl-move" data-act="plan-kind" data-id="${esc(row.id)}"
+      data-kind="note">Move to notes</button>`;
+  if (kind === 'note') {
+    return `
+    <div class="pl-when">
+      <button class="pl-move" data-act="plan-kind" data-id="${esc(row.id)}" data-kind="sub">Make it a subscription</button>
+      <button class="pl-move" data-act="plan-kind" data-id="${esc(row.id)}" data-kind="due">Make it a due</button>
+    </div>`;
+  }
+  if (kind === 'sub') {
+    const day = Number(row.day) || 0;
+    return `
+    <div class="pl-when">
+      <label class="pl-day">
+        <span>Every</span>
+        <select data-change="plan-day" data-id="${esc(row.id)}" aria-label="Day of the month">
+          <option value=""${day ? '' : ' selected'}>day…</option>
+          ${Array.from({ length: 31 }, (v, i) => i + 1).map((n) => `
+          <option value="${n}"${n === day ? ' selected' : ''}>${ordinal(n)}</option>`).join('')}
+        </select>
+      </label>
+      ${row.due && planOwed(row) ? `<span class="pl-next">Next ${esc(dayLabel(row.due))}</span>` : ''}
+      ${chip}
+      ${row.day ? '' : back}
+    </div>`;
+  }
+  return `
+  <div class="pl-when">
+    <input class="input date-in pl-date" type="date" data-k="pdue-${esc(row.id)}"
+      data-change="plan-due" data-id="${esc(row.id)}" value="${esc(row.due || '')}"
+      aria-label="Due date">
+    <select class="pl-every" data-change="plan-every" data-id="${esc(row.id)}" aria-label="How often">
+      ${PLAN_REPEATS.map(([k, label]) => `<option value="${k}"${k === planEvery(row) ? ' selected' : ''}>${esc(label)}</option>`).join('')}
+    </select>
+    ${chip}
+    ${row.due ? '' : back}
+  </div>`;
+}
+
+/* 1st, 2nd, 3rd. Written out because a select full of bare numbers reads as a
+   quantity rather than as a date. */
+const ordinal = (n) => {
+  const tens = n % 100;
+  const suffix = (tens >= 11 && tens <= 13) ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
+  return `${n}${suffix}`;
+};
 
 /* Writes the plan into the ledger, and then does whatever was asked of the
    line itself.
@@ -5131,7 +5504,8 @@ function planLogAnswer(move) {
   const ask = state.planLogAsk;
   state.planLogAsk = null;
   const row = ask && findRow('plans', ask.id);
-  const value = row ? money2(row.amount) : 0;
+  if (!row) { render(); return; }
+  const value = money2(row.amount);
   if (!value) { render(); return; }
   const incoming = planDir(row) === 'in';
   const spent = touch('money', {
@@ -5152,13 +5526,34 @@ function planLogAnswer(move) {
     bury('plans', row.id);
     state.planArm = '';
   } else {
-    row.status = 'paid';
-    touch('plans', row);
+    markPlanPaid(row);
   }
   state.selectedDate = todayIso;
   save(); queueSync(0);
   flash(`Logged · ${incoming ? '+' : '−'}${amount(value)}`);
   render();
+}
+
+/* What a line looks like the moment after the money moved.
+
+   A one-off is finished, and says so. A repeating one is not: it has simply
+   had this month's, so it goes back to being owed and its date moves to the
+   next one. That is the whole reason a subscription is a different kind rather
+   than a due somebody remembers to re-date — "paid" is not a state a standing
+   charge is ever in for long, and a planner full of paid subscriptions is a
+   planner that has stopped telling you anything. */
+function markPlanPaid(row) {
+  row.lastPaid = todayIso;
+  const next = planRoll(row);
+  if (next) {
+    row.due = next;
+    row.status = 'planned';
+    // Seen once is not seen for ever: the next one is a new thing to be told.
+    delete state.planSeen[row.id];
+  } else {
+    row.status = 'paid';
+  }
+  touch('plans', row);
 }
 
 /* What to do with the line once the money has actually moved.
@@ -5168,6 +5563,10 @@ function planLogAnswer(move) {
    line is a pad you have to weed. Keeping both is the other: a paid line is
    proof this is the bill you planned for, and next month you want it there to
    copy rather than to remember.
+
+   Not asked at all of a repeating line. There the question has one answer —
+   deleting a subscription because this month's went out would be deleting the
+   subscription — so plan-log settles those on the spot and this never opens.
 
    The entry is written either way — that half is not in question, and an
    answer that could leave you with neither the plan nor the spend would be a
@@ -5197,45 +5596,110 @@ function planLogDialog() {
   });
 }
 
-/* Shared by the panel and the sheet, exactly as todoBody is, so the two
-   surfaces cannot drift into being different features. */
+/* What is due, said once, on the day it matters.
+
+   A dialog rather than a badge because the whole point of a due date is that
+   it arrives whether or not you went looking. All of them in one dialog rather
+   than one each: three bills in the same week is a normal week, and three
+   dialogs in a row is the app shouting.
+
+   In-app and nothing more. This is not a push notification — it appears the
+   first time the planner's owner opens Zimpan on or after the day — and saying
+   otherwise would be promising something a local-first app with no service
+   worker cannot keep. */
+function planAlertDialog() {
+  /* Never on top of something that is already saying this. The planner itself
+     shows every one of these lines with its own date beside it, and the log
+     question is the answer to one of them being acted on — a second dialog
+     over either would be the app interrupting itself. Nor during setup, where
+     there is nothing to be reminded of yet. */
+  if (state.planAlertHid || state.planOpen || state.planLogAsk) return '';
+  if (workMode() || !state.setupDone) return '';
+  const rows = planAlertsNew();
+  if (!rows.length) return '';
+  const owed = rows.reduce((a, r) => a + (planDir(r) === 'out' ? mCents(r.amount) : 0), 0);
+  return lightbox({
+    icon: 'scales',
+    tone: MONEY_OUT_INK,
+    wide: true,
+    kicker: rows.length === 1 ? 'One thing is due' : `${rows.length} things are due`,
+    title: 'Coming up in your Money Planner',
+    sub: owed ? `${amount(owed / 100)} in all, if you settle every one of them today.` : '',
+    closeAct: 'plan-alert-hide',
+    body: `
+      <div class="pl-alerts">
+        ${rows.map((r) => {
+    const near = dayNear(r.due);
+    const value = mCents(r.amount);
+    return `
+        <div class="pl-alert">
+          <div class="pl-alert-what">
+            <strong>${esc(String(r.text || '').trim() || planKindOf(planKind(r)).one)}</strong>
+            <span>${esc(planKindOf(planKind(r)).one)}${r.purpose ? ` · ${esc(r.purpose)}` : ''}</span>
+          </div>
+          <div class="pl-alert-when">
+            <span class="pl-near${near.late ? ' is-late' : near.soon ? ' is-soon' : ''}">${esc(near.label)}</span>
+            ${value ? `<span class="pl-alert-amt">${esc(amount(value / 100))}</span>` : ''}
+          </div>
+          ${value ? `<button class="btn btn-secondary pl-alert-go" data-act="plan-alert-log" data-id="${esc(r.id)}">Log it</button>` : ''}
+        </div>`;
+  }).join('')}
+      </div>`,
+    actions: `
+      <button class="btn btn-secondary" data-act="plan-alert-hide">Not now</button>
+      <button class="btn btn-primary" data-act="plan-alert-open">Open the planner</button>`,
+    foot: 'Waved away here, these come back tomorrow if they are still unpaid.'
+  });
+}
+
+/* The planner's contents. One scroller over all three sections, for the reason
+   the activity planner gives: three lists that scroll on their own is three
+   places to lose your position. */
 function planBody() {
-  const rows = planRows();
   return `
-  <div class="todo-head">
-    <span class="todo-name">Money Plan</span>
-    <span class="todo-count" data-plan-count${planOpenCount() ? '' : ' hidden'}>${planOpenCount()} planned</span>
-    <button class="todo-x" data-act="plan-close" aria-label="Close the pad">✕</button>
-  </div>
   ${planSum()}
-  ${padWaitNote('plans', 'Money Plan')}
-  <button class="todo-new" data-act="plan-add">+ Add Plan</button>
-  <div class="todo-list" data-plan-list>
-    ${rows.length
-    ? rows.map(planLine).join('')
-    : `<p class="todo-empty">Nothing planned yet. A plan is money you know is moving — out for a bill, in for what you are expecting — and the pad adds them up and tells you what that leaves.</p>`}
+  ${padWaitNote('plans', 'The Money Planner')}
+  <div class="todo-list pl-list" data-plan-list>
+    ${PLAN_KINDS.map((k) => {
+    const rows = planRows(k.key);
+    return plSection({
+      name: k.name,
+      count: rows.length,
+      blurb: k.blurb,
+      addAct: 'plan-add',
+      addData: ` data-kind="${esc(k.key)}"`,
+      add: k.add,
+      rows: rows.map(planLine),
+      empty: k.empty
+    });
+  }).join('')}
   </div>`;
 }
 
-// Same one-render entrance the to-do pad uses. See todoFresh.
-let planFresh = true;
-
-const planPad = () => (!state.planOpen || isPhone() ? '' : `
-  <div class="todo-pad plan-pad${planFresh ? ' is-new' : ''}" role="dialog" aria-label="Money Plan">${planBody()}</div>`);
-
-const planSheet = () => (!state.planOpen || !isPhone() ? '' : `
-  <div class="todo-scrim plan-scrim${planFresh ? ' is-new' : ''}" data-backdrop="plan-close">
-    <div class="todo-drawer" role="dialog" aria-label="Money Plan">
-      <div class="todo-grab" aria-hidden="true"></div>
-      ${planBody()}
-    </div>
-  </div>`);
+/* The whole money planner, as one dialog. Same shell as the activity planner,
+   in the money tracker's own green — the pad's palette is a set of variables,
+   and .pl-wrap.is-money re-points them exactly as [data-app="money"] re-points
+   the accent ramp. */
+function planPlanner() {
+  if (!state.planOpen) return '';
+  const t = planTotals();
+  const soon = planDueCount();
+  return lightbox({
+    icon: 'scales',
+    tone: '#10756c',
+    wide: true,
+    kicker: soon ? `${soon} needing attention` : `${t.count} on the books`,
+    title: 'Money Planner',
+    body: `<div class="pl-wrap is-money">${planBody()}</div>`,
+    closeAct: 'plan-close',
+    actions: `<button class="btn btn-primary" data-act="plan-close">Done</button>`
+  });
+}
 
 let planScroll = 0;
 function paintPlan() {
   const list = root.querySelector('[data-plan-list]');
-  if (!list) { planScroll = 0; planFresh = true; return; }
-  planFresh = false;
+  if (!list) { planScroll = 0; return; }
   /* Sized here as well as in paintTodo, rather than left to it: paintTodo
      returns the moment the to-do list is not on screen, and on the money
      tracker it never is — so a two-line plan was drawn one line tall. */
@@ -5250,9 +5714,19 @@ function paintPlan() {
    the to-do pad does on close, so an accidental "+ New line" does not leave a
    blank row behind on every device. */
 function planTidy() {
-  const empty = state.plans.filter((r) => !String(r.text || '').trim() && !mCents(r.amount));
-  if (!empty.length) return;
-  state.plans = state.plans.filter((r) => String(r.text || '').trim() || mCents(r.amount));
+  // A date or a day counts as having said something: a due whose name is still
+  // being thought about is not litter if it already knows when it lands.
+  const said = (r) => !!String(r.text || '').trim() || !!mCents(r.amount) || !!r.due || !!r.day;
+  /* And the dismissals of lines that are no longer here. Nothing breaks if
+     these stay — an id nothing matches is looked up and missed — but the map
+     is written to this device on every save, and a note kept for a line
+     deleted two years ago is a note kept for ever. */
+  Object.keys(state.planSeen).forEach((id) => {
+    if (!findRow('plans', id)) delete state.planSeen[id];
+  });
+  const empty = state.plans.filter((r) => !said(r));
+  if (!empty.length) { save(); return; }
+  state.plans = state.plans.filter(said);
   empty.forEach((r) => bury('plans', r.id));
   save(); queueSync(0);
 }
@@ -5339,7 +5813,7 @@ const menuExit = () => `
 
 function appbarMenu() {
   if (!state.auth) return '';
-  const open = todoOpenCount();
+  const open = todoDueCount();
 
   return `
   <div class="appbar-menu">
@@ -5356,8 +5830,8 @@ function appbarMenu() {
           : menuRow({ act: 'prefs-open', icon: 'sliders', label: 'Preferences' })}
         ${adminRole() ? menuRow({ href: '/admin', icon: 'shield', label: 'Admin dashboard' }) : ''}
         ${state.app === 'money'
-          ? menuRow({ act: 'plan-open', icon: 'scales', label: 'Money Plan', badge: planOpenCount() || '' })
-          : menuRow({ act: 'todo-open', icon: 'todo', label: 'To Do', badge: open || '' })}
+          ? menuRow({ act: 'plan-open', icon: 'scales', label: 'Money Planner', badge: planDueCount() || '' })
+          : menuRow({ act: 'todo-open', icon: 'todo', label: 'Activity Planner', badge: open || '' })}
         ${menuRow({ act: 'export-open', icon: 'history', label: 'Export as CSV' })}
         ${menuRow({ act: 'go-blogs', icon: 'article', label: 'Blog' })}
         ${menuRow({ act: 'legal-faq', icon: 'question', label: 'FAQs' })}
@@ -10504,11 +10978,13 @@ function render() {
   ${helpDialog()}
   ${closeAccountDialog()}
   ${backToTop()}
-  ${todoSheet()}
-  ${planSheet()}
+  ${todoPlanner()}
+  ${planPlanner()}
   ${planLogDialog()}
   ${moneyLogDialog()}
   ${todoWhyDialog()}
+  ${todoStartDialog()}
+  ${planAlertDialog()}
   ${mobileNav(v)}
 </div>`;
 
@@ -12422,8 +12898,17 @@ const ACTIONS = {
     render();
   },
 
-  'todo-add': () => {
-    const row = touch('todos', { id: newTodoId(), text: '', status: 'pending', createdAt: Date.now() });
+  'todo-add': (el) => {
+    /* The section the button belongs to decides the day. Adding under Planned
+       starts it on today rather than empty, because the commonest thing a
+       planner is opened to do is plan today — and the field is right there
+       when it is not. */
+    const when = String((el && el.dataset.when) || '');
+    const row = touch('todos', {
+      id: newTodoId(), text: '', status: 'pending',
+      date: /^\d{4}-\d{2}-\d{2}$/.test(when) ? when : undefined,
+      createdAt: Date.now()
+    });
     state.todos = state.todos.concat([row]);
     state.todoOpen = true;
     state.todoArm = '';
@@ -12437,6 +12922,27 @@ const ACTIONS = {
        when the pad closes. */
     save();
     render();
+  },
+
+  /* Straight into the timer, unless there is one running — then the question
+     in todoStartDialog is asked first, because answering it writes an entry. */
+  'todo-start': (el) => {
+    const row = findRow('todos', String(el.dataset.id || ''));
+    if (!row || !todoStartable(row)) return;
+    if (state.timerStart) { state.todoStart = { id: row.id }; render(); return; }
+    startTodo(row);
+  },
+  'todo-start-cancel': () => { state.todoStart = null; render(); },
+  'todo-start-go': () => {
+    const ask = state.todoStart;
+    const row = ask && findRow('todos', ask.id);
+    state.todoStart = null;
+    if (!row) { render(); return; }
+    /* Stopped the ordinary way, so the running session is saved exactly as it
+       would have been by the button on the tracker — including the question it
+       asks about what the entry was. */
+    toggleTimer();
+    startTodo(row);
   },
 
   'todo-del': (el) => {
@@ -12471,6 +12977,39 @@ const ACTIONS = {
     state.planArm = '';
     planTidy();
     render();
+  },
+
+  /* Which list this line joins, from the buttons on a note. The kind is set
+     and nothing else: the field the new kind needs is then on the row, empty
+     and waiting, which is the shortest path from "I wrote this down" to "this
+     has a date on it". */
+  'plan-kind': (el) => {
+    const row = findRow('plans', String(el.dataset.id || ''));
+    const want = String(el.dataset.kind || '');
+    if (!row || !PLAN_KINDS.some((k) => k.key === want) || planKind(row) === want) return;
+    row.kind = want;
+    /* A subscription is money going out every month. Nothing else makes sense
+       of a standing charge, and the Coming in switch is not offered on one. */
+    if (want === 'sub') { row.dir = 'out'; row.status = 'planned'; }
+    /* A note has no schedule by definition, so anything left over from the
+       list it came out of goes with it — otherwise a date nobody can see is
+       still sitting on the row, waiting to be a surprise when it is moved
+       back. */
+    if (want === 'note') { delete row.due; delete row.day; delete row.every; }
+    touch('plans', row);
+    save(); queueSync(0); render();
+  },
+
+  /* Cancelled and active, on a subscription. Cancelled is 'dropped', the
+     status the pad already had for a line you decided against — so a cancelled
+     subscription stops counting towards what is owed and stops notifying by
+     the same rule everything else does, rather than by one of its own. */
+  'plan-active': (el) => {
+    const row = findRow('plans', String(el.dataset.id || ''));
+    if (!row) return;
+    row.status = planOwed(row) ? 'dropped' : 'planned';
+    touch('plans', row);
+    save(); queueSync(0); render();
   },
 
   /* Which way this line's money goes. Changing it does not touch the figure —
@@ -12539,8 +13078,14 @@ const ACTIONS = {
     save(); queueSync(0); render();
   },
 
-  'plan-add': () => {
-    const row = touch('plans', { id: newPlanId(), text: '', amount: 0, dir: 'out', status: 'planned', createdAt: Date.now() });
+  'plan-add': (el) => {
+    // The section the button sits under decides which list the new line joins.
+    const want = String((el && el.dataset.kind) || 'due');
+    const kind = PLAN_KINDS.some((k) => k.key === want) ? want : 'due';
+    const row = touch('plans', {
+      id: newPlanId(), text: '', amount: 0, dir: 'out', status: 'planned',
+      kind, createdAt: Date.now()
+    });
     state.plans = state.plans.concat([row]);
     state.planOpen = true;
     state.planArm = '';
@@ -12568,9 +13113,15 @@ const ACTIONS = {
   /* Paying a line is the one place the pad writes to the ledger, and what
      happens to the line afterwards is a question with two right answers, so it
      is asked rather than assumed. See planLogDialog(). */
+  /* A repeating line settles on the spot; a one-off asks what to do with
+     itself first. See planLogDialog: the question it asks — move it off the
+     pad, or keep it — has only one answer for a subscription, and asking it
+     anyway would be offering to delete a standing charge because this month's
+     went out. */
   'plan-log': (el) => {
     const row = findRow('plans', String(el.dataset.id || ''));
     if (!row || !money2(row.amount)) return;
+    if (planEvery(row)) { state.planLogAsk = { id: row.id }; planLogAnswer(false); return; }
     state.planLogAsk = { id: row.id };
     render();
   },
@@ -12579,6 +13130,31 @@ const ACTIONS = {
   'plan-log-move': () => planLogAnswer(true),
   // Written down and still on the pad, marked paid.
   'plan-log-keep': () => planLogAnswer(false),
+
+  /* The reminder dialog. Logging from it settles that line and leaves the rest
+     of the dialog standing, because the other two bills are still due. */
+  'plan-alert-log': (el) => {
+    const row = findRow('plans', String(el.dataset.id || ''));
+    if (!row || !money2(row.amount)) return;
+    state.planLogAsk = { id: row.id };
+    planLogAnswer(false);
+  },
+  /* Waved away for today, line by line rather than as a lump: a bill logged
+     from here is already gone from the list, and one that arrives tomorrow was
+     never in this dialog to be dismissed. */
+  'plan-alert-hide': () => {
+    planAlertsNew().forEach((r) => { state.planSeen[r.id] = todayIso; });
+    state.planAlertHid = true;
+    save(); render();
+  },
+  'plan-alert-open': () => {
+    planAlertsNew().forEach((r) => { state.planSeen[r.id] = todayIso; });
+    state.planAlertHid = true;
+    state.planOpen = true;
+    state.menuOpen = false;
+    if (state.m) state.m.accountOpen = false;
+    save(); render();
+  },
 
   'menu-toggle': () => { state.menuOpen = !state.menuOpen; render(); },
   'menu-close': () => { if (state.menuOpen) { state.menuOpen = false; render(); } },
@@ -13360,12 +13936,74 @@ const CHANGES = {
     state.planArm = '';
     save(); queueSync(0); render();
   },
+  /* The day a subscription is charged on.
+
+     The day of the month is what is stored; the date it works out to is
+     derived and kept beside it. A subscription given "the 3rd" today means the
+     next 3rd, not the one that has gone — which is what firstMonthly answers,
+     and why picking a day never puts a line into the overdue state on the
+     strength of a calendar rather than a missed payment. */
+  'plan-day': (el) => {
+    const row = findRow('plans', el.dataset.id);
+    if (!row) return;
+    const day = Math.max(0, Math.min(31, parseInt(el.value, 10) || 0));
+    if ((Number(row.day) || 0) === day) return;
+    if (day) { row.day = day; row.due = firstMonthly(day); } else { delete row.day; delete row.due; }
+    delete state.planSeen[row.id];
+    touch('plans', row);
+    save(); queueSync(0); render();
+  },
+
+  // The date a due lands on. Clearing it leaves a due nobody has looked up yet.
+  'plan-due': (el) => {
+    const row = findRow('plans', el.dataset.id);
+    if (!row) return;
+    const want = String(el.value || '').slice(0, 10);
+    if (want && !/^\d{4}-\d{2}-\d{2}$/.test(want)) return;
+    if ((row.due || '') === want) return;
+    if (want) {
+      row.due = want;
+      // Remembered for the roll, so a monthly due on the 31st behaves like a
+      // subscription on the 31st rather than creeping earlier every February.
+      row.day = dParts(want)[2];
+    } else { delete row.due; delete row.day; }
+    delete state.planSeen[row.id];
+    touch('plans', row);
+    save(); queueSync(0); render();
+  },
+
+  // Whether a due comes round again, and how often.
+  'plan-every': (el) => {
+    const row = findRow('plans', el.dataset.id);
+    if (!row) return;
+    const want = String(el.value || '');
+    if (want && !PLAN_REPEATS.some(([k]) => k === want)) return;
+    if (planEvery(row) === want) return;
+    if (want) row.every = want; else delete row.every;
+    touch('plans', row);
+    save(); queueSync(0); render();
+  },
+
   'plan-purpose': (el) => {
     const row = findRow('plans', el.dataset.id);
     if (!row) return;
     const want = String(el.value || '');
     if (want) row.purpose = want; else delete row.purpose;
     touch('plans', row);
+    save(); queueSync(0); render();
+  },
+
+  /* The one field that decides which half of the activity planner a to-do is
+     in. Writing a date moves a note into the schedule; clearing it moves it
+     back. There is nothing else to keep in step. */
+  'todo-date': (el) => {
+    const row = findRow('todos', el.dataset.id);
+    if (!row) return;
+    const want = String(el.value || '').slice(0, 10);
+    if (want && !/^\d{4}-\d{2}-\d{2}$/.test(want)) return;
+    if ((row.date || '') === want) return;
+    if (want) row.date = want; else delete row.date;
+    touch('todos', row);
     save(); queueSync(0); render();
   },
 
@@ -16087,7 +16725,8 @@ function mDonateSheet() {
    nine screens have no other home for: signing out, and getting back to the
    full layout on a phone. */
 function mAccountSheet() {
-  const open = todoOpenCount();
+  // What needs attention today, on the same rule the wide menu's badge uses.
+  const open = todoDueCount();
   const team = state.team && state.team.team;
   return mSheet(`
   <div class="mn-grab" aria-hidden="true"></div>
@@ -16097,11 +16736,11 @@ function mAccountSheet() {
   </div>
   ${menuWho()}
   <div class="mn-list">
-    ${menuRow({ act: 'todo-open', icon: 'todo', label: 'To Do', badge: open || '' })}
+    ${menuRow({ act: 'todo-open', icon: 'todo', label: 'Activity Planner', badge: open || '' })}
     <!-- Both, because the phone has no tracker to be on: hours and money are
          one app here, and a pad that appeared only while the money tab of
          Insights happened to be open would be a pad nobody could find. -->
-    ${workMode() ? '' : menuRow({ act: 'plan-open', icon: 'scales', label: 'Money Plan', badge: planOpenCount() || '' })}
+    ${workMode() ? '' : menuRow({ act: 'plan-open', icon: 'scales', label: 'Money Planner', badge: planDueCount() || '' })}
     ${menuRow({ act: 'm-classic', icon: 'layout', label: 'Full view' })}
     ${menuRow({ act: 'team-open', icon: 'people', label: team ? team.name : 'Start a team' })}
     ${menuRow({ act: 'prefs-open', icon: 'sliders', label: 'Preferences' })}
@@ -16133,11 +16772,13 @@ function mobileApp() {
   ${s.screen === 'detail' ? mDetail() : ''}
   ${tabbed ? mTabs() + mTopButton() : ''}
   ${s.accountOpen ? mAccountSheet() : ''}
-  ${todoSheet()}
-  ${planSheet()}
+  ${todoPlanner()}
+  ${planPlanner()}
   ${planLogDialog()}
   ${moneyLogDialog()}
   ${todoWhyDialog()}
+  ${todoStartDialog()}
+  ${planAlertDialog()}
   ${s.donateOpen ? mDonateSheet() : ''}
   ${mCalSheet()}
   ${mTimeDialog()}

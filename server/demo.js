@@ -124,27 +124,38 @@ const CHORES = [
   ['Watering the plants', 20], ['Sorting the studio shelf', 45]
 ];
 
+/* The activity planner's two lists. The last column is how many days from
+   today the item is planned for; leaving it out makes the row a note, which is
+   the split the planner reads. Spread either side of today on purpose, so the
+   demo opens on a planner with something late, something now and something
+   coming — which is the whole shape of the thing. */
 const TODOS = [
-  ['Send Northlight the revised brand board', 'doing', 'Client work'],
+  ['Send Northlight the revised brand board', 'doing', 'Client work', '', 0],
   ['Chase the Casa Verde invoice — 14 days late', 'stuck', 'Email & admin',
-    'Their finance person is on leave until the 12th'],
-  ['Back up the 2026 project files', 'pending', 'Email & admin'],
-  ['Book the dentist before the year ends', 'pending', 'Family time'],
+    'Their finance person is on leave until the 12th', -2],
+  ['Back up the 2026 project files', 'pending', 'Email & admin', '', 3],
+  ['Book the dentist before the year ends', 'pending', 'Family time', '', 9],
   ['Draft the rate card for next year', 'review', 'Client work'],
   ['Renew the font licence', 'pending', 'Email & admin'],
   ['Reply to the Halcyon Press brief', 'done', 'Client work'],
   ['Move ₱5,000 to savings after the 15th', 'done', 'Email & admin']
 ];
 
+/* The money planner's three. After the status comes the list it belongs to,
+   then the day of the month a subscription lands on, then how many days from
+   today a due is expected, and last how it repeats. A note has none of them. */
 const PLANS = [
-  ['Rent — next month', 12000, 'Rent', 'out', 'planned'],
-  ['Meralco and internet', 3499, 'Utilities', 'out', 'due'],
-  ['Northlight retainer', 22000, 'Income', 'in', 'planned'],
-  ['Groceries for the week', 2200, 'Groceries', 'out', 'planned'],
-  ['Dental cleaning', 1800, 'Health', 'out', 'planned'],
-  ['New drawing tablet', 18500, 'Shopping', 'out', 'planned'],
-  ['Tala Coffee — final invoice', 8500, 'Income', 'in', 'paid'],
-  ['Mama’s birthday lunch', 3000, 'Family', 'out', 'paid']
+  ['Rent — next month', 12000, 'Rent', 'out', 'planned', 'due', 0, 12, 'month'],
+  ['Meralco and internet', 3499, 'Utilities', 'out', 'due', 'due', 0, 1],
+  ['Northlight retainer', 22000, 'Income', 'in', 'planned', 'due', 0, 5],
+  ['Adobe Creative Cloud', 3299, 'Utilities', 'out', 'planned', 'sub', 3],
+  ['Google One', 449, 'Utilities', 'out', 'planned', 'sub', 15],
+  ['Canva Pro', 690, 'Utilities', 'out', 'dropped', 'sub', 22],
+  ['Dental cleaning', 1800, 'Health', 'out', 'planned', 'due', 0, 21],
+  ['New drawing tablet', 18500, 'Shopping', 'out', 'planned', 'note'],
+  ['A proper chair, eventually', 9500, 'Shopping', 'out', 'planned', 'note'],
+  ['Tala Coffee — final invoice', 8500, 'Income', 'in', 'paid', 'due'],
+  ['Mama’s birthday lunch', 3000, 'Family', 'out', 'paid', 'due']
 ];
 
 /* ── the generator ──
@@ -315,26 +326,52 @@ export function demoPayload({ today, days = PERSONA.days, seed = 20260210 } = {}
   }
 
   const at = new Date(`${today}T00:00:00Z`).getTime();
+  /* Dates relative to the demo's own "today", so an account rebuilt in March
+     reads exactly as one rebuilt in September rather than pointing at a week
+     that has been and gone. */
+  const dayOff = (n) => {
+    const d = new Date(`${today}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  };
+  // The next time a given day of the month falls on or after the demo's today.
+  const monthly = (day) => {
+    const d = new Date(`${today}T00:00:00Z`);
+    const len = (y, m) => new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+    let y = d.getUTCFullYear(), m = d.getUTCMonth();
+    if (Math.min(day, len(y, m)) < d.getUTCDate()) { m += 1; if (m > 11) { m = 0; y += 1; } }
+    return new Date(Date.UTC(y, m, Math.min(day, len(y, m)))).toISOString().slice(0, 10);
+  };
+
   const todos = TODOS.map((t, i) => ({
     id: `demo-t-${i + 1}`,
     text: t[0],
     status: t[1],
     category: t[2],
     blocked: t[3] || '',
+    date: t[4] == null ? undefined : dayOff(t[4]),
     createdAt: at - (TODOS.length - i) * 2 * DAY_MS,
     updatedAt: at - (TODOS.length - i) * DAY_MS
   }));
 
-  const plans = PLANS.map((p, i) => ({
-    id: `demo-p-${i + 1}`,
-    text: p[0],
-    amount: p[1],
-    purpose: p[2],
-    dir: p[3],
-    status: p[4],
-    createdAt: at - (PLANS.length - i) * 2 * DAY_MS,
-    updatedAt: at - (PLANS.length - i) * DAY_MS
-  }));
+  const plans = PLANS.map((p, i) => {
+    const kind = p[5] || 'due';
+    const day = kind === 'sub' ? p[6] : null;
+    return {
+      id: `demo-p-${i + 1}`,
+      text: p[0],
+      amount: p[1],
+      purpose: p[2],
+      dir: p[3],
+      status: p[4],
+      kind,
+      day: day || undefined,
+      due: day ? monthly(day) : (p[7] == null ? undefined : dayOff(p[7])),
+      every: p[8] || undefined,
+      createdAt: at - (PLANS.length - i) * 2 * DAY_MS,
+      updatedAt: at - (PLANS.length - i) * DAY_MS
+    };
+  });
 
   return {
     name: { value: PERSONA.name, updatedAt: at },

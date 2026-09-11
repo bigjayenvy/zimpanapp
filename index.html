@@ -1112,14 +1112,14 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      beside the page, not instead of it. Paper-coloured, because that is what
      it is pretending to be, and the one surface in the app that is not on the
      app's own background. */
-  /* ── the two pads, one shell ──
+  /* ── the two planners, one shell ──
 
-     Every colour the pad and its button are made of is a variable, set here to
-     the paper the to-do pad has always been. The money pad re-points the same
-     names to the money tracker's green further down, which is the trick
+     Every colour a planner and its button are made of is a variable, set here
+     to the paper the to-do pad always was. The money planner re-points the
+     same names to the money tracker's green further down, which is the trick
      [data-app="money"] and .dq already use: one set of rules, two palettes,
      and no chance of the two shells drifting apart in anything but colour. */
-  .fab-todo, .fab-plan, .todo-pad, .todo-scrim {
+  .fab-todo, .fab-plan, .pl-wrap.is-todo {
     --pad-face: #fdf6d8;      /* the button */
     --pad-face-hi: #fbefc0;
     --pad-face-on: #f7e8ac;
@@ -1152,30 +1152,33 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      from the bottom bar already, and a third would crowd the thumb. */
   @media (max-width: 720px) { .fab-todo, .fab-plan { display: none; } }
 
-  .todo-pad {
-    width: min(340px, calc(100vw - 32px));
-    max-height: min(64vh, 560px);
-    display: flex; flex-direction: column;
-    background: var(--pad-bg); border: 1px solid var(--pad-line); border-radius: 18px;
-    box-shadow: 0 18px 44px color-mix(in srgb, #2b2b2d 26%, transparent);
-    padding: 12px 12px 14px; margin-bottom: 4px;
+  /* ── the planners ──
+
+     Both of them are one dialog holding a scroller holding sections. The paper
+     the notes are made of is still a set of --pad-* variables, re-pointed on
+     .is-money the way [data-app="money"] re-points the accent ramp — so the
+     planner you open on the Money Tracker is unmistakably part of it rather
+     than a cream note that wandered in from the hours. */
+  .pl-wrap { display: block; }
+  /* Its own scroller rather than the dialog's, so the section headings above
+     stay put and the picker popovers have something with a known height to
+     keep themselves inside. See padPickShow in app.js. */
+  .pl-list { margin-top: 0; max-height: min(58vh, 520px); padding-right: 4px; }
+  /* Shorter where the screen is, so the dialog's own foot stays reachable
+     without scrolling past a list that scrolls itself. */
+  @media (max-width: 720px) { .pl-list { max-height: 50vh; } }
+  .pl-sec + .pl-sec { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--pad-line); }
+  .pl-sec-head { display: flex; align-items: baseline; gap: 8px; margin: 0 2px 4px; }
+  .pl-sec-name {
+    margin: 0; font-family: var(--font-heading); font-weight: 700; font-size: 15px;
+    color: var(--pad-ink);
   }
-  /* Only on the render that opens it. See todoFresh in app.js: the class is on
-     for one render, so a sync landing behind an open pad cannot replay this. */
-  .todo-pad.is-new { animation: zStep .18s ease both; }
-  .todo-head { display: flex; align-items: center; gap: 8px; padding: 0 2px 10px; }
-  .todo-name {
-    font-family: var(--font-heading); font-weight: 700; font-size: 16px; color: var(--pad-ink);
+  .pl-sec-n {
+    font-size: 11px; font-weight: 700; color: var(--pad-soft);
+    background: var(--pad-tint); padding: 2px 8px; border-radius: 999px;
   }
-  .todo-count {
-    font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
-    color: var(--pad-soft); background: var(--pad-tint); padding: 3px 8px; border-radius: 999px;
-  }
-  .todo-x {
-    margin-left: auto; border: 0; background: transparent; cursor: pointer;
-    font-size: 15px; color: var(--pad-soft); min-width: 32px; min-height: 32px; border-radius: 8px;
-  }
-  .todo-x:hover { background: var(--pad-tint); }
+  .pl-sec-blurb { margin: 0 2px 10px; font-size: 12px; line-height: 1.5; color: var(--pad-soft); }
+  .pl-sec .todo-new { margin-bottom: 10px; }
   .todo-new {
     width: 100%; border: 1px dashed var(--pad-dash); border-radius: 12px; background: transparent;
     padding: 9px 12px; cursor: pointer; text-align: left;
@@ -1258,32 +1261,95 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .todo-del:hover { background: #fdecf1; color: #8a2f4a; }
   .todo-del.is-armed { background: #8a2f4a; color: #fff; padding: 0 9px; }
 
-  /* The phone gets a sheet, on the same terms as every other sheet there. */
-  .todo-scrim {
-    position: fixed; inset: 0; z-index: 47; display: flex; flex-direction: column;
-    justify-content: flex-end; background: rgba(36, 31, 48, .5);
+  /* When a line happens, and how near that is. One row on every kind of line,
+     so the eye finds the date in the same place whether it is a day of the
+     month, a date, or the two buttons that turn a note into either. */
+  .pl-when { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+  .pl-date { flex: 0 1 150px; min-width: 0; min-height: 34px; font-size: 12.5px; padding: 6px 9px; }
+  .pl-every, .pl-day select {
+    border: 1px solid var(--pad-line); border-radius: 10px; background: #fff;
+    color: var(--pad-mid); font: inherit; font-size: 12.5px; font-weight: 600;
+    min-height: 34px; padding: 0 8px; cursor: pointer; max-width: 100%;
   }
-  .todo-drawer {
-    background: var(--pad-bg); border-radius: 28px 28px 0 0; padding: 12px 16px 22px;
-    box-shadow: 0 -18px 44px rgba(47, 28, 102, .24);
-    display: flex; flex-direction: column; max-height: calc(100dvh - 60px);
+  .pl-every:focus-visible, .pl-day select:focus-visible { outline: 2px solid var(--pad-soft); outline-offset: 1px; }
+  .pl-day { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+  .pl-day > span { font-size: 12px; color: var(--pad-soft); }
+  .pl-next { font-size: 12px; font-weight: 600; color: var(--pad-mid); }
+  .pl-hint { font-size: 11.5px; color: var(--pad-soft); }
+  /* How near, in one chip. Only the two that mean something get a colour: late
+     is the one to act on and soon is the one to know about, and colouring "in
+     five days" as well would leave nothing for those two to stand out against. */
+  .pl-near {
+    font-size: 11px; font-weight: 700; letter-spacing: .04em; padding: 3px 9px;
+    border-radius: 999px; background: var(--pad-tint); color: var(--pad-mid); white-space: nowrap;
   }
-  .todo-scrim.is-new .todo-drawer { animation: zStep .26s ease both; }
-  .todo-drawer .todo-list { max-height: 60vh; }
-  .todo-grab { width: 38px; height: 4px; border-radius: 999px; background: var(--pad-grab); margin: 2px auto 12px; }
+  .pl-near.is-soon { background: #fdf1de; color: #8a5a0c; }
+  .pl-near.is-late { background: #fdecf1; color: #8a2f4a; }
+  .pl-paid { margin: 0 0 8px; font-size: 11.5px; color: var(--pad-soft); }
 
-  /* ── the money pad ──
+  /* Start tracking this, now. The one button on a note that does something to
+     the rest of the app rather than to the note, so it is the one that carries
+     the app's own accent instead of the pad's paper. */
+  .pl-start {
+    display: inline-flex; align-items: center; gap: 6px; flex: none;
+    min-height: 30px; padding: 0 11px; border-radius: 9px; cursor: pointer;
+    border: 1px solid color-mix(in srgb, var(--color-accent) 34%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 11%, #fff);
+    color: var(--color-accent-700); font: inherit; font-size: 12px; font-weight: 700;
+  }
+  .pl-start svg { width: 14px; height: 14px; display: block; }
+  .pl-start:hover:not(:disabled) { background: color-mix(in srgb, var(--color-accent) 19%, #fff); }
+  .pl-start:disabled { opacity: .4; cursor: default; }
+  .pl-start:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
 
-     The same shell as the to-do pad, in the money tracker's own green. The
-     paper the pad is made of is a set of variables; these re-point them, the
-     way [data-app="money"] re-points the accent ramp — so the pad you open on
-     the Money Tracker is unmistakably part of it rather than a yellow note
-     that wandered in from the hours.
+  /* Active and cancelled, on a subscription, and the two ways out of being a
+     note. Quiet controls: both change which list a line is read in, which the
+     line itself then shows, so neither needs to shout about it. */
+  .pl-chip {
+    flex: none; min-height: 30px; padding: 0 12px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--pad-line); background: #fff; color: var(--pad-soft);
+    font: inherit; font-size: 11.5px; font-weight: 700;
+  }
+  .pl-chip.is-on { background: #e3f5ed; border-color: #b9e2d2; color: #0e7a5c; }
+  .pl-chip:focus-visible { outline: 2px solid var(--pad-soft); outline-offset: 1px; }
+  .pl-move {
+    min-height: 32px; padding: 0 11px; border-radius: 10px; cursor: pointer;
+    border: 1px dashed var(--pad-dash); background: transparent; color: var(--pad-mid);
+    font: inherit; font-size: 12px; font-weight: 600;
+  }
+  .pl-move:hover { background: var(--pad-tint); border-style: solid; }
+  .pl-move:focus-visible { outline: 2px solid var(--pad-soft); outline-offset: 1px; }
+  /* A cancelled subscription stays on the list and stops asking for anything. */
+  .plan-note.is-off .todo-text, .plan-note.is-off .plan-amt input { opacity: .62; }
 
-     Set on the phone's scrim as well as on the pad, because the sheet is
-     rendered outside any [data-app] wrapper: without it the drawer would come
-     out cream on a phone and green on a laptop, for the same list. */
-  .fab-plan, .plan-pad, .plan-scrim {
+  /* The reminder dialog. Not the planner's paper: it opens over whatever was
+     on screen, and the app's own card is what the rest of the dialogs use. */
+  .pl-alerts { display: flex; flex-direction: column; gap: 10px; max-height: 46vh; overflow-y: auto; }
+  .pl-alert {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+    padding: 11px 13px; border-radius: 14px;
+    border: 1px solid var(--color-divider); background: var(--color-surface, #fff);
+  }
+  .pl-alert-what { flex: 1 1 150px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .pl-alert-what strong { font-size: 14px; color: var(--color-text); }
+  .pl-alert-what span { font-size: 11.5px; color: var(--color-neutral-600); }
+  .pl-alert-when { display: flex; align-items: center; gap: 8px; }
+  .pl-alert-amt { font-weight: 700; font-size: 14px; font-variant-numeric: tabular-nums; color: #8a2f4a; }
+  .btn.pl-alert-go { flex: none; min-height: 34px; padding: 0 14px; border-radius: 999px; font-size: 12.5px; }
+
+  /* ── the money planner ──
+
+     The same shell as the activity planner, in the money tracker's own green.
+     The paper the notes are made of is a set of variables; these re-point
+     them, the way [data-app="money"] re-points the accent ramp — so the
+     planner you open on the Money Tracker is unmistakably part of it rather
+     than a cream note that wandered in from the hours.
+
+     Set on the wrapper rather than on an [data-app] ancestor, because a
+     lightbox is rendered outside every wrapper on the page: without it the
+     dialog would come out cream on a phone and green on a laptop, for the
+     same list. */
+  .fab-plan, .pl-wrap.is-money {
     --pad-face: #e6f7f4;
     --pad-face-hi: #d5f0eb;
     --pad-face-on: #c7ede7;
@@ -1298,8 +1364,8 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
 
   /* What is owed, and what paying it leaves. Sits above the list rather than
-     under it: the answer is the reason to open the pad, and a total you have
-     to scroll past a dozen lines to reach is a total nobody reads. */
+     under it: the answer is the reason to open the planner, and a total you
+     have to scroll past a dozen lines to reach is a total nobody reads. */
   .plan-sum {
     display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px;
     background: var(--pad-tint); border-radius: 12px; padding: 9px 11px; margin: 0 0 10px;

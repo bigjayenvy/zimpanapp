@@ -45,8 +45,21 @@ const bool = (v) => (v ? 1 : 0);
 const isoDate = (v, field) => {
   const s = str(v, field, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) fail(`${field} must look like YYYY-MM-DD`);
+  /* And name a day that exists. The shape on its own lets 2026-13-40 through,
+     which reads as a date everywhere it is shown and is arithmetic nobody can
+     do: the planner rolls a date on by a month, and a thirteenth month rolls
+     into a date further off than the one it came from. */
+  const [y, m, d] = s.split('-').map(Number);
+  if (m < 1 || m > 12 || d < 1 || d > new Date(Date.UTC(y, m, 0)).getUTCDate()) {
+    fail(`${field} is not a real date`);
+  }
   return s;
 };
+/* A date that is allowed not to be there. The planner is full of them — a
+   to-do with no day is a note, a due with no date is one nobody has scheduled
+   yet — and an empty string has to mean the same as absent, because that is
+   what a cleared date input sends. */
+const maybeDate = (v, field) => (v == null || v === '' ? null : isoDate(v, field));
 const color = (v, field) => {
   const s = str(v, field, 32);
   if (!/^#[0-9a-fA-F]{6}$/.test(s)) fail(`${field} must be a #rrggbb colour`);
@@ -82,6 +95,12 @@ export const TODO_STATUSES = ['pending', 'doing', 'review', 'done', 'stuck'];
 export const PLAN_STATUSES = ['planned', 'due', 'paid', 'dropped'];
 // Which way a planned line's money goes. Same two words the ledger uses.
 export const PLAN_DIRS = ['in', 'out'];
+/* The planner's three lists, kept in step with PLAN_KINDS in app.js. A
+   subscription recurs every month, a due happens on a date, and a note has no
+   schedule at all. */
+export const PLAN_KINDS = ['sub', 'due', 'note'];
+// How a line repeats, when it does. Null is a one-off.
+export const PLAN_REPEATS = ['month', 'year'];
 
 /* ── pull ── */
 
@@ -106,9 +125,10 @@ export async function changesSince(userId, since) {
              FROM categories WHERE user_id = ? AND server_at > ?`, [userId, since]),
     query(`SELECT name, color, position, updated_at, deleted
              FROM purposes WHERE user_id = ? AND server_at > ?`, [userId, since]),
-    query(`SELECT id, body, status, blocked, category, created_at, updated_at, deleted
+    query(`SELECT id, body, status, blocked, category, plan_date, created_at, updated_at, deleted
              FROM todos WHERE user_id = ? AND server_at > ?`, [userId, since]),
-    query(`SELECT id, body, amount, purpose, dir, status, created_at, updated_at, deleted
+    query(`SELECT id, body, amount, purpose, dir, status, kind, due_date, day_of, repeat_every,
+                  last_paid, created_at, updated_at, deleted
              FROM plans WHERE user_id = ? AND server_at > ?`, [userId, since]),
     one(`SELECT currency, weight_kg, sleep_min, steps_json, ai_cache_json, tracks_json,
                 timer_start, timer_cat, timer_activity, display_name, updated_at, server_at
@@ -146,6 +166,8 @@ export async function changesSince(userId, since) {
       // Sent only when there is one, like offBudget and project above.
       blocked: r.blocked || undefined,
       category: r.category || undefined,
+      // The day it is planned for, absent when it is a note.
+      date: r.plan_date || undefined,
       createdAt: Number(r.created_at),
       updatedAt: Number(r.updated_at), deleted: !!r.deleted
     })),
@@ -155,6 +177,14 @@ export async function changesSince(userId, since) {
       purpose: r.purpose || undefined,
       dir: r.dir === 'in' ? 'in' : 'out',
       status: r.status || 'planned',
+      /* Which planner list it is in. Always sent, unlike the rest: an absent
+         kind on an older client's row would be read as a note and quietly
+         disappear from the list it belongs to. */
+      kind: PLAN_KINDS.includes(r.kind) ? r.kind : 'due',
+      due: r.due_date || undefined,
+      day: r.day_of == null ? undefined : Number(r.day_of),
+      every: r.repeat_every || undefined,
+      lastPaid: r.last_paid || undefined,
       createdAt: Number(r.created_at),
       updatedAt: Number(r.updated_at), deleted: !!r.deleted
     })),
@@ -222,18 +252,20 @@ const UPSERT_MONEY = `
     updated_at = GREATEST(updated_at, VALUES(updated_at))`;
 
 const UPSERT_TODO = `
-  INSERT INTO todos (user_id, id, body, status, blocked, category, created_at, updated_at, server_at, deleted)
-  VALUES (?,?,?,?,?,?,?,?,?,?)
+  INSERT INTO todos (user_id, id, body, status, blocked, category, plan_date, created_at, updated_at, server_at, deleted)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?)
   ON DUPLICATE KEY UPDATE
-    ${['body', 'status', 'blocked', 'category', 'created_at', 'deleted'].map(guard).join(',\n    ')},
+    ${['body', 'status', 'blocked', 'category', 'plan_date', 'created_at', 'deleted'].map(guard).join(',\n    ')},
     server_at = VALUES(server_at),
     updated_at = GREATEST(updated_at, VALUES(updated_at))`;
 
 const UPSERT_PLAN = `
-  INSERT INTO plans (user_id, id, body, amount, purpose, dir, status, created_at, updated_at, server_at, deleted)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?)
+  INSERT INTO plans (user_id, id, body, amount, purpose, dir, status, kind, due_date, day_of,
+                     repeat_every, last_paid, created_at, updated_at, server_at, deleted)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   ON DUPLICATE KEY UPDATE
-    ${['body', 'amount', 'purpose', 'dir', 'status', 'created_at', 'deleted'].map(guard).join(',\n    ')},
+    ${['body', 'amount', 'purpose', 'dir', 'status', 'kind', 'due_date', 'day_of',
+    'repeat_every', 'last_paid', 'created_at', 'deleted'].map(guard).join(',\n    ')},
     server_at = VALUES(server_at),
     updated_at = GREATEST(updated_at, VALUES(updated_at))`;
 
@@ -315,7 +347,7 @@ export async function applyChanges(userId, changes) {
     const at = `todos[${i}]`;
     const id = str(t.id, `${at}.id`, 64);
     const when = stamp(t.updatedAt, `${at}.updatedAt`);
-    if (t.deleted) return [userId, id, '', 'pending', null, null, 0, when, stampedAt, 1];
+    if (t.deleted) return [userId, id, '', 'pending', null, null, null, 0, when, stampedAt, 1];
     const status = str(t.status ?? 'pending', `${at}.status`, 16);
     if (!TODO_STATUSES.includes(status)) fail(`${at}.status must be one of ${TODO_STATUSES.join(', ')}`);
     const blocked = t.blocked == null || t.blocked === ''
@@ -324,7 +356,7 @@ export async function applyChanges(userId, changes) {
       ? null : str(t.category, `${at}.category`, 60);
     return [userId, id,
       str(t.text ?? '', `${at}.text`, 500, { allowEmpty: true }),
-      status, blocked, category,
+      status, blocked, category, maybeDate(t.date, `${at}.date`),
       stamp(t.createdAt, `${at}.createdAt`),
       when, stampedAt, 0];
   });
@@ -336,17 +368,35 @@ export async function applyChanges(userId, changes) {
     const at = `plans[${i}]`;
     const id = str(t.id, `${at}.id`, 64);
     const when = stamp(t.updatedAt, `${at}.updatedAt`);
-    if (t.deleted) return [userId, id, '', 0, null, 'out', 'planned', 0, when, stampedAt, 1];
+    if (t.deleted) {
+      return [userId, id, '', 0, null, 'out', 'planned', 'due', null, null, null, null,
+        0, when, stampedAt, 1];
+    }
     const status = str(t.status ?? 'planned', `${at}.status`, 16);
     if (!PLAN_STATUSES.includes(status)) fail(`${at}.status must be one of ${PLAN_STATUSES.join(', ')}`);
     const dir = str(t.dir ?? 'out', `${at}.dir`, 3);
     if (!PLAN_DIRS.includes(dir)) fail(`${at}.dir must be one of ${PLAN_DIRS.join(', ')}`);
     const purpose = t.purpose == null || t.purpose === ''
       ? null : str(t.purpose, `${at}.purpose`, 60);
+    /* A row sent by a client that predates the planner carries no kind, and it
+       is a due — the same answer the column's default gives the rows already
+       in the table, so an old device and an old row are read the same way. */
+    const kind = str(t.kind ?? 'due', `${at}.kind`, 8);
+    if (!PLAN_KINDS.includes(kind)) fail(`${at}.kind must be one of ${PLAN_KINDS.join(', ')}`);
+    const every = t.every == null || t.every === '' ? null : str(t.every, `${at}.every`, 8);
+    if (every && !PLAN_REPEATS.includes(every)) {
+      fail(`${at}.every must be one of ${PLAN_REPEATS.join(', ')}`);
+    }
+    /* Checked as a day of the month rather than as a day of a particular
+       month: 31 is a legal answer, and which months it falls short in is the
+       app's business when it works out the next date. */
+    const day = t.day == null || t.day === '' ? null : int(t.day, `${at}.day`, 1, 31);
     return [userId, id,
       str(t.text ?? '', `${at}.text`, 500, { allowEmpty: true }),
       cash(t.amount ?? 0, `${at}.amount`, 1e12),
-      purpose, dir, status,
+      purpose, dir, status, kind,
+      maybeDate(t.due, `${at}.due`), day, every,
+      maybeDate(t.lastPaid, `${at}.lastPaid`),
       stamp(t.createdAt, `${at}.createdAt`),
       when, stampedAt, 0];
   });

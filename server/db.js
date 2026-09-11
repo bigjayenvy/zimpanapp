@@ -385,6 +385,32 @@ async function alterExisting() {
     if (t.length) await pool.query("ALTER TABLE plans ADD COLUMN dir VARCHAR(3) NOT NULL DEFAULT 'out' AFTER purpose");
   }
 
+  /* The planner's own columns, added when the two pads became planners.
+
+     One loop rather than a block each, because every one of them is the same
+     migration: a nullable column on a table an older install already has, with
+     a default that says what every row already in it means. `kind` is the only
+     one that is NOT NULL, and its default is the answer for those rows — a
+     line written before the planner existed is a due. */
+  const ADDED = [
+    ['todos', 'plan_date', 'CHAR(10) NULL AFTER category'],
+    ['plans', 'kind', "VARCHAR(8) NOT NULL DEFAULT 'due' AFTER status"],
+    ['plans', 'due_date', 'CHAR(10) NULL AFTER kind'],
+    ['plans', 'day_of', 'TINYINT UNSIGNED NULL AFTER due_date'],
+    ['plans', 'repeat_every', 'VARCHAR(8) NULL AFTER day_of'],
+    ['plans', 'last_paid', 'CHAR(10) NULL AFTER repeat_every']
+  ];
+  for (const [table, column, spec] of ADDED) {
+    const [c] = await pool.query(
+      'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+      [CONFIG.database, table, column]);
+    if (c.length) continue;
+    const [t] = await pool.query(
+      'SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?',
+      [CONFIG.database, table]);
+    if (t.length) await pool.query(`ALTER TABLE ${table} ADD COLUMN ${column} ${spec}`);
+  }
+
   for (const table of ['entries', 'money_entries']) {
     const [c] = await pool.query(
       'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',

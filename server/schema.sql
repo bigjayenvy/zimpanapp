@@ -211,6 +211,11 @@ CREATE TABLE IF NOT EXISTS todos (
   -- while unfiled, which most notes are: a category is worth offering and not
   -- worth insisting on.
   category   VARCHAR(60)  NULL,
+  -- The day this is planned for. Null is the ordinary case and is what makes a
+  -- row a note rather than a plan: the planner splits on this one column, so
+  -- writing a date moves a note into the schedule and clearing it moves it
+  -- back, with nothing else to keep in step.
+  plan_date  CHAR(10)     NULL,
   created_at BIGINT       NOT NULL,
   updated_at BIGINT       NOT NULL,
   server_at  BIGINT       NOT NULL DEFAULT 0,
@@ -245,6 +250,23 @@ CREATE TABLE IF NOT EXISTS plans (
   -- 'in' is money you are expecting rather than money you owe.
   dir        VARCHAR(3)   NOT NULL DEFAULT 'out',
   status     VARCHAR(16)  NOT NULL DEFAULT 'planned',
+  -- Which of the planner's three lists this line belongs to. 'due' is the
+  -- default because it is what every row written before this column existed
+  -- was: a bill with a figure on it and no schedule of its own.
+  kind       VARCHAR(8)   NOT NULL DEFAULT 'due',
+  -- The next date this is expected. Rolled forward by the app when a repeating
+  -- line is logged, so it always names the next one rather than the last.
+  due_date   CHAR(10)     NULL,
+  -- The day of the month a monthly line is meant to land on, kept beside
+  -- due_date rather than read out of it. A subscription on the 31st falls back
+  -- to the 28th in February, and without this it would stay on the 28th for
+  -- good.
+  day_of     TINYINT UNSIGNED NULL,
+  -- 'month', 'year', or null for a one-off. Subscriptions are always monthly.
+  repeat_every VARCHAR(8) NULL,
+  -- When money last actually moved for this line, so a repeating one can say
+  -- so without the ledger having to be searched for it.
+  last_paid  CHAR(10)     NULL,
   created_at BIGINT       NOT NULL,
   updated_at BIGINT       NOT NULL,
   server_at  BIGINT       NOT NULL DEFAULT 0,
