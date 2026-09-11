@@ -1810,14 +1810,15 @@ async function syncNow() {
     state.syncing = false;
     save();
     setNet('synced', '');
-    render();
+    // Nothing here was asked for now, so it waits for the field. See renderLater().
+    renderLater();
   } catch (err) {
     state.syncing = false;
     if (err.status === 401) {
       // Session expired or revoked elsewhere. The local copy is untouched.
       state.auth = null;
       setNet('idle', '');
-      render();
+      renderLater();
       return;
     }
     /* A 4xx means the server understood us and refused. Retrying the same
@@ -1835,7 +1836,7 @@ async function syncNow() {
       state.netErrorRow = null;
       setNet('paused', '');
       queueSync(60000);
-      render();
+      renderLater();
       return;
     }
     if (err.status >= 500) {
@@ -1844,7 +1845,7 @@ async function syncNow() {
       state.netErrorRow = null;
       setNet('error', '');
       await pullOnly();
-      render();
+      renderLater();
       return;
     }
     if (err.status >= 400 && err.status < 500) {
@@ -1856,7 +1857,7 @@ async function syncNow() {
       state.netErrorRow = at ? { kind: at[1], index: Number(at[2]) } : null;
       setNet('error', '');
       await pullOnly();
-      render();
+      renderLater();
       return;
     }
     setNet('offline', '');
@@ -4082,22 +4083,22 @@ function options(names, selected, extra) {
 
 /* ── editing a logged time ──
 
-   Two native time fields used to sit on every entry card. They read back
-   fine, but changing one means typing into it, and nothing in this app takes
-   the keyboard unless the user asked for it. A <select> asks for nothing: it
-   opens the platform's own picker, spins a wheel on a phone, and matches the
-   category control already sitting on the card.
+   Hour and minute are typed; AM or PM is picked. Three small controls rather
+   than one native time field, which is what this started as: a time field
+   shows a different arrangement in every browser, and the one on a phone
+   cannot be reached at all without leaving the row.
 
-   Three of them rather than one. A single list of every five-minute mark in
-   the day is 288 options, and a day holding fifteen entries then ships a
-   third of a megabyte of markup that costs about 400ms to parse and lay out
-   before the log appears. Split into hour, minute and meridiem it is 26
-   options — the whole card renders faster than the two fields it replaces.
+   They were three dropdowns for a while, minutes in five-minute steps, on the
+   principle that nothing here should raise a keyboard. That principle costs
+   too much for the minutes: a stopwatch stops at 41 past, an hour ends at
+   quarter past seven, and reaching either through a list of twelve steps that
+   does not contain it is worse than typing two digits. So the two numeric
+   halves are fields and the meridiem — which is not a number and has exactly
+   two answers — stays a list.
 
-   Five-minute steps, plus whatever odd minute the row already holds. A timer
-   stopped at 2:03 keeps its 03 rather than being quietly rounded to the
-   nearest step the moment its card is drawn. */
-const TIME_STEPS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
+   inputmode="numeric" keeps it as close to the old bargain as it can be: a
+   phone raises its keypad rather than a full keyboard, and there are only ever
+   two characters to type. */
 
 /* Each select owns one part of the number and leaves the rest of it alone.
    Kept apart from the markup and from the DOM so it can be reasoned about —
@@ -4105,17 +4106,21 @@ const TIME_STEPS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
 function setTimePart(mins, part, value) {
   const cur = Number(mins) || 0;
   const h = Math.floor(cur / 60), m = cur % 60;
-  if (part === 'm') {
-    const n = Number(value);
-    return h * 60 + (Number.isFinite(n) ? Math.min(59, Math.max(0, n)) : m);
-  }
   if (part === 'ap') {
     const pm = value === 'PM';
     if (pm === (h >= 12)) return cur;
     return (pm ? h + 12 : h - 12) * 60 + m;
   }
-  const n = Number(value);
-  const h12 = Number.isFinite(n) && n >= 1 && n <= 12 ? n : (h % 12 === 0 ? 12 : h % 12);
+  /* Digits only, and an empty field is not a zero. Number('') is 0, which
+     would have read a cleared minute box as "on the hour" — a field being
+     cleared on the way to typing something else is the commonest thing that
+     happens in one, and it must not be a value. */
+  const digits = String(value == null ? '' : value).replace(/\D/g, '');
+  if (!digits) return cur;
+  const n = Number(digits);
+  if (part === 'm') return h * 60 + Math.min(59, n);
+  // Out of range keeps the hour it had rather than guessing which end was meant.
+  const h12 = n >= 1 && n <= 12 ? n : (h % 12 === 0 ? 12 : h % 12);
   return ((h12 % 12) + (h >= 12 ? 12 : 0)) * 60 + m;
 }
 
@@ -4123,15 +4128,23 @@ function timePick(id, key, mins) {
   const h = Math.floor(mins / 60), m = mins % 60;
   const h12 = h % 12 === 0 ? 12 : h % 12;
   const ap = h >= 12 ? 'PM' : 'AM';
-  const steps = TIME_STEPS.includes(m) ? TIME_STEPS : TIME_STEPS.concat([m]).sort((a, b) => a - b);
-  const opt = (v, label, on) => `<option value="${v}"${on ? ' selected' : ''}>${label}</option>`;
-  const part = (kind, body, label) => `<select class="time-part${kind === 'ap' ? ' is-ap' : ''}" data-k="t-${esc(id)}-${key}-${kind}" data-change="entry-${key}-${kind}" data-id="${esc(id)}" aria-label="${label}">${body}</select>`;
+  /* inputmode="numeric" rather than type="number": the spinner arrows are
+     noise at this size, a number field lets "1e4" be typed into it, and the
+     phone keypad is what inputmode asks for either way. Two characters is all
+     either half can hold, so maxlength does the first round of validation and
+     setTimePart does the rest. */
+  const num = (kind, value, label, hint) => `<input class="time-part is-num is-${kind}" type="text"
+    inputmode="numeric" maxlength="2" data-k="t-${esc(id)}-${key}-${kind}"
+    data-change="entry-${key}-${kind}" data-time-pick data-id="${esc(id)}"
+    value="${esc(value)}" aria-label="${label}" title="${hint}">`;
   return `<span class="time-pick">`
-    + part('h', Array.from({ length: 12 }, (_, i) => opt(i + 1, i + 1, i + 1 === h12)).join(''), 'Hour')
+    + num('h', String(h12), 'Hour', 'Hour, 1 to 12')
     + `<span class="time-sep">:</span>`
-    + part('m', steps.map((v) => opt(v, pad(v), v === m)).join(''), 'Minute')
-    + part('ap', ['AM', 'PM'].map((v) => opt(v, v, v === ap)).join(''), 'AM or PM')
-    + `</span>`;
+    + num('m', pad(m), 'Minute', 'Minutes, 00 to 59')
+    + `<select class="time-part is-ap" data-k="t-${esc(id)}-${key}-ap"
+        data-change="entry-${key}-ap" data-id="${esc(id)}" aria-label="AM or PM">`
+    + ['AM', 'PM'].map((v) => `<option value="${v}"${v === ap ? ' selected' : ''}>${v}</option>`).join('')
+    + `</select></span>`;
 }
 
 /* ── filing a logged row under something that does not exist yet ──
@@ -5915,7 +5928,7 @@ const TEAM_OFFERED = TEAM_PLANS.filter(([key]) => !TEAM_RETIRED.has(key));
 const TEAM_POPULAR = 'team20';
 
 const paypalForm = (buttonId, label, extraClass) => `
-  <form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_blank" rel="noopener noreferrer" style="margin:0;">
+  <form class="pp-form" action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_blank" rel="noopener noreferrer">
     <input type="hidden" name="cmd" value="_s-xclick">
     <input type="hidden" name="hosted_button_id" value="${esc(buttonId)}">
     <input type="hidden" name="currency_code" value="USD">
@@ -10665,7 +10678,11 @@ function editEntryTime(el, key, part) {
   const row = state.entries.find((e) => e.id === el.dataset.id);
   if (!row) return;
   const next = setTimePart(row[key], part, el.value);
-  if (next === row[key]) return;
+  /* A repaint even when nothing moved, because these are typed now: "7" has to
+     come back as 07, "99" has to come back as whatever it was clamped to, and
+     a cleared box has to show the time the row still holds. Without it the
+     field keeps whatever was typed while the entry says something else. */
+  if (next === row[key]) { scheduleRender(); return; }
   updateEntry(el.dataset.id, { [key]: next });
 }
 
@@ -11344,7 +11361,8 @@ async function loadTeamLive(quiet) {
   } catch (err) {
     if (!quiet) state.teamError = err.message || 'Could not read who is working.';
   }
-  render();
+  // Polled every half minute behind whoever is reading it. See renderLater().
+  renderLater();
 }
 
 /* One interval, started when the Members tab is showing and stopped the moment
@@ -16260,6 +16278,81 @@ function mDragWire() {
   window.addEventListener('pointercancel', end);
 }
 
+/* ── not while somebody is typing ──
+
+   A sync that lands, a team poll that answers, a day that turns: each has
+   something new to show and none of them was asked for at that moment.
+   render() replaces the whole tree, so one arriving mid-sentence takes the
+   caret out of the field, shuts an open dropdown and puts a half-typed value
+   back to whatever state last agreed with. At a minute apart, that is a
+   keystroke lost every minute for anybody filling a row in slowly.
+
+   captureFocus/restoreFocus covers part of it and cannot cover the rest. A
+   select with its list open has no restorable state — the list is the
+   browser's, not the page's. A composition in an IME is lost. A field that
+   only commits on change reverts to the value behind it, because that value is
+   what the new markup is built from.
+
+   So a background repaint waits. Only the paint waits: whatever arrived is
+   already in state, and it goes on screen the moment the field is left.
+
+   The last-touched clock is what stops this becoming a way to freeze the
+   screen. A caret left in a field while somebody reads the page is not
+   somebody typing, and after a quiet spell the repaint goes ahead. */
+const EDIT_QUIET_MS = 20000;
+let pendingPaint = false;
+let lastEditAt = 0;
+
+function busyEditing() {
+  const el = document.activeElement;
+  if (!el || !root.contains(el)) return false;
+  const takes = /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable;
+  return takes && Date.now() - lastEditAt < EDIT_QUIET_MS;
+}
+
+/* What every timer, poll and arriving sync calls instead of render(). */
+function renderLater() {
+  if (busyEditing()) { pendingPaint = true; return; }
+  pendingPaint = false;
+  render();
+}
+
+/* Two digits, replaced rather than appended. Both halves are full at all
+   times, and maxlength would otherwise make a field somebody has tabbed into
+   refuse every key. */
+root.addEventListener('focusin', (ev) => {
+  const el = ev.target;
+  if (el && el.dataset && el.dataset.timePick !== undefined) {
+    // After the browser has placed its own caret.
+    setTimeout(() => { try { el.select(); } catch (err) { /* not selectable */ } }, 0);
+  }
+});
+
+/* Opening a field counts as touching it, so a dropdown that has just been
+   opened is not repainted out from under the hand reaching for it. */
+['focusin', 'input', 'keydown', 'pointerdown'].forEach((kind) => {
+  root.addEventListener(kind, (ev) => {
+    const el = ev.target;
+    if (el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable)) lastEditAt = Date.now();
+  }, true);
+});
+
+/* Flushed when the field is left. focusout rather than blur, which does not
+   bubble — this listens at the root for whatever had the caret.
+
+   A turn later, because moving from one field straight to the next passes
+   through a moment with nothing focused, and repainting in that gap would take
+   out the field being moved into. */
+root.addEventListener('focusout', () => {
+  if (!pendingPaint) return;
+  setTimeout(() => {
+    if (pendingPaint && !busyEditing()) { pendingPaint = false; render(); }
+  }, 0);
+});
+
+/* And once the quiet spell is up, whether or not the field was ever left. */
+setInterval(() => { if (pendingPaint && !busyEditing()) { pendingPaint = false; render(); } }, 2000);
+
 /* The pill row scrolls inside itself once there are more windows than fit, so
    the one you are on can be off the end of it — which on a narrow screen meant
    picking All Time or Custom and then seeing seven pills none of which looked
@@ -17782,7 +17875,9 @@ async function shareCard() {
 function tickLive() {
   /* Before anything reads the date: past midnight the whole view is about the
      wrong day, and a repaint of stale text would only make it look current. */
-  if (rollDay()) { render(); return; }
+  /* The day turning is the one repaint nobody asked for that cannot be
+     skipped — but it can still wait for the field. */
+  if (rollDay()) { renderLater(); return; }
 
   const c = elapsedClock();
   root.querySelectorAll('[data-clock]').forEach((el) => { el.textContent = c; });

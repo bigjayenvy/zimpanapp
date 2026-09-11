@@ -2243,8 +2243,15 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .plan-flag svg, .tm-plan-flag svg { width: 12px; height: 12px; display: block; }
   .plan { position: relative; }
   .tm-plan { position: relative; }
-  .tm-plan.is-popular { border-color: color-mix(in srgb, var(--color-accent) 55%, transparent); margin-top: 8px; padding-top: 18px; }
-  .tm-plan-flag { left: 14px; transform: none; font-size: 9.5px; padding: 3px 9px; }
+  /* No margin on the flagged one: in a grid that drops it below its neighbour
+     instead of lifting it. The room for the flag comes out of its own padding,
+     which leaves all four boxes on the same line. */
+  /* Room for the flag above the name rather than across it. */
+  .tm-plan.is-popular {
+    border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+    padding-top: 34px;
+  }
+  .tm-plan-flag { left: 14px; top: 9px; transform: none; font-size: 9.5px; padding: 3px 9px; }
 
   /* Nothing lifts on a phone, where the cards are already stacked and a raised
      one only breaks the rhythm of the column. */
@@ -2499,10 +2506,29 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .tm-quote code { display: block; margin-top: 4px; word-break: break-all; font-size: 11.5px; font-weight: 600; color: var(--color-text); }
 
-  .tm-plans { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+  /* Four plans in four boxes rather than four rows. As a column they ran past
+     the bottom of the panel and the last one had to be scrolled to, which is a
+     poor way to show somebody a price list — the comparison is the point, and
+     a comparison you cannot see at once is not one. */
+  .tm-plans {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px; margin-top: 12px; align-items: stretch;
+  }
   .tm-plan {
-    padding: 12px 14px; border-radius: 14px; text-align: left;
+    display: flex; flex-direction: column;
+    padding: 12px 14px; border-radius: 14px; text-align: left; min-width: 0;
     border: 1px solid var(--color-divider); background: var(--color-surface);
+  }
+  /* Pushed to the bottom of its box, so four boxes of different heights still
+     line their buttons up. The subscribe button is inside PayPal's form, so it
+     is the form that has to be pushed down — the button alone would only move
+     within a form already sitting where the text left it. */
+  /* The form carried its own inline margin:0, which no stylesheet rule can
+     outrank — so the class that needs to move it lives on the form itself. */
+  .pp-form { margin: 0; }
+  .tm-plan .pp-form, .tm-plan-on { margin-top: auto; }
+  @media (max-width: 520px) {
+    .tm-plans { grid-template-columns: minmax(0, 1fr); }
   }
   .tm-plan.is-on { border-color: color-mix(in srgb, #16a394 55%, transparent); }
   .tm-plan-head { display: flex; align-items: baseline; gap: 10px; }
@@ -2781,6 +2807,14 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     font: inherit; font-size: 14px; color: inherit;
     text-align: center; cursor: pointer;
   }
+  /* The two typed halves. Sized to the two characters they hold rather than
+     left to the browser's idea of a text field, which is twenty — and each
+     aligned towards the colon, so a one-digit hour reads as 8:05 rather than
+     sitting centred with a gap in front of the separator. */
+  .time-part.is-num { width: 2.1ch; cursor: text; caret-color: var(--color-accent); }
+  .time-part.is-h { text-align: right; }
+  .time-part.is-m { text-align: left; }
+  .time-part.is-num::selection { background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
   .time-part:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: 4px; }
   .time-part.is-ap { margin-left: 5px; font-size: 11.5px; letter-spacing: .04em; color: var(--color-neutral-700); }
   .time-sep { color: var(--color-neutral-500); }
