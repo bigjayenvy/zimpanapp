@@ -5046,12 +5046,25 @@ const PLAN_STATUSES = [
      either way, so the direction changes what a line says and never what the
      server stores. Planned is the pad's own teal now rather than the app's
      violet — the shell around it is the money tracker's green, and a violet
-     chip in it read as a visitor from the other tracker. */
+     chip in it read as a visitor from the other tracker.
+
+     `subLabel` is the third of those vocabularies, and it exists because a
+     standing charge is not in any of the states a bill passes through: it is
+     running, or it is paused, or it is over. Three words for three states the
+     server already had, rather than a second column saying the same thing in
+     parallel and getting out of step with this one.
+
+     `subOnly` keeps On Pause out of a due's picker. A one-off bill cannot be
+     paused — there is nothing recurring to stop — and an option that means
+     nothing where it is offered is an option somebody will pick. */
   { key: 'due', label: 'Due now', inLabel: 'Due in', tone: '#8a2f4a', tint: '#fdecf1', rank: 0, owed: true },
-  { key: 'planned', label: 'Planned', tone: '#10756c', tint: '#e6f7f4', rank: 1, owed: true },
-  { key: 'paid', label: 'Paid', inLabel: 'Received', tone: '#0e7a5c', tint: '#e3f5ed', rank: 2, owed: false },
-  { key: 'dropped', label: 'Dropped', inLabel: 'Dropped', tone: '#6b6580', tint: '#efedf5', rank: 3, owed: false }
+  { key: 'planned', label: 'Planned', subLabel: 'Active', tone: '#10756c', tint: '#e6f7f4', rank: 1, owed: true },
+  { key: 'paused', label: 'On Pause', subLabel: 'On Pause', tone: '#8a5a0c', tint: '#fdf1de', rank: 2, owed: false, subOnly: true },
+  { key: 'paid', label: 'Paid', inLabel: 'Received', tone: '#0e7a5c', tint: '#e3f5ed', rank: 3, owed: false },
+  { key: 'dropped', label: 'Dropped', subLabel: 'Cancelled', inLabel: 'Dropped', tone: '#6b6580', tint: '#efedf5', rank: 4, owed: false }
 ];
+/* The three a subscription can be in, in the order it moves through them. */
+const SUB_STATES = PLAN_STATUSES.filter((o) => o.subLabel);
 // What a status is called on a line going that way.
 const planStatusLabel = (st, dir) => (dir === 'in' && st.inLabel ? st.inLabel : st.label);
 const planDir = (row) => (row && row.dir === 'in' ? 'in' : 'out');
@@ -5424,13 +5437,15 @@ function planLine(row) {
   const armed = state.planArm === row.id;
   const cents = mCents(row.amount);
   const dir = planDir(row);
-  const cancelled = kind === 'sub' && !planOwed(row);
+  /* Paused and cancelled are both dormant: nothing is owed, nothing is due,
+     and the card says so by going quiet rather than by each state inventing
+     its own way of looking inactive. The colour still tells them apart — it
+     comes off the status table, like every other line's. */
+  const dormant = kind === 'sub' && !planOwed(row);
   const near = row.due && planOwed(row) ? dayNear(row.due) : null;
-  const tone = cancelled ? '#6b6580' : st.tone;
-  const tint = cancelled ? '#efedf5' : st.tint;
   const noun = planKindOf(kind).one;
   return `
-  <div class="pl-card${cancelled ? ' is-off' : ''}" style="--tone:${tone};--tint:${tint};">
+  <div class="pl-card${dormant ? ' is-off' : ''}" style="--tone:${st.tone};--tint:${st.tint};">
     ${plHead(row.id, 'plan', row.text,
     kind === 'sub' ? 'What are you subscribed to?' : dir === 'in' ? 'What is coming in?' : 'What is coming out?',
     noun.charAt(0).toUpperCase() + noun.slice(1), near)}
@@ -5453,13 +5468,13 @@ function planLine(row) {
     <div class="pl-foot">
       ${kind === 'sub'
     ? plField('Subscription', `
-        <button class="pl-status is-chip${cancelled ? '' : ' is-on'}" data-act="plan-active"
-          data-id="${esc(row.id)}" aria-pressed="${!cancelled}">${cancelled ? 'Cancelled' : 'Active'}</button>`,
-    { plain: true })
+        <select class="pl-status" data-change="plan-sub" data-id="${esc(row.id)}" aria-label="Subscription">
+          ${SUB_STATES.map((o) => `<option value="${o.key}"${o.key === st.key ? ' selected' : ''}>${esc(o.subLabel)}</option>`).join('')}
+        </select>`, { plain: true })
     : kind === 'due'
       ? plField('Status', `
         <select class="pl-status" data-change="plan-status" data-id="${esc(row.id)}" aria-label="Status">
-          ${PLAN_STATUSES.map((o) => `<option value="${o.key}"${o.key === st.key ? ' selected' : ''}>${esc(planStatusLabel(o, dir))}</option>`).join('')}
+          ${PLAN_STATUSES.filter((o) => !o.subOnly).map((o) => `<option value="${o.key}"${o.key === st.key ? ' selected' : ''}>${esc(planStatusLabel(o, dir))}</option>`).join('')}
         </select>`, { plain: true })
       : `<span class="pl-hint">No date, so no reminder</span>`}
       <button class="pl-del${armed ? ' is-armed' : ''}" data-act="plan-del" data-id="${esc(row.id)}"
@@ -13114,18 +13129,6 @@ const ACTIONS = {
     save(); queueSync(0); render();
   },
 
-  /* Cancelled and active, on a subscription. Cancelled is 'dropped', the
-     status the pad already had for a line you decided against — so a cancelled
-     subscription stops counting towards what is owed and stops notifying by
-     the same rule everything else does, rather than by one of its own. */
-  'plan-active': (el) => {
-    const row = findRow('plans', String(el.dataset.id || ''));
-    if (!row) return;
-    row.status = planOwed(row) ? 'dropped' : 'planned';
-    touch('plans', row);
-    save(); queueSync(0); render();
-  },
-
   /* Which way this line's money goes. Changing it does not touch the figure —
      an amount is a size, not a direction — so a line typed the wrong way round
      is one tap from right rather than something to retype. */
@@ -14095,6 +14098,24 @@ const CHANGES = {
     if (planEvery(row) === want) return;
     if (want) row.every = want; else delete row.every;
     touch('plans', row);
+    save(); queueSync(0); render();
+  },
+
+  /* Running, paused, or over. All three are ordinary plan statuses, so a
+     paused subscription stops counting towards what is owed and stops
+     notifying by the same rule everything else follows — planOwed — rather
+     than by one of its own. */
+  'plan-sub': (el) => {
+    const row = findRow('plans', el.dataset.id);
+    const want = String(el.value || '');
+    if (!row || row.status === want || !SUB_STATES.some((o) => o.key === want)) return;
+    row.status = want;
+    /* Nothing dormant is due. Leaving the seen-today mark behind would silence
+       the first reminder after it starts again, which is the one that matters
+       most — it is the charge somebody paused it to avoid forgetting. */
+    if (!planStatus(want).owed) delete state.planSeen[row.id];
+    touch('plans', row);
+    state.planArm = '';
     save(); queueSync(0); render();
   },
 

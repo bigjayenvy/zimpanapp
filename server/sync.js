@@ -91,8 +91,11 @@ const SETTLE_MS = 5000;
 export const watermark = () => Math.max(0, now() - SETTLE_MS);
 // Kept in step with TODO_STATUSES in app.js, which owns the labels and colours.
 export const TODO_STATUSES = ['pending', 'doing', 'review', 'done', 'stuck'];
-// The money pad's own set, kept in step with PLAN_STATUSES in app.js.
-export const PLAN_STATUSES = ['planned', 'due', 'paid', 'dropped'];
+/* The money planner's own set, kept in step with PLAN_STATUSES in app.js.
+   'paused' is a subscription that has been stopped without being given up; the
+   client only offers it on one, but the server takes it on any row rather than
+   knowing which kind a status belongs to. */
+export const PLAN_STATUSES = ['planned', 'due', 'paused', 'paid', 'dropped'];
 // Which way a planned line's money goes. Same two words the ledger uses.
 export const PLAN_DIRS = ['in', 'out'];
 /* The planner's three lists, kept in step with PLAN_KINDS in app.js. A
