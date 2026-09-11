@@ -2523,10 +2523,30 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      line their buttons up. The subscribe button is inside PayPal's form, so it
      is the form that has to be pushed down — the button alone would only move
      within a form already sitting where the text left it. */
-  /* The form carried its own inline margin:0, which no stylesheet rule can
-     outrank — so the class that needs to move it lives on the form itself. */
-  .pp-form { margin: 0; }
-  .tm-plan .pp-form, .tm-plan-on { margin-top: auto; }
+  /* Where PayPal's script draws its button. Given a height before anything is
+     in it, so four cards do not jump as the script lands. */
+  .pp-slot { margin-top: auto; min-height: 46px; }
+  .tm-plan-on { margin-top: auto; }
+  /* Their iframe sets its own width from the slot, and a slot that has not
+     been drawn into yet should not look like a gap somebody left. */
+  .pp-slot:empty::after {
+    content: 'Loading…'; display: block; text-align: center;
+    font-size: 12px; color: var(--color-neutral-500); line-height: 46px;
+  }
+
+  /* What came back, kept in front of whoever paid. The reference is the one
+     thing worth writing down, so it is set in a face you can copy from. */
+  .tm-paid {
+    display: flex; flex-direction: column; gap: 4px;
+    margin-top: 14px; padding: 12px 14px; border-radius: 12px;
+    background: color-mix(in srgb, #16a394 10%, transparent);
+    font-size: 13px; line-height: 1.5; color: var(--color-text); text-align: left;
+  }
+  .tm-paid code {
+    font-size: 12.5px; font-weight: 600; word-break: break-all;
+    background: color-mix(in srgb, var(--color-neutral-900) 7%, transparent);
+    padding: 1px 5px; border-radius: 5px;
+  }
   @media (max-width: 520px) {
     .tm-plans { grid-template-columns: minmax(0, 1fr); }
   }

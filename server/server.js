@@ -34,7 +34,7 @@ import {
   TeamError, membershipFor, createTeam, teamOverview, inviteMember, revokeInvite,
   acceptInvite, setMemberRole, removeMember, saveProject, deleteProject,
   memberEntries, editMemberEntry, teamDashboard, teamNow, setTeamPlan, resendInvite, PLANS,
-  teamHoursExport, teamAudit
+  teamHoursExport, teamAudit, recordSubscription, teamSubscriptions
 } from './teams.js';
 
 const ROOT = join(HERE, '..');
@@ -494,6 +494,13 @@ app.post('/api/sync', requireUser, wrap(async (req, res) => {
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 
+/* PayPal's own client id, which is public by design: it is in the URL of the
+   script tag on every page that takes a payment. It is read from the
+   environment anyway so a sandbox app can be pointed at without a deploy, with
+   the live one as the default so an install that sets nothing still sells. */
+const PAYPAL_CLIENT_ID = (process.env.PAYPAL_CLIENT_ID
+  || 'AX2QT6OPgpUEtMc3U-BG5Nk-L_7tfXJQVE-MLUiGeWK0Bsrmb_xAsQH4EfwViZ1XGWaKU2HvgpG7lWw3').trim();
+
 app.post('/api/auth/google', wrap(async (req, res) => {
   if (!GOOGLE_CLIENT_ID) return res.status(503).json({ error: 'Google sign-in is not configured on this server.' });
   const limited = rateLimit({ key: `google:${clientIp(req)}`, limit: 20, windowMs: 15 * 60 * 1000 });
@@ -779,6 +786,7 @@ app.post('/api/donate-click', requireUser, wrap(async (req, res) => {
 // button at all. Says only whether the feature exists, never the key.
 app.get('/api/config', (req, res) => res.json({
   googleClientId: GOOGLE_CLIENT_ID || null,
+  paypalClientId: PAYPAL_CLIENT_ID || null,
   aiEstimates: aiConfigured()
 }));
 
@@ -875,6 +883,17 @@ app.get('/api/team/dashboard', requireUser, team((req) =>
    can disagree about quoting. */
 app.get('/api/team/export', requireUser, team((req) =>
   teamHoursExport(req.user.id, req.query.from, req.query.to).then((rows) => ({ rows }))));
+
+/* The browser reporting a subscription PayPal has just approved, so the money
+   and the team are written down in the same place. It grants nothing — see
+   recordSubscription() — and only an owner may call it. */
+app.post('/api/team/subscription', requireUser, team((req) => {
+  const b = req.body || {};
+  return recordSubscription(req.user.id, b.subscription, b.plan);
+}));
+
+app.get('/api/team/subscriptions', requireUser, team((req) =>
+  teamSubscriptions(req.user.id).then((rows) => ({ rows }))));
 
 /* What was done to this team's records, and by whom. requireUser and nothing
    more: every member may read it, which is the point of keeping it. */

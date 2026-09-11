@@ -33,6 +33,7 @@ import { query, one, now } from './db.js';
 export const AUDIT_ACTIONS = {
   'team.create': 'created the team',
   'team.plan': 'changed the plan',
+  'team.subscribe': 'started a subscription to',
   'member.invite': 'invited',
   'member.invite.revoke': 'revoked the invitation for',
   'member.invite.resend': 'sent the invitation again to',

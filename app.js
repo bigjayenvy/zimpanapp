@@ -628,6 +628,7 @@ const API = {
     dashboard: (from, to) => api(`/api/team/dashboard?from=${encodeURIComponent(from || '')}&to=${encodeURIComponent(to || '')}`),
     exportHours: (from, to) => api(`/api/team/export?from=${encodeURIComponent(from || '')}&to=${encodeURIComponent(to || '')}`),
     audit: (before) => api(`/api/team/audit${before ? `?before=${encodeURIComponent(before)}` : ''}`),
+    subscribed: (subscription, plan) => api('/api/team/subscription', { method: 'POST', body: { subscription, plan } }),
     /* The date is sent because the server cannot know it. It has no idea what
        day it is where the team is sitting, and a timezone guessed there would
        put a whole office's morning on yesterday. */
@@ -1110,6 +1111,13 @@ const state = {
   auth: null,
   authOpen: false,
   googleClientId: null,
+  /* PayPal's client id, and what the subscribe buttons are doing. `paySub` is
+     the subscription id PayPal handed back, held so the panel can show it
+     rather than alerting it and forgetting it. */
+  paypalClientId: null,
+  payBusy: '',
+  payError: '',
+  paySub: null,
   // 'login' | 'register' | 'forgot' | 'reset'
   authMode: 'login',
   /* 'work' when the panel was opened from the team page or an invitation, so
@@ -2122,6 +2130,7 @@ async function boot() {
       cfg = await API.config();
     }
     state.googleClientId = cfg.googleClientId || null;
+    state.paypalClientId = cfg.paypalClientId || null;
     state.aiEstimates = !!cfg.aiEstimates;
     if (state.googleClientId) loadGoogle();
   } catch (e) { /* offline, or not configured — email sign-in is unaffected */ }
@@ -5893,11 +5902,12 @@ const TEAM_FEATURES = [
    up to charge. Kept here beside the price they belong to so the two cannot
    drift; the server holds the same table, and a test compares them. */
 const TEAM_PLANS = [
-  ['team6', 'Squad', 'Squad', 6, 9, 'L2TA54N2MGAEC'],
-  ['team12', 'Team of 12', 'Squad', 12, 15, 'LWSN5Y8ETFSSJ'],
-  ['team20', 'Team of 20', 'Business', 20, 22, 'NYRHVDWH6SXN8'],
-  ['team50', 'Team of 50', 'Max', 50, 30, 'AZBJMFGCVEK98'],
-  ['unlimited', 'Unlimited', 'Unlimited', 0, 100, 'C7ZHCA5ZMUG8G']
+  ['team6', 'Squad', 'Squad', 6, 9, 'P-46M71578YP346491UNKR2VTI'],
+  // Withdrawn, so it has no plan to subscribe to. See TEAM_RETIRED.
+  ['team12', 'Team of 12', 'Squad', 12, 15, ''],
+  ['team20', 'Team of 20', 'Business', 20, 22, 'P-77E90722BA255763DNKR2XJI'],
+  ['team50', 'Team of 50', 'Max', 50, 30, 'P-15C9640083089481ANKR2YQQ'],
+  ['unlimited', 'Unlimited', 'Unlimited', 0, 100, 'P-2BK934949D7482401NKR2ZKQ']
 ];
 
 /* Plans that are no longer sold.
@@ -5915,25 +5925,108 @@ const TEAM_PLANS = [
 const TEAM_RETIRED = new Set(['team12']);
 const TEAM_OFFERED = TEAM_PLANS.filter(([key]) => !TEAM_RETIRED.has(key));
 
-/* PayPal's own hosted-button form, with their gif swapped for our button.
+/* ── subscribing ──
 
-   A hosted button is encrypted at PayPal's end, so it has to be POSTed as a
-   form — there is no link version that carries the same thing, and extra
-   variables are ignored, which is why the payment cannot carry a team id and
-   why the plan is matched to a team by hand afterwards.
+   PayPal's own button, drawn by their SDK into a slot this page leaves for it.
 
-   target="_blank" where PayPal's snippet says "_top": this app is one document
-   holding unsaved state, and navigating the whole tab away to PayPal loses
-   whatever the person was in the middle of. */
+   It has to be theirs. A subscription is started by their script, inside their
+   iframe, from a click the browser saw land on it — there is no way to press
+   it from a button of ours, and a popup opened any other way is a popup a
+   browser blocks. So the four cards carry PayPal's button rather than the
+   app's, which is the one place in this product wearing somebody else's paint.
+
+   The script is fetched once, and only when there is a billing panel to put
+   buttons in: an install with no client id, or a member who never opens
+   billing, makes no third-party request at all. Same bargain as Google's
+   script above.
+
+   vault=true&intent=subscription is what makes the SDK offer subscriptions
+   rather than one-off payments. It is a property of the whole script, so
+   everything it draws on this page is a subscription — which is all this page
+   has.
+
+   One client id for all four. The SDK can only be loaded once, and its client
+   id is in the URL, so four plans on one panel is four plans under one id. */
 const TEAM_POPULAR = 'team20';
 
-const paypalForm = (buttonId, label, extraClass) => `
-  <form class="pp-form" action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_blank" rel="noopener noreferrer">
-    <input type="hidden" name="cmd" value="_s-xclick">
-    <input type="hidden" name="hosted_button_id" value="${esc(buttonId)}">
-    <input type="hidden" name="currency_code" value="USD">
-    <button type="submit" class="btn btn-primary ${esc(extraClass || '')}">${esc(label)}</button>
-  </form>`;
+let ppState = 'idle'; // idle | loading | ready | failed
+
+function loadPayPal() {
+  if (ppState !== 'idle' || !state.paypalClientId) return;
+  ppState = 'loading';
+  const s = document.createElement('script');
+  s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(state.paypalClientId)}`
+    + '&vault=true&intent=subscription';
+  s.async = true;
+  s.onload = () => { ppState = 'ready'; mountPayPalButtons(); };
+  /* Blocked, offline, or an ad blocker taking a dislike to the domain. The
+     panel says so and keeps the reference an owner can pay against by hand,
+     rather than showing four cards with nothing under them. */
+  s.onerror = () => { ppState = 'failed'; render(); };
+  document.head.appendChild(s);
+}
+
+/* render() replaces the whole tree, so every button has to be drawn again into
+   the fresh slot — the same reason mountGoogleButton exists.
+
+   Guarded by a marker on the slot rather than by a flag up here: a slot that
+   has been painted into carries the proof itself, and a slot from the previous
+   render has been thrown away along with it. */
+function mountPayPalButtons() {
+  if (ppState !== 'ready' || !window.paypal) return;
+  root.querySelectorAll('[data-pp-plan]').forEach((slot) => {
+    if (slot.dataset.ppDrawn) return;
+    slot.dataset.ppDrawn = '1';
+    const planId = slot.dataset.ppPlan;
+    const key = slot.dataset.ppKey;
+    try {
+      window.paypal.Buttons({
+        style: { shape: 'pill', color: 'silver', layout: 'vertical', label: 'subscribe' },
+        createSubscription: (data, actions) => actions.subscription.create({ plan_id: planId }),
+        onApprove: (data) => reportSubscription(data && data.subscriptionID, key),
+        /* Cancelling is not an error and says nothing worth saying. Failing is:
+           without this the panel sits there looking as though nothing was
+           pressed. */
+        onError: () => {
+          state.payError = 'PayPal could not start that subscription. Try again, or use the reference above to pay another way.';
+          render();
+        }
+      }).render(slot);
+    } catch (err) {
+      ppState = 'failed';
+    }
+  });
+}
+
+/* The one thing that has to happen after PayPal says yes: tell the server
+   which team was on screen.
+
+   PayPal reports an email and an amount to the merchant, and neither says
+   whose team it was — which is why the panel above still asks people to quote
+   their team when they pay. This closes that by hand-off rather than by
+   asking: the id is written down against the team that was open.
+
+   It grants nothing. The server records the claim and an admin still switches
+   the plan, because a browser saying "I paid for Unlimited" is a browser
+   talking. See recordSubscription() in teams.js. */
+async function reportSubscription(subscriptionId, planKey) {
+  state.paySub = { id: subscriptionId || '', plan: planKey, saved: false };
+  state.payError = '';
+  state.payBusy = planKey;
+  render();
+  try {
+    await API.team.subscribed(subscriptionId, planKey);
+    state.paySub = { id: subscriptionId || '', plan: planKey, saved: true };
+  } catch (err) {
+    /* The subscription is live whatever this said, so the id is the thing to
+       keep in front of them — losing it here would leave somebody paying with
+       no reference to quote. */
+    state.payError = err.message || 'The subscription started, but this app could not record it.';
+  } finally {
+    state.payBusy = '';
+    render();
+  }
+}
 
 /* ── hero art ──
    The app's own surfaces, floating over the brand's ribbons. Drawn rather than
@@ -10364,6 +10457,7 @@ function render() {
     paintTeamDrawer();
     teamLiveWatch();
     teamHistoryWatch();
+    payWatch();
     return;
   }
 
@@ -10433,6 +10527,7 @@ function render() {
   paintTeamDrawer();
   teamLiveWatch();
   teamHistoryWatch();
+  payWatch();
   // The dialog exists to be typed in, so put the caret there straight away.
   const note = root.querySelector('[data-k="note-draft"]');
   if (note && document.activeElement !== note) note.focus();
@@ -11382,6 +11477,16 @@ function teamHistoryWatch() {
   }
 }
 
+/* PayPal's script is fetched when a billing panel is actually on screen, and
+   its buttons redrawn after every render that shows one. Driven from the paint
+   for the same reason the history tab is: the panel can be open before
+   anything asks for it, and a render is the only moment that knows. */
+function payWatch() {
+  if (!(state.teamOpen && state.teamTab === 'billing' && teamIsSuper())) return;
+  if (ppState === 'idle') loadPayPal();
+  else mountPayPalButtons();
+}
+
 function teamLiveWatch() {
   const wanted = !!(state.teamOpen && state.teamTab === 'people'
     && teamIsAdmin() && state.team && state.team.team);
@@ -11505,13 +11610,30 @@ function teamBillingTab() {
           <span class="tm-plan-price">$${price}<span>/mo</span></span>
         </div>
         <div class="tm-plan-seats">${seats ? `Up to ${seats} people` : 'As many people as you like'}</div>
-        ${t.plan === key
-          ? '<div class="tm-plan-on">Your plan</div>'
-          : paypalForm(button, 'Subscribe', 'tm-plan-go')}
+        ${t.plan === key ? '<div class="tm-plan-on">Your plan</div>'
+    : !button ? '<div class="tm-plan-on">No longer sold</div>'
+      /* An empty slot for PayPal's script to draw into. It cannot be filled
+         here: a script tag written through innerHTML never runs, and the
+         button has to be PayPal's own anyway. See mountPayPalButtons(). */
+      : `<div class="pp-slot" data-pp-plan="${esc(button)}" data-pp-key="${esc(key)}"></div>`}
       </div>`).join('')}
     </div>
 
-    <p class="tm-foot">Subscriptions are handled by PayPal in USD and open in a new tab. A plan is switched on by hand once the payment is matched to your team, so it can take a little while — nothing stops in the meantime except while a trial is over.</p>`;
+    ${state.paySub ? `
+    <div class="tm-paid">
+      <strong>${state.paySub.saved ? 'Subscribed.' : 'Subscription started.'}</strong>
+      <span>Your reference is <code>${esc(state.paySub.id || 'with PayPal')}</code>.
+      ${state.paySub.saved
+    ? 'It has been recorded against this team. Your plan is switched on by hand once the payment clears.'
+    : 'Keep it — this app could not record it, so quote it when you ask for the plan to be switched on.'}</span>
+    </div>` : ''}
+    ${state.payError ? `<p class="tm-err">${esc(state.payError)}</p>` : ''}
+    ${ppState === 'failed' ? `
+    <p class="tm-err">The PayPal buttons could not load. An ad blocker or a
+      network filter is the usual reason. The reference above is enough to pay
+      another way.</p>` : ''}
+
+    <p class="tm-foot">Subscriptions are handled by PayPal in USD, and the card details never reach this app. A plan is switched on by hand once the payment is matched to your team, so it can take a little while — nothing stops in the meantime except while a trial is over.</p>`;
 }
 
 /* An empty tab that says what would fill it. The icon is the tab's own, so an
@@ -16319,14 +16441,18 @@ function renderLater() {
 
 /* Two digits, replaced rather than appended. Both halves are full at all
    times, and maxlength would otherwise make a field somebody has tabbed into
-   refuse every key. */
-root.addEventListener('focusin', (ev) => {
-  const el = ev.target;
-  if (el && el.dataset && el.dataset.timePick !== undefined) {
-    // After the browser has placed its own caret.
-    setTimeout(() => { try { el.select(); } catch (err) { /* not selectable */ } }, 0);
-  }
-});
+   refuse every key.
+
+   Both events, because they arrive in an order that defeats either alone. A
+   pointer focuses the field before it places the caret, so selecting on focus
+   is undone a moment later by the click that caused it; a tab raises focus and
+   no click at all. Selecting twice costs nothing. */
+const selectTimePart = (el) => {
+  if (!el || !el.dataset || el.dataset.timePick === undefined) return;
+  try { el.select(); } catch (err) { /* not selectable */ }
+};
+root.addEventListener('focusin', (ev) => selectTimePart(ev.target));
+root.addEventListener('click', (ev) => selectTimePart(ev.target));
 
 /* Opening a field counts as touching it, so a dropdown that has just been
    opened is not repainted out from under the hand reaching for it. */

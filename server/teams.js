@@ -27,19 +27,29 @@ export class TeamError extends Error {
 /* ── plans ──
    Set by hand once payment clears: there is no webhook, by design, and a plan
    nobody has paid for is the trial. `cap` 0 is the unlimited plan. */
+/* `plan` is the PayPal subscription plan the button creates. It replaced a
+   hosted button id: a hosted button is a link to a checkout page, a plan is a
+   thing the SDK can start a subscription against and report back an id for,
+   and that id is what ties a payment to a team.
+
+   The price here and the price at PayPal have to agree, and only one of them
+   is enforced. PayPal charges what its plan says; this column is what the
+   panel advertises. srv/teams.mjs checks this table against app.js, which is
+   the half that can be checked from here. */
 export const PLANS = {
   trial: { label: 'Trial', cap: 3, price: 0 },
-  team6: { label: 'Squad', nickname: 'Squad', cap: 6, price: 9, paypal: 'L2TA54N2MGAEC' },
+  team6: { label: 'Squad', nickname: 'Squad', cap: 6, price: 9, plan: 'P-46M71578YP346491UNKR2VTI' },
   /* Withdrawn from sale, kept in the table. Teams are on it, and everything
      read off the key resolves through here — the label on their billing panel
      and, more to the point, the seat cap. Deleting the row would silently drop
      a paying team of twelve to the trial's three. setTeamPlan still accepts it,
      because putting a team back on the plan they pay for is an admin's job and
      not something to make impossible. */
-  team12: { label: 'Team of 12', nickname: 'Squad', cap: 12, price: 15, paypal: 'LWSN5Y8ETFSSJ', offered: false },
-  team20: { label: 'Team of 20', nickname: 'Business', cap: 20, price: 22, paypal: 'NYRHVDWH6SXN8' },
-  team50: { label: 'Team of 50', nickname: 'Max', cap: 50, price: 30, paypal: 'AZBJMFGCVEK98' },
-  unlimited: { label: 'Unlimited', nickname: 'Unlimited', cap: 0, price: 100, paypal: 'C7ZHCA5ZMUG8G' }
+  // Withdrawn, so it has no plan to subscribe to — only a label and a cap.
+  team12: { label: 'Team of 12', nickname: 'Squad', cap: 12, price: 15, offered: false },
+  team20: { label: 'Team of 20', nickname: 'Business', cap: 20, price: 22, plan: 'P-77E90722BA255763DNKR2XJI' },
+  team50: { label: 'Team of 50', nickname: 'Max', cap: 50, price: 30, plan: 'P-15C9640083089481ANKR2YQQ' },
+  unlimited: { label: 'Unlimited', nickname: 'Unlimited', cap: 0, price: 100, plan: 'P-2BK934949D7482401NKR2ZKQ' }
 };
 
 /* ── the trial, and what running out of it means ──
@@ -718,6 +728,53 @@ export async function editMemberEntry(userId, entryId, patch) {
       detail: { date: row.date, ...moved } });
   }
   return { id: String(entryId), ...fields };
+}
+
+/* ── a subscription, reported by the browser that started it ──
+
+   Called by the page the moment PayPal approves one, for the single purpose of
+   writing down which team was on screen. It grants nothing: the plan the
+   caller names is stored as what they asked for and never acted on, because a
+   browser is not a source of truth about what has been paid for.
+
+   Super only. Billing belongs to whoever owns the team, and an admin quietly
+   subscribing the team to something is not their call.
+
+   The id is unique, so a page that reports the same approval twice writes one
+   row. Reporting is best effort by nature — a browser closed between the
+   payment and this call still leaves the subscription live at PayPal — so the
+   audit line it leaves is the point: it is what an owner and an admin both
+   look at when the money has arrived and the seats have not. */
+export async function recordSubscription(userId, subscriptionId, planKey) {
+  const m = await requireMembership(userId, 'super');
+  const sub = String(subscriptionId || '').trim().slice(0, 64);
+  if (!/^[A-Za-z0-9-]{4,64}$/.test(sub)) throw new TeamError('That is not a subscription id.');
+  const key = String(planKey || '').trim().slice(0, 24);
+  /* On sale, not merely known. The trial and the withdrawn plan are both in
+     the table and neither has anything at PayPal to subscribe to, so a report
+     naming one is a report about something that cannot have happened. */
+  if (!PLANS[key] || !PLANS[key].plan) throw new TeamError('That plan is not on sale.');
+
+  await query(
+    `INSERT INTO team_subscriptions (team_id, user_id, subscription, plan_key, plan_id, created_at)
+     VALUES (?,?,?,?,?,?)
+     ON DUPLICATE KEY UPDATE plan_key = VALUES(plan_key), plan_id = VALUES(plan_id)`,
+    [m.teamId, userId, sub, key, PLANS[key].plan || null, now()]);
+
+  record({ ...actor(m, userId), action: 'team.subscribe', subject: PLANS[key].label,
+    detail: { subscription: sub, plan: key } });
+  return { ok: true, subscription: sub, plan: key, label: PLANS[key].label };
+}
+
+/* What has been reported for this team, newest first. Read by the billing
+   panel so an owner can see their own reference without going to PayPal for
+   it, and by nobody else — a subscription id is a billing detail. */
+export async function teamSubscriptions(userId) {
+  const m = await requireMembership(userId, 'super');
+  return query(
+    `SELECT subscription, plan_key AS plan, created_at AS at
+       FROM team_subscriptions WHERE team_id = ? ORDER BY id DESC LIMIT 10`,
+    [m.teamId]);
 }
 
 /* The trail, for anybody on the team.

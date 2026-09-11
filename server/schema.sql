@@ -392,6 +392,39 @@ CREATE TABLE IF NOT EXISTS team_audit (
   CONSTRAINT fk_audit_actor FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+/* ── subscriptions ──
+
+   What PayPal handed back when somebody subscribed, and which team they were
+   looking at when they did it. One row per attempt, never updated: this is a
+   record of what happened, not a cache of the current state.
+
+   It exists because of the problem the billing panel used to solve by asking
+   people to type their team name into a payment note. PayPal reports an email
+   and an amount. Neither says which team the money is for, and an owner whose
+   email differs from the address on their card leaves nothing to match on at
+   all. The subscription id arrives in the browser that was signed in as that
+   team, so it is the one moment the two facts are in the same place.
+
+   The plan is recorded as the team asked for it and is not acted on. Nothing
+   here changes what a team is on: a browser saying "I subscribed to
+   Unlimited" is a claim, and a claim that granted seats would be a way to get
+   them for nothing. Switching the plan stays an admin action, now with the id
+   to check it against. */
+CREATE TABLE IF NOT EXISTS team_subscriptions (
+  id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  team_id       VARCHAR(64)  NOT NULL,
+  user_id       INT UNSIGNED NULL,
+  subscription  VARCHAR(64)  NOT NULL,
+  plan_key      VARCHAR(24)  NOT NULL,
+  plan_id       VARCHAR(64)  NULL,
+  created_at    BIGINT       NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_team_sub (subscription),
+  KEY idx_team_sub_team (team_id, created_at),
+  CONSTRAINT fk_tsub_team FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
+  CONSTRAINT fk_tsub_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 /* ── the blog ──
 
    Posts written in the admin dashboard and read by anyone. The only table in
