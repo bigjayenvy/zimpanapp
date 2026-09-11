@@ -4747,6 +4747,38 @@ function newTodoId() {
    rule toggleTimer enforces on the field above it. */
 const todoStartable = (t) => !!String(t.text || '').trim() && t.status !== 'done';
 
+/* A field, named on its own edge.
+
+   Every control in a planner card is one answer to one question — how much,
+   what for, when, in what state — and a column of bare pills says none of
+   those out loud. The label sits in a notch on the border rather than above
+   the field, which is what keeps a card of five answers to five lines instead
+   of ten. */
+function plField(label, body, opts) {
+  const o = opts || {};
+  return `
+  <div class="pl-fld${o.wide ? ' is-wide' : ''}${o.plain ? ' is-plain' : ''}"${o.style ? ` style="${o.style}"` : ''}>
+    <span class="pl-lab">${esc(label)}</span>
+    ${body}
+  </div>`;
+}
+
+/* The head of a card: what it is called, and the one affordance that says so
+   is editable. The pencil takes no room of its own until the row is hovered on
+   a laptop, and on a phone it is simply there — a heading that can be typed
+   into looks exactly like a heading that cannot. */
+function plHead(id, key, value, placeholder, aria, near) {
+  return `
+  <div class="pl-head">
+    <textarea class="pl-title" rows="1" maxlength="500"
+      data-k="${esc(key)}-${esc(id)}" data-${esc(key)}-text="${esc(id)}" data-todo-grow
+      placeholder="${esc(placeholder)}" aria-label="${esc(aria)}">${esc(value || '')}</textarea>
+    ${near ? `<span class="pl-near${near.late ? ' is-late' : near.soon ? ' is-soon' : ''}">${esc(near.label)}</span>` : ''}
+    <button class="pl-edit" data-act="pl-rename" data-k-for="${esc(key)}-${esc(id)}"
+      aria-label="Rename" title="Rename">${nodeIcon('pencil', 15)}</button>
+  </div>`;
+}
+
 function todoNote(t) {
   const st = todoStatus(t.status);
   const armed = state.todoArm === t.id;
@@ -4756,32 +4788,29 @@ function todoNote(t) {
   const why = t.status === 'stuck' ? String(t.blocked || '').trim() : '';
   const near = t.date && t.status !== 'done' ? dayNear(t.date) : null;
   return `
-  <div class="todo-note" style="--tone:${st.tone};--tint:${st.tint};">
-    <textarea class="todo-text" rows="1" maxlength="${TODO_MAX}"
-      data-k="todo-${esc(t.id)}" data-todo-text="${esc(t.id)}" data-todo-grow
-      placeholder="What needs doing?" aria-label="Note">${esc(t.text || '')}</textarea>
+  <div class="pl-card" style="--tone:${st.tone};--tint:${st.tint};">
+    ${plHead(t.id, 'todo', t.text, 'What needs doing?', 'Note', near)}
     ${t.status === 'stuck' ? `
     <button class="todo-why" data-act="todo-why" data-id="${esc(t.id)}">
       ${why ? `<span class="todo-why-mark">Stuck:</span> ${esc(why)}` : 'Say why this is stuck'}
     </button>` : ''}
-    <div class="todo-row">${padPickField('todos', t)}</div>
-    <div class="pl-when">
-      <input class="input date-in pl-date" type="date" data-k="tdate-${esc(t.id)}"
-        data-change="todo-date" data-id="${esc(t.id)}" value="${esc(t.date || '')}"
-        aria-label="Planned for">
-      ${near ? `<span class="pl-near${near.late ? ' is-late' : near.soon ? ' is-soon' : ''}">${esc(near.label)}</span>`
-    : `<span class="pl-hint">${t.date ? '' : 'No day yet — a note'}</span>`}
+    <div class="pl-grid">
+      ${plField('Category', padPickField('todos', t), { plain: true })}
+      ${plField('Planned for', `
+        <input class="pl-date" type="date" data-k="tdate-${esc(t.id)}"
+          data-change="todo-date" data-id="${esc(t.id)}" value="${esc(t.date || '')}"
+          aria-label="Planned for">`, { plain: true })}
     </div>
-    <div class="todo-foot">
-      <select class="todo-status" data-change="todo-status" data-id="${esc(t.id)}" aria-label="Status">
-        ${TODO_STATUSES.map((o) => `<option value="${o.key}"${o.key === st.key ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}
-      </select>
-      <button class="pl-start" data-act="todo-start" data-id="${esc(t.id)}"
-        ${todoStartable(t) ? '' : 'disabled'}
-        title="Start tracking this now">${nodeIcon('pulse', 14)}<span>Start</span></button>
-      <button class="todo-del${armed ? ' is-armed' : ''}" data-act="todo-del" data-id="${esc(t.id)}"
+    <div class="pl-foot">
+      ${plField('Status', `
+        <select class="pl-status" data-change="todo-status" data-id="${esc(t.id)}" aria-label="Status">
+          ${TODO_STATUSES.map((o) => `<option value="${o.key}"${o.key === st.key ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}
+        </select>`, { plain: true })}
+      <button class="pl-del${armed ? ' is-armed' : ''}" data-act="todo-del" data-id="${esc(t.id)}"
         aria-label="${armed ? 'Delete this note for good' : 'Delete note'}">${armed ? 'Delete?' : nodeIcon('trash', 15)}</button>
     </div>
+    <button class="pl-do is-go" data-act="todo-start" data-id="${esc(t.id)}"
+      ${todoStartable(t) ? '' : 'disabled'}>${nodeIcon('pulse', 15)}<span>Start tracking this now</span></button>
   </div>`;
 }
 
@@ -4869,6 +4898,7 @@ function todoPlanner() {
     icon: 'todo',
     tone: '#8a7a35',
     wide: true,
+    flat: true,
     kicker: late ? `${late} for today or earlier` : `${open} open`,
     title: 'Activity Planner',
     body: `<div class="pl-wrap is-todo">${todoBody()}</div>`,
@@ -5176,6 +5206,12 @@ function planTotals() {
 function planSumInner() {
   const t = planTotals();
   const short = t.afterCents < 0;
+  /* The same subtraction as the sentence, drawn. The filled part is what you
+     keep and the tail is what goes out, so "does this fit" is answered before
+     the sentence under it has been read — and when it does not fit the bar is
+     full, which is the only honest way to draw a negative. */
+  const span = Math.max(1, t.leftCents + t.comingCents);
+  const keep = short ? 0 : Math.max(0, Math.min(100, Math.round((t.afterCents / span) * 100)));
   // Money expected is said before the answer it changes, so the arithmetic
   // reads in the order it happens rather than arriving as a correction.
   const coming = t.comingCents ? `With ${esc(t.coming)} coming in, that leaves` : 'Leaves';
@@ -5187,6 +5223,9 @@ function planSumInner() {
     <span class="plan-sum-cap">to pay${t.dueCents ? ` · ${esc(t.due)} due now` : ''}</span>
     <span class="plan-sum-line${short ? ' is-short' : ''}">
       ${short ? over : `${coming} ${esc(t.after)} of the ${esc(t.left)} you have logged.`}
+    </span>
+    <span class="plan-bar${short ? ' is-short' : ''}" role="presentation">
+      <span class="plan-bar-fill" style="width:${keep}%;"></span>
     </span>`;
 }
 
@@ -5389,42 +5428,51 @@ function planLine(row) {
   const near = row.due && planOwed(row) ? dayNear(row.due) : null;
   const tone = cancelled ? '#6b6580' : st.tone;
   const tint = cancelled ? '#efedf5' : st.tint;
+  const noun = planKindOf(kind).one;
   return `
-  <div class="todo-note plan-note${cancelled ? ' is-off' : ''}" style="--tone:${tone};--tint:${tint};">
-    <textarea class="todo-text" rows="1" maxlength="${PLAN_MAX}"
-      data-k="plan-${esc(row.id)}" data-plan-text="${esc(row.id)}" data-todo-grow
-      placeholder="${kind === 'sub' ? 'What are you subscribed to?' : dir === 'in' ? 'What is coming in?' : 'What is coming out?'}"
-      aria-label="${esc(planKindOf(kind).one)}">${esc(row.text || '')}</textarea>
-    ${kind === 'sub' ? '' : planWay(row)}
-    <div class="plan-row">
-      <label class="plan-amt is-${dir}">
-        <span aria-hidden="true">${esc(currency().symbol)}</span>
-        <input type="text" inputmode="decimal" data-k="plan-amt-${esc(row.id)}" data-plan-amount="${esc(row.id)}"
-          value="${row.amount ? esc(money2(row.amount)) : ''}" placeholder="0.00"
-          aria-label="Amount" autocomplete="off">
-      </label>
-      ${padPickField('plans', row)}
+  <div class="pl-card${cancelled ? ' is-off' : ''}" style="--tone:${tone};--tint:${tint};">
+    ${plHead(row.id, 'plan', row.text,
+    kind === 'sub' ? 'What are you subscribed to?' : dir === 'in' ? 'What is coming in?' : 'What is coming out?',
+    noun.charAt(0).toUpperCase() + noun.slice(1), near)}
+
+    ${kind === 'sub' ? '' : plField('Transaction', planWay(row), { wide: true })}
+
+    <div class="pl-grid">
+      ${plField('Amount', `
+        <span class="pl-amt is-${dir}">
+          <span aria-hidden="true">${esc(currency().symbol)}</span>
+          <input type="text" inputmode="decimal" data-k="plan-amt-${esc(row.id)}" data-plan-amount="${esc(row.id)}"
+            value="${row.amount ? esc(money2(row.amount)) : ''}" placeholder="0.00"
+            aria-label="Amount" autocomplete="off">
+        </span>`, { plain: true })}
+      ${plField(dir === 'in' ? 'Source' : 'Purpose', padPickField('plans', row), { plain: true })}
     </div>
-    ${planWhen(row, kind, near)}
-    <div class="todo-foot">
+
+    ${planWhen(row, kind)}
+
+    <div class="pl-foot">
       ${kind === 'sub'
-    ? `<button class="pl-chip${cancelled ? '' : ' is-on'}" data-act="plan-active" data-id="${esc(row.id)}"
-          aria-pressed="${!cancelled}">${cancelled ? 'Cancelled' : 'Active'}</button>`
+    ? plField('Subscription', `
+        <button class="pl-status is-chip${cancelled ? '' : ' is-on'}" data-act="plan-active"
+          data-id="${esc(row.id)}" aria-pressed="${!cancelled}">${cancelled ? 'Cancelled' : 'Active'}</button>`,
+    { plain: true })
     : kind === 'due'
-      ? `<select class="todo-status" data-change="plan-status" data-id="${esc(row.id)}" aria-label="Status">
+      ? plField('Status', `
+        <select class="pl-status" data-change="plan-status" data-id="${esc(row.id)}" aria-label="Status">
           ${PLAN_STATUSES.map((o) => `<option value="${o.key}"${o.key === st.key ? ' selected' : ''}>${esc(planStatusLabel(o, dir))}</option>`).join('')}
-        </select>`
-      : `<span class="pl-hint">No date, no reminder</span>`}
-    <button class="todo-del${armed ? ' is-armed' : ''}" data-act="plan-del" data-id="${esc(row.id)}"
-      aria-label="${armed ? 'Delete this line for good' : 'Delete line'}">${armed ? 'Delete?' : nodeIcon('trash', 15)}</button>
+        </select>`, { plain: true })
+      : `<span class="pl-hint">No date, so no reminder</span>`}
+      <button class="pl-del${armed ? ' is-armed' : ''}" data-act="plan-del" data-id="${esc(row.id)}"
+        aria-label="${armed ? 'Delete this line for good' : 'Delete line'}">${armed ? 'Delete?' : nodeIcon('trash', 15)}</button>
     </div>
+
     ${row.lastPaid ? `<p class="pl-paid">Last ${dir === 'in' ? 'received' : 'paid'} ${esc(dayLabel(row.lastPaid))}</p>` : ''}
-    <button class="plan-log" data-act="plan-log" data-id="${esc(row.id)}" data-plan-log="${esc(row.id)}"
-      ${planOwed(row) && cents > 0 ? '' : 'hidden'}>Log it as ${dir === 'in' ? 'received' : 'spent'} today</button>
+    <button class="pl-do" data-act="plan-log" data-id="${esc(row.id)}" data-plan-log="${esc(row.id)}"
+      ${planOwed(row) && cents > 0 ? '' : 'hidden'}>${nodeIcon('check', 15)}<span>Log as ${dir === 'in' ? 'received' : 'spent'} today</span></button>
   </div>`;
 }
 
-/* The middle of a line: when it happens, said in the terms its own list uses.
+/* When a line happens, said in the terms its own list uses.
 
    A subscription is asked for a day of the month and shows the date that works
    out to, because "the 15th" is how a standing charge is remembered and "15
@@ -5433,10 +5481,7 @@ function planLine(row) {
    the two lists it could join instead — moving it sets the kind and leaves the
    field it now needs sitting empty and waiting, which is the shortest honest
    path between "I wrote this down" and "this has a date". */
-function planWhen(row, kind, near) {
-  const chip = near
-    ? `<span class="pl-near${near.late ? ' is-late' : near.soon ? ' is-soon' : ''}">${esc(near.label)}</span>`
-    : '';
+function planWhen(row, kind) {
   /* The way back, and only while there is nothing to lose by taking it. A line
      that has not been given a date yet is one somebody may have put in the
      wrong list a moment ago; one that has a date is a commitment, and the way
@@ -5444,41 +5489,44 @@ function planWhen(row, kind, near) {
      rather than making it a side effect of a button. */
   const back = `<button class="pl-move" data-act="plan-kind" data-id="${esc(row.id)}"
       data-kind="note">Move to notes</button>`;
+
   if (kind === 'note') {
     return `
-    <div class="pl-when">
+    <div class="pl-moves">
       <button class="pl-move" data-act="plan-kind" data-id="${esc(row.id)}" data-kind="sub">Make it a subscription</button>
       <button class="pl-move" data-act="plan-kind" data-id="${esc(row.id)}" data-kind="due">Make it a due</button>
     </div>`;
   }
+
   if (kind === 'sub') {
     const day = Number(row.day) || 0;
     return `
-    <div class="pl-when">
-      <label class="pl-day">
-        <span>Every</span>
-        <select data-change="plan-day" data-id="${esc(row.id)}" aria-label="Day of the month">
-          <option value=""${day ? '' : ' selected'}>day…</option>
+    <div class="pl-grid">
+      ${plField('Charged on', `
+        <select class="pl-sel" data-change="plan-day" data-id="${esc(row.id)}" aria-label="Day of the month">
+          <option value=""${day ? '' : ' selected'}>Pick a day…</option>
           ${Array.from({ length: 31 }, (v, i) => i + 1).map((n) => `
-          <option value="${n}"${n === day ? ' selected' : ''}>${ordinal(n)}</option>`).join('')}
-        </select>
-      </label>
-      ${row.due && planOwed(row) ? `<span class="pl-next">Next ${esc(dayLabel(row.due))}</span>` : ''}
-      ${chip}
-      ${row.day ? '' : back}
-    </div>`;
+          <option value="${n}"${n === day ? ' selected' : ''}>The ${ordinal(n)}</option>`).join('')}
+        </select>`, { plain: true })}
+      ${plField('Next charge', `
+        <span class="pl-read">${row.due && planOwed(row) ? esc(dayLabel(row.due)) : '—'}</span>`,
+    { plain: true })}
+    </div>
+    ${row.day ? '' : `<div class="pl-moves">${back}</div>`}`;
   }
+
   return `
-  <div class="pl-when">
-    <input class="input date-in pl-date" type="date" data-k="pdue-${esc(row.id)}"
-      data-change="plan-due" data-id="${esc(row.id)}" value="${esc(row.due || '')}"
-      aria-label="Due date">
-    <select class="pl-every" data-change="plan-every" data-id="${esc(row.id)}" aria-label="How often">
-      ${PLAN_REPEATS.map(([k, label]) => `<option value="${k}"${k === planEvery(row) ? ' selected' : ''}>${esc(label)}</option>`).join('')}
-    </select>
-    ${chip}
-    ${row.due ? '' : back}
-  </div>`;
+  <div class="pl-grid">
+    ${plField('Due date', `
+      <input class="pl-date" type="date" data-k="pdue-${esc(row.id)}"
+        data-change="plan-due" data-id="${esc(row.id)}" value="${esc(row.due || '')}"
+        aria-label="Due date">`, { plain: true })}
+    ${plField('Repeats', `
+      <select class="pl-sel" data-change="plan-every" data-id="${esc(row.id)}" aria-label="How often">
+        ${PLAN_REPEATS.map(([k, label]) => `<option value="${k}"${k === planEvery(row) ? ' selected' : ''}>${esc(label)}</option>`).join('')}
+      </select>`, { plain: true })}
+  </div>
+  ${row.due ? '' : `<div class="pl-moves">${back}</div>`}`;
 }
 
 /* 1st, 2nd, 3rd. Written out because a select full of bare numbers reads as a
@@ -5688,6 +5736,7 @@ function planPlanner() {
     icon: 'scales',
     tone: '#10756c',
     wide: true,
+    flat: true,
     kicker: soon ? `${soon} needing attention` : `${t.count} on the books`,
     title: 'Money Planner',
     body: `<div class="pl-wrap is-money">${planBody()}</div>`,
@@ -7181,10 +7230,19 @@ function lightbox(o) {
   <div class="no-print lb-back"${o.closeAct ? ` data-backdrop="${esc(o.closeAct)}"` : ''}>
     <div class="lb${o.wide ? ' lb-wide' : ''}" role="dialog" aria-modal="true" aria-label="${esc(o.title)}">
       ${o.closeAct ? `<button class="lb-x" data-act="${esc(o.closeAct)}" aria-label="Close">✕</button>` : ''}
-      <div class="lb-mark" style="--lb-tone:${tone};" aria-hidden="true">${nodeIcon(o.icon, 26)}</div>
+      ${o.flat
+    /* A workbench, not a question. The medallion, the centred kicker and the
+       sub together are 140px of preamble above a list somebody opened in order
+       to read — so a dialog that holds one says its name on one line, with the
+       count beside it, and gets out of the way. */
+    ? `<div class="lb-flat">
+        <h2 class="lb-title">${esc(o.title)}</h2>
+        ${o.kicker ? `<span class="lb-chip" style="--lb-tone:${tone};">${esc(o.kicker)}</span>` : ''}
+      </div>`
+    : `<div class="lb-mark" style="--lb-tone:${tone};" aria-hidden="true">${nodeIcon(o.icon, 26)}</div>
       ${o.kicker ? `<div class="lb-kicker" style="color:${tone};">${esc(o.kicker)}</div>` : ''}
       <h2 class="lb-title">${esc(o.title)}</h2>
-      ${o.sub ? `<p class="lb-sub">${esc(o.sub)}</p>` : ''}
+      ${o.sub ? `<p class="lb-sub">${esc(o.sub)}</p>` : ''}`}
       <div class="lb-body">${o.body}</div>
       ${o.pinned || ''}
       ${o.actions ? `<div class="lb-acts${o.actsClass ? ` ${esc(o.actsClass)}` : ''}">${o.actions}</div>` : ''}
@@ -9560,6 +9618,47 @@ function addEntryCard(v) {
    it follows the money tracker into green without a second rule.
 
    `meta` and `right` are inserted as markup — callers escape their own text. */
+/* Said out loud when the day on screen is not today.
+
+   Every figure in the full layout is about the selected day or a window ending
+   on it, and once the log has been scrolled past there is nothing left saying
+   which day that is — the donut, the leaderboard and the insights all read as
+   if they were about now. The Date pill in the log tools already says it, but
+   it is one line among the search and the filter, and it is above the fold
+   rather than beside the figures it qualifies.
+
+   A button and not a notice, because the thing somebody wants on reading it is
+   always the same: to come back. */
+function backToToday() {
+  if (state.selectedDate === todayIso) return '';
+  const when = new Date(state.selectedDate + 'T00:00:00')
+    .toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  return `
+  <button class="daypin no-print" data-act="go-today">
+    <span class="daypin-dot" aria-hidden="true"></span>
+    <span class="daypin-said">You are currently viewing <b>${esc(when)}</b>,
+      <u>click here to reset to Today</u></span>
+  </button>`;
+}
+
+/* The same thing on the phone's own layout, shrunk to what fits beside the
+   avatar. The words are on the button's title rather than in it: at 393px the
+   sentence is three lines, and the date plus an arrow back is the whole of
+   what it has to say. */
+function mBackToToday() {
+  const key = mRangeKey();
+  if (key === 'today') return '';
+  const def = mRangeDef(key);
+  const label = key === M_CUSTOM ? 'Custom' : def[1];
+  return `
+  <button class="daypin is-mini" data-act="m-go-today"
+    title="You are currently viewing ${esc(label)}, tap to reset to Today">
+    <span class="daypin-dot" aria-hidden="true"></span>
+    <span>${esc(label)}</span>
+    <span class="daypin-x" aria-hidden="true">↺</span>
+  </button>`;
+}
+
 function cardHead(title, meta, right) {
   return `
         <div class="card-head">
@@ -9696,6 +9795,8 @@ function timeDesktop(v) {
 
     <div class="col">
 
+      ${backToToday()}
+
       <div class="blueprint card-w-head" data-sec="chart">
         ${cardHead('Where the time went', '', segRange('range'))}
         <div class="card-body">
@@ -9829,6 +9930,7 @@ function moneyDesktop(v) {
     </div>
 
     <div style="display: flex; flex-direction: column; gap: 22px; min-width: 0;">
+      ${backToToday()}
       <div class="blueprint" style="padding: 20px 22px 24px;">        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;">
           <h4 style="margin: 0; margin-right: auto;">Where the money went</h4>
           ${segRange('mrange2')}
@@ -12932,6 +13034,18 @@ const ACTIONS = {
     if (state.timerStart) { state.todoStart = { id: row.id }; render(); return; }
     startTodo(row);
   },
+  /* The pencil beside a card's name. It focuses the field it belongs to and
+     puts the caret at the end, which is the whole of what it is for: a heading
+     that can be typed into looks exactly like one that cannot, and this is the
+     mark that says otherwise. */
+  'pl-rename': (el) => {
+    const field = root.querySelector(`[data-k="${String(el.dataset.kFor || '')}"]`);
+    if (!field) return;
+    field.focus();
+    const end = field.value.length;
+    try { field.setSelectionRange(end, end); } catch (e) { /* not a text field */ }
+  },
+
   'todo-start-cancel': () => { state.todoStart = null; render(); },
   'todo-start-go': () => {
     const ask = state.todoStart;
@@ -15675,6 +15789,7 @@ function mBrandBar() {
     <span style="font-family:var(--font-heading);font-weight:600;font-size:19px;letter-spacing:.02em;line-height:1;color:#16131f;">ZIMPAN<span style="color:#5f3ac9;">.</span></span>
   </span>
   <span style="display:flex;align-items:center;gap:8px;">
+    ${mBackToToday()}
 <button data-act="m-account-open" aria-label="Account"
       style="width:38px;height:38px;flex:none;border:0;border-radius:50%;background:#e4dcfd;display:grid;place-items:center;font-family:var(--font-body);font-weight:600;font-size:14px;color:#472b97;cursor:pointer;">${esc(mInitials())}</button>
   </span>
@@ -17255,6 +17370,15 @@ const M_ACTIONS = {
   },
   'm-go-home': () => mGo('home'),
   'm-go-insights': () => mGo('insights'),
+  /* The phone's own back-to-today. Both are put right: the range decides what
+     the screen is about, and selectedDate is what the detail screens and the
+     full layout read — leaving one of them behind is how you end up on today's
+     figures with last Tuesday still selected underneath. */
+  'm-go-today': () => {
+    state.selectedDate = todayIso;
+    mSet({ range: 'today' });
+  },
+
   'm-range': (el) => {
     // Seeded on the way in, so the screen behind the chips changes to something
     // readable rather than to whatever two empty fields describe.

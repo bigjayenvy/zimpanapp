@@ -1112,6 +1112,44 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      beside the page, not instead of it. Paper-coloured, because that is what
      it is pretending to be, and the one surface in the app that is not on the
      app's own background. */
+  /* ── you are not on today ──
+
+     A button rather than a notice, because the one thing anybody wants on
+     reading it is to come back. Amber rather than red: nothing is wrong, you
+     are merely somewhere else, and the same tint the app already uses for
+     "late" and "waiting" says that without alarm.
+
+     Full width above the first card in the column, so it reads as a statement
+     about everything under it rather than as a control belonging to the chart
+     it happens to sit on. */
+  .daypin {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 10px 16px; border-radius: 999px; cursor: pointer; text-align: left;
+    background: #fdf1de; border: 1px solid #f0d9ac; color: #7a5410;
+    font: inherit; font-size: 13px; line-height: 1.4;
+  }
+  .daypin:hover { background: #fbe8cb; }
+  .daypin:focus-visible { outline: 2px solid #b6802a; outline-offset: 2px; }
+  .daypin-said b { font-weight: 700; }
+  /* The clause breaks as a whole or not at all. Left to itself the line broke
+     after "reset to" and left "Today" alone on the second, which reads as a
+     different sentence. */
+  .daypin-said u {
+    text-decoration-color: rgba(122, 84, 16, .45); text-underline-offset: 2px;
+    white-space: nowrap;
+  }
+  .daypin-dot {
+    width: 8px; height: 8px; flex: none; border-radius: 50%; background: #d08a1c;
+    box-shadow: 0 0 0 3px rgba(208, 138, 28, .18);
+  }
+  /* Beside the avatar on the phone, where the whole sentence would be three
+     lines. The date and a way back is all of it; the sentence is on the title. */
+  .daypin.is-mini {
+    width: auto; gap: 6px; padding: 0 10px; min-height: 34px; font-size: 12px; font-weight: 600;
+  }
+  .daypin.is-mini .daypin-dot { width: 6px; height: 6px; box-shadow: 0 0 0 2px rgba(208, 138, 28, .18); }
+  .daypin-x { font-size: 13px; opacity: .75; }
+
   /* ── the two planners, one shell ──
 
      Every colour a planner and its button are made of is a variable, set here
@@ -1217,19 +1255,130 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .m-syncnote p { margin: 6px 0 0; font-size: 12.5px; line-height: 1.5; }
   .m-syncnote-safe { opacity: .82; }
 
-  /* One note. The status tints the left edge rather than the whole card, so a
-     pad of four statuses still reads as one pad. */
-  .todo-note {
-    border: 1px solid var(--pad-line); border-left: 3px solid var(--tone); border-radius: 12px;
-    background: #fff; padding: 8px 9px 9px;
+  /* ── one card ──
+
+     A card is a heading and a set of named answers. The status tints the left
+     edge rather than the whole card, so five statuses in a column still read
+     as one list; everything inside it is white, pill-shaped and labelled on
+     its own border, so a card of five answers is five lines rather than ten.
+
+     18px of corner and 14px of padding, which is what the rest of the app's
+     cards use — the pad's tighter 12/8 was sized for a 340px panel that no
+     longer exists. */
+  .pl-card {
+    border: 1px solid var(--pad-line); border-left: 3px solid var(--tone); border-radius: 18px;
+    background: #fff; padding: 14px 14px 15px;
+    display: flex; flex-direction: column; gap: 12px;
   }
-  .todo-text {
-    display: block; width: 100%; border: 0; background: transparent; resize: none;
-    font: inherit; font-size: 13.5px; line-height: 1.5; color: var(--color-text);
-    padding: 2px 2px 6px; overflow: hidden;
+  /* Cancelled, or otherwise no longer asking for anything. */
+  .pl-card.is-off { opacity: .72; }
+
+  /* The name, and the one mark that says it can be typed into. A heading that
+     is editable looks exactly like one that is not, which is the whole reason
+     the pencil is there — it is not a second way in, it is the only sign. */
+  .pl-head { display: flex; align-items: flex-start; gap: 6px; }
+  .pl-title {
+    flex: 1; min-width: 0; display: block; border: 0; background: transparent; resize: none;
+    font-family: var(--font-heading); font-weight: 700; font-size: 16px; line-height: 1.35;
+    color: var(--color-text); padding: 1px 0; overflow: hidden;
   }
-  .todo-text:focus { outline: 0; }
-  .todo-text::placeholder { color: #a8a2b8; }
+  .pl-title:focus { outline: 0; }
+  .pl-title::placeholder { font-family: var(--font-body); font-weight: 400; font-size: 14px; color: #a8a2b8; }
+  .pl-edit {
+    flex: none; border: 0; background: transparent; cursor: pointer; color: var(--pad-soft);
+    width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center;
+    opacity: .55; transition: opacity .12s ease;
+  }
+  .pl-card:hover .pl-edit, .pl-edit:focus-visible { opacity: 1; }
+  .pl-edit:hover { background: var(--pad-tint); }
+
+  /* A field, named on its own edge. The notch is a white pad behind the label
+     rather than a gap in the border, because a real gap needs a legend inside
+     a fieldset and a fieldset cannot be a grid item without a wrapper. */
+  .pl-fld { position: relative; min-width: 0; }
+  .pl-lab {
+    position: absolute; top: -6px; left: 14px; z-index: 1; padding: 0 6px; background: #fff;
+    font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; font-weight: 700;
+    color: var(--pad-soft); pointer-events: none; white-space: nowrap;
+  }
+  /* Two answers to a line wherever both are short. Below 430px they stack,
+     because a date field and a purpose name cannot share 200px. */
+  .pl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 430px) { .pl-grid { grid-template-columns: 1fr; } }
+
+  /* The controls, all one shape. Fully rounded rather than 10px: the notch
+     reads as part of the border on a pill and as a dent in a box. */
+  .pl-sel, .pl-status, .pl-date, .pl-read, .pl-amt, .pl-fld .pad-pick.pick-btn {
+    width: 100%; min-height: 42px; border: 1px solid var(--pad-line); border-radius: 999px;
+    background: #fff; color: var(--color-text); font: inherit; font-size: 13.5px;
+    padding: 0 15px; box-shadow: none;
+  }
+  .pl-sel, .pl-status, .pl-date { cursor: pointer; }
+  .pl-sel, .pl-status {
+    -webkit-appearance: none; appearance: none; padding-right: 34px; font-weight: 600;
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position: calc(100% - 20px) 50%, calc(100% - 16px) 50%;
+    background-size: 4px 4px, 4px 4px; background-repeat: no-repeat;
+  }
+  /* The status wears its own colour, which is the same colour as the card's
+     edge — so the chip and the stripe cannot disagree about where a line is. */
+  .pl-status {
+    border-color: color-mix(in srgb, var(--tone) 32%, transparent);
+    background-color: var(--tint); color: var(--tone);
+  }
+  .pl-sel:focus-visible, .pl-status:focus-visible, .pl-date:focus-visible {
+    outline: 2px solid var(--pad-soft); outline-offset: 1px;
+  }
+  .pl-read {
+    display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--pad-mid);
+    background: var(--pad-tint); border-color: transparent;
+  }
+  /* The figure, with the currency sitting inside the field rather than beside
+     it: a symbol in its own box reads as a second answer. */
+  .pl-amt { display: flex; align-items: center; gap: 6px; padding-right: 10px; }
+  .pl-amt > span { flex: none; font-size: 12.5px; font-weight: 700; color: var(--pad-soft); }
+  .pl-amt input {
+    flex: 1; min-width: 0; border: 0; background: transparent; padding: 0;
+    font: inherit; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums;
+  }
+  .pl-amt input:focus { outline: 0; }
+  .pl-amt.is-out, .pl-amt.is-out input { color: #8a2f4a; }
+  .pl-amt.is-in, .pl-amt.is-in input { color: #0e7a5c; }
+  .pl-amt input::placeholder { color: #b9b3c6; font-weight: 600; }
+  .pl-amt:focus-within { border-color: var(--pad-dash); box-shadow: 0 0 0 2px var(--pad-tint); }
+
+  /* The status and the bin share a line, and the bin keeps its own width so
+     the field beside it is the same width on every card. */
+  .pl-foot { display: flex; align-items: center; gap: 10px; }
+  .pl-foot > .pl-fld { flex: 1; }
+  .pl-del {
+    flex: none; border: 1px solid var(--pad-line); background: #fff; cursor: pointer; color: #9b95a8;
+    min-width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center;
+    font: inherit; font-size: 11.5px; font-weight: 700;
+  }
+  .pl-del:hover { background: #fdecf1; border-color: #f0c3d1; color: #8a2f4a; }
+  .pl-del.is-armed { background: #8a2f4a; border-color: #8a2f4a; color: #fff; width: auto; padding: 0 14px; border-radius: 999px; }
+  .pl-del:focus-visible { outline: 2px solid #8a2f4a; outline-offset: 1px; }
+
+  /* The one thing a card does, full width along its foot. Dark rather than
+     tinted: on a card of pale pills it is the only control that writes
+     something down, and everything above it only describes. */
+  .pl-do {
+    display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%;
+    min-height: 46px; border: 0; border-radius: 999px; cursor: pointer;
+    background: var(--pad-ink); color: #fff; font: inherit; font-size: 14px; font-weight: 700;
+  }
+  .pl-do svg { width: 15px; height: 15px; display: block; }
+  .pl-do:hover { background: color-mix(in srgb, var(--pad-ink) 84%, #fff); }
+  .pl-do:focus-visible { outline: 2px solid var(--pad-ink); outline-offset: 2px; }
+  .pl-do[hidden] { display: none; }
+  /* Starting a to-do belongs to the app rather than to the pad, so it carries
+     the app's accent instead of the planner's ink. */
+  .pl-do.is-go { background: var(--color-accent); }
+  .pl-do.is-go:hover { background: var(--color-accent-700); }
+  .pl-do.is-go:disabled { background: #d9d5e4; color: #8b8598; cursor: default; }
+
+  .pl-moves { display: flex; flex-wrap: wrap; gap: 8px; }
   /* The reason a note is stuck, under the note and above its status. A button
      because it is the way back into the question, but drawn as a line of text:
      it is something to read, and only occasionally something to press. */
@@ -1241,41 +1390,17 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .todo-why:hover { background: color-mix(in srgb, var(--tone) 14%, transparent); }
   .todo-why-mark { font-weight: 700; }
 
-  .todo-foot { display: flex; align-items: center; gap: 8px; }
-  .todo-status {
-    flex: 1 1 auto; min-width: 0; -webkit-appearance: none; appearance: none;
-    border: 1px solid color-mix(in srgb, var(--tone) 30%, transparent);
-    background: var(--tint); color: var(--tone);
-    border-radius: 999px; padding: 4px 24px 4px 10px; cursor: pointer;
-    font: inherit; font-size: 11.5px; font-weight: 600;
-    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
-    background-position: calc(100% - 13px) 50%, calc(100% - 9px) 50%;
-    background-size: 4px 4px, 4px 4px; background-repeat: no-repeat;
-  }
-  .todo-status:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
-  .todo-del {
-    flex: none; border: 0; background: transparent; cursor: pointer; color: #9b95a8;
-    min-width: 30px; min-height: 30px; border-radius: 8px; display: grid; place-items: center;
-    font: inherit; font-size: 11.5px; font-weight: 700;
-  }
-  .todo-del:hover { background: #fdecf1; color: #8a2f4a; }
-  .todo-del.is-armed { background: #8a2f4a; color: #fff; padding: 0 9px; }
 
-  /* When a line happens, and how near that is. One row on every kind of line,
-     so the eye finds the date in the same place whether it is a day of the
-     month, a date, or the two buttons that turn a note into either. */
-  .pl-when { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
-  .pl-date { flex: 0 1 150px; min-width: 0; min-height: 34px; font-size: 12.5px; padding: 6px 9px; }
-  .pl-every, .pl-day select {
-    border: 1px solid var(--pad-line); border-radius: 10px; background: #fff;
-    color: var(--pad-mid); font: inherit; font-size: 12.5px; font-weight: 600;
-    min-height: 34px; padding: 0 8px; cursor: pointer; max-width: 100%;
-  }
-  .pl-every:focus-visible, .pl-day select:focus-visible { outline: 2px solid var(--pad-soft); outline-offset: 1px; }
-  .pl-day { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
-  .pl-day > span { font-size: 12px; color: var(--pad-soft); }
-  .pl-next { font-size: 12px; font-weight: 600; color: var(--pad-mid); }
-  .pl-hint { font-size: 11.5px; color: var(--pad-soft); }
+  /* How near, beside the name rather than on a line of its own: it is a fact
+     about the card, and a chip alone on a row reads as a control. */
+  .pl-head .pl-near { flex: none; margin-top: 2px; }
+  /* iOS lays a date input out as a native control and ignores the box around
+     it unless the appearance is taken off it first. */
+  .pl-date { -webkit-appearance: none; appearance: none; font-weight: 600; }
+  .pl-date::-webkit-date-and-time-value { text-align: left; margin: 0; }
+  .pl-date::-webkit-datetime-edit { text-align: left; padding: 0; }
+  .pl-date::-webkit-calendar-picker-indicator { opacity: .45; margin-left: auto; }
+  .pl-hint { flex: 1; font-size: 12px; color: var(--pad-soft); }
   /* How near, in one chip. Only the two that mean something get a colour: late
      is the one to act on and soon is the one to know about, and colouring "in
      five days" as well would leave nothing for those two to stand out against. */
@@ -1285,42 +1410,26 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .pl-near.is-soon { background: #fdf1de; color: #8a5a0c; }
   .pl-near.is-late { background: #fdecf1; color: #8a2f4a; }
-  .pl-paid { margin: 0 0 8px; font-size: 11.5px; color: var(--pad-soft); }
+  .pl-paid { margin: -2px 0 0 2px; font-size: 11.5px; color: var(--pad-soft); }
 
-  /* Start tracking this, now. The one button on a note that does something to
-     the rest of the app rather than to the note, so it is the one that carries
-     the app's own accent instead of the pad's paper. */
-  .pl-start {
-    display: inline-flex; align-items: center; gap: 6px; flex: none;
-    min-height: 30px; padding: 0 11px; border-radius: 9px; cursor: pointer;
-    border: 1px solid color-mix(in srgb, var(--color-accent) 34%, transparent);
-    background: color-mix(in srgb, var(--color-accent) 11%, #fff);
-    color: var(--color-accent-700); font: inherit; font-size: 12px; font-weight: 700;
+  /* Active and cancelled, on a subscription. It sits in the slot a status
+     select sits in on a due, so the state of a line is always in the same
+     place — and it is a button rather than a select because it has two
+     answers, and a two-option menu is a toggle with a lid on. */
+  .pl-status.is-chip {
+    text-align: left; background-image: none; padding-right: 15px;
+    border-color: var(--pad-line); background-color: #fff; color: var(--pad-soft);
   }
-  .pl-start svg { width: 14px; height: 14px; display: block; }
-  .pl-start:hover:not(:disabled) { background: color-mix(in srgb, var(--color-accent) 19%, #fff); }
-  .pl-start:disabled { opacity: .4; cursor: default; }
-  .pl-start:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
-
-  /* Active and cancelled, on a subscription, and the two ways out of being a
-     note. Quiet controls: both change which list a line is read in, which the
-     line itself then shows, so neither needs to shout about it. */
-  .pl-chip {
-    flex: none; min-height: 30px; padding: 0 12px; border-radius: 999px; cursor: pointer;
-    border: 1px solid var(--pad-line); background: #fff; color: var(--pad-soft);
-    font: inherit; font-size: 11.5px; font-weight: 700;
-  }
-  .pl-chip.is-on { background: #e3f5ed; border-color: #b9e2d2; color: #0e7a5c; }
-  .pl-chip:focus-visible { outline: 2px solid var(--pad-soft); outline-offset: 1px; }
+  .pl-status.is-chip.is-on { background-color: #e3f5ed; border-color: #b9e2d2; color: #0e7a5c; }
+  /* The two ways out of being a note, and the way back into one. Dashed,
+     because they are a way to somewhere rather than an answer to anything. */
   .pl-move {
-    min-height: 32px; padding: 0 11px; border-radius: 10px; cursor: pointer;
+    min-height: 38px; padding: 0 14px; border-radius: 999px; cursor: pointer;
     border: 1px dashed var(--pad-dash); background: transparent; color: var(--pad-mid);
-    font: inherit; font-size: 12px; font-weight: 600;
+    font: inherit; font-size: 12.5px; font-weight: 600;
   }
   .pl-move:hover { background: var(--pad-tint); border-style: solid; }
   .pl-move:focus-visible { outline: 2px solid var(--pad-soft); outline-offset: 1px; }
-  /* A cancelled subscription stays on the list and stops asking for anything. */
-  .plan-note.is-off .todo-text, .plan-note.is-off .plan-amt input { opacity: .62; }
 
   /* The reminder dialog. Not the planner's paper: it opens over whatever was
      on screen, and the app's own card is what the rest of the dialogs use. */
@@ -1389,31 +1498,20 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   /* Over budget is the reading most worth having, so it is the one that is
      coloured rather than the one that is hidden. */
   .plan-sum-line.is-short { color: #8a2f4a; font-weight: 600; }
+  /* The same subtraction as the sentence above it, drawn. The filled part is
+     what paying leaves you and the tail is what goes out, so "does this fit"
+     is answered before the sentence has been read. */
+  .plan-bar {
+    flex: 1 0 100%; height: 7px; margin-top: 2px; border-radius: 999px; overflow: hidden;
+    background: color-mix(in srgb, var(--pad-ink) 16%, #fff);
+  }
+  .plan-bar-fill {
+    display: block; height: 100%; border-radius: 999px; background: var(--pad-ink);
+    transition: width .2s ease;
+  }
+  /* Nothing is left, so the bar is the shortfall rather than an empty track. */
+  .plan-bar.is-short { background: #f0c3d1; }
 
-  /* One line of small controls on the money pad, and the one-control row that
-     carries a note's category on the to-do pad. Same shape, so the two pads
-     keep the same rhythm. */
-  .plan-row, .todo-row { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
-  /* The figure, drawn as a field rather than as a chip: it is the one thing on
-     the line that is typed twice as often as it is read. */
-  .plan-amt {
-    flex: 0 1 118px; display: inline-flex; align-items: center; gap: 3px; min-width: 0;
-    border: 1px solid var(--pad-line); border-radius: 999px; background: var(--pad-bg); padding: 3px 11px;
-    font: inherit; font-size: 12.5px; font-weight: 700; color: var(--pad-soft);
-  }
-  .plan-amt input {
-    width: 100%; min-width: 0; border: 0; background: transparent; padding: 2px 0;
-    font: inherit; font-size: 13px; font-weight: 700; color: var(--color-text);
-    font-variant-numeric: tabular-nums;
-  }
-  .plan-amt input:focus { outline: 0; }
-  /* The figure carries its direction. Both halves of the field, so the currency
-     and the number read as one thing rather than a coloured number beside a
-     grey symbol. */
-  .plan-amt.is-out, .plan-amt.is-out input { color: #8a2f4a; }
-  .plan-amt.is-in, .plan-amt.is-in input { color: #0e7a5c; }
-  .plan-amt input::placeholder { color: color-mix(in srgb, var(--pad-soft) 60%, #fff); font-weight: 600; }
-  .plan-amt:focus-within { border-color: #16a394; box-shadow: 0 0 0 2px rgba(22, 163, 148, .18); }
   /* What a line is filed under, on either pad — a purpose on the money pad, a
      category on the to-do pad — as the app's own searchable popover rather
      than a native select. See padPickField(). Drawn as the chip the select
@@ -1424,13 +1522,13 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      ink, exactly as they do for everything else they share. */
   .pad-pick-field { flex: 1 1 auto; min-width: 0; }
   .pad-pick-field .pick-anchor { display: block; }
+  /* Sized by the .pl-fld rule above, so a purpose and an amount are the same
+     control in the same row; only the ink is set here. */
   .pad-pick.pick-btn {
-    width: 100%; min-height: 0; gap: 6px;
-    border: 1px solid var(--pad-line); background: var(--pad-bg); color: var(--pad-mid);
-    border-radius: 999px; padding: 4px 10px; cursor: pointer;
-    font: inherit; font-size: 11.5px; font-weight: 600;
+    gap: 6px; color: var(--color-text); cursor: pointer; font-weight: 600;
+    display: flex; align-items: center;
   }
-  .pad-pick.pick-btn .pick-caret { color: var(--pad-mid); font-size: 10px; }
+  .pad-pick.pick-btn .pick-caret { color: var(--pad-soft); font-size: 10px; }
   .pad-pick.pick-btn:focus-visible { outline: 2px solid var(--pad-soft); outline-offset: 1px; }
   /* Wider than the chip it hangs off, because a list of names read at 11.5px
      inside a 120px control is a list nobody can read. */
@@ -1458,31 +1556,22 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .pad-pick-field .pick-opt:hover, .pad-pick-field .pick-opt.is-on { background: var(--pad-tint); }
   .pad-pick-field .pick-new { color: var(--pad-mid); border-top-color: var(--pad-line); }
   .pad-pick-field .pick-create { border-top-color: var(--pad-line); }
-  /* Shorter than the picker gets elsewhere. A pad is at most two thirds of the
-     screen and it scrolls its own notes, so a list tall enough to fill it puts
-     the "+ New" button below the pad's edge, where it is clipped rather than
-     merely off-screen. See padPickShow(), which scrolls the rest into view. */
+  /* Shorter than the picker gets elsewhere. The planner's list scrolls inside
+     the dialog, so a panel tall enough to fill it puts the "+ New" button below
+     the list's edge, where it is clipped rather than merely off-screen. See
+     padPickShow(), which scrolls the rest into view. */
   .pad-pick-field .pick-list { max-height: 190px; }
-  /* The one control that leaves the pad and writes to the ledger, so it is the
-     one that looks like a button. */
-  .plan-log {
-    width: 100%; margin-top: 9px; border: 1px solid #a3ded5; border-radius: 10px;
-    background: #e6f7f4; color: #10756c; cursor: pointer; padding: 7px 10px;
-    font: inherit; font-size: 12.5px; font-weight: 600;
-  }
-  .plan-log:hover { background: #d5f0eb; }
-  .plan-log:focus-visible { outline: 2px solid #16a394; outline-offset: 1px; }
 
   /* Which way the money goes. Two halves of one control, so it reads as a
      choice between them rather than as two buttons that happen to be adjacent. */
   .plan-way {
-    display: flex; margin: 0 0 8px; padding: 2px; gap: 2px;
-    background: var(--pad-tint); border-radius: 999px;
+    display: flex; padding: 3px; gap: 3px;
+    background: var(--pad-tint); border-radius: 999px; min-height: 42px;
   }
   .plan-way-opt {
     flex: 1 1 0; min-width: 0; border: 0; background: transparent; cursor: pointer;
-    border-radius: 999px; padding: 5px 8px; color: var(--pad-mid);
-    font: inherit; font-size: 11.5px; font-weight: 600; white-space: nowrap;
+    border-radius: 999px; padding: 0 10px; color: var(--pad-mid);
+    font: inherit; font-size: 13px; font-weight: 600; white-space: nowrap;
   }
   /* Only the chosen half takes a colour: an unpicked option announcing itself
      in maroon would read as a warning about a direction nobody picked. */
@@ -1573,6 +1662,18 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .lb-title {
     margin: 0 0 10px; font-family: var(--font-heading); font-weight: 700;
     font-size: 21px; line-height: 1.24; color: var(--color-text);
+  }
+  /* A dialog that is a place rather than a question: its name on one line,
+     left, with the count beside it and no medallion above. See lightbox({flat}). */
+  .lb-flat {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    text-align: left; margin: 0 40px 14px 0;
+  }
+  .lb-flat .lb-title { margin: 0; }
+  .lb-chip {
+    font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; font-weight: 700;
+    padding: 4px 10px; border-radius: 999px; white-space: nowrap;
+    color: var(--lb-tone); background: color-mix(in srgb, var(--lb-tone) 13%, transparent);
   }
   .lb-body { font-size: 13.5px; line-height: 1.6; color: var(--color-neutral-800); text-align: left; }
   .lb-body p { margin: 0 0 11px; }
