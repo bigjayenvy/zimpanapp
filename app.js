@@ -4847,7 +4847,13 @@ function plSection(o) {
     </div>
     ${o.blurb ? `<p class="pl-sec-blurb">${esc(o.blurb)}</p>` : ''}
     <button class="todo-new" data-act="${esc(o.addAct)}"${o.addData || ''}>+ ${esc(o.add)}</button>
-    ${o.rows.length ? o.rows.join('') : `<p class="todo-empty">${esc(o.empty)}</p>`}
+    ${o.rows.length
+    /* The cards get a box of their own rather than sitting loose in the
+       section. The scroller above is a flex column and its gap reaches its own
+       children — the sections — and not the cards inside them, so a section of
+       six cards drew them edge to edge with nothing between. */
+    ? `<div class="pl-rows">${o.rows.join('')}</div>`
+    : `<p class="todo-empty">${esc(o.empty)}</p>`}
   </section>`;
 }
 
