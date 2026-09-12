@@ -7198,13 +7198,14 @@ function notePromptDialog() {
    placeholder on purpose and stops the whole line of questioning for the
    session, because having said it once, being asked again at dinner is
    nagging. */
-function mealNoteDialog() {
-  const a = state.mealAsk;
-  if (!a) return '';
+/* Written once and asked in both layouts, because it is one question. The
+   words are the whole of what this dialog does, and two copies of them would
+   have drifted the first time either was touched. */
+function mealAskBox(activity, kicker, actions) {
   return lightbox({
     icon: 'plate',
     tone: 'var(--zg-donate)',
-    kicker: a.activity ? `Logged against “${a.activity}”` : 'Meal logged',
+    kicker: activity ? `${kicker} “${String(activity).slice(0, 60)}”` : 'Meal logged',
     title: 'Nothing to count it from',
     body: `
       <p>To get the calories consumed, you have to enter the foods you have eaten. The
@@ -7212,11 +7213,53 @@ function mealNoteDialog() {
       <p style="margin:10px 0 0;">Left as it is, it is charged as an average meal —
       ${UNKNOWN_MEAL.kcal.toLocaleString('en-US')} kcal — and counted as too vague to read.
       That is a placeholder, not your meal.</p>`,
-    actions: `
-      <button class="btn btn-secondary" data-act="meal-skip">Skip Counting</button>
-      <button class="btn btn-primary" data-act="meal-note">Add Note</button>`
+    actions
   });
 }
+
+function mealNoteDialog() {
+  const a = state.mealAsk;
+  if (!a) return '';
+  return mealAskBox(a.activity, 'Logged against', `
+      <button class="btn btn-secondary" data-act="meal-skip">Skip Counting</button>
+      <button class="btn btn-primary" data-act="meal-note">Add Note</button>`);
+}
+
+/* The same question on the phone, asked one moment earlier.
+
+   The full layout asks after the row lands, because there the note is a dialog
+   over a page and there is nowhere else for it to be. The phone's flow carries
+   the note as its own last step, so the question belongs in front of the save:
+   Add Note goes back to the field already on screen rather than forward to a
+   second one, and Skip Counting saves as it would have anyway.
+
+   Judged on the draft as the ledger will judge the row — the same
+   matchFollowUp over the same words — so what counts as a meal here cannot
+   disagree with what counts as one when the calories are read. */
+function mMealNeedsFoods() {
+  const s = state.m;
+  if (mIsMoney() || s.editId) return false;
+  /* Once per draft, and once per session after Skip Counting.
+
+     Per draft because Add Note opens the field and leaves the choice there:
+     somebody who opens it, looks at it and saves anyway has answered, and
+     asking a second time on the same entry is a loop with a dialog in it.
+     Per session because somebody who has answered "count it as an average" at
+     lunch does not need asking again at dinner — the rule the full layout's
+     Skip Counting already sets. */
+  if (state.noteSkipped.food || s.mealAsked) return false;
+  if (s.note.trim()) return false;
+  const activity = (mDraftLabel() || '').trim();
+  if (!activity || !isEatenRow({ activity, category: s.cat })) return false;
+  mSet({ mealAsk: true, mealAsked: true });
+  return true;
+}
+
+const mMealDialog = () => (state.m.mealAsk
+  ? mealAskBox(mDraftLabel(), 'About to log', `
+      <button class="btn btn-secondary" data-act="m-meal-skip">Skip Counting</button>
+      <button class="btn btn-primary" data-act="m-meal-note">Add Note</button>`)
+  : '');
 
 /* Raised from closeFollowUp when a meal came out of the question with no words
    on it. Returns whether it took the turn, so the caller stops rather than
@@ -14813,7 +14856,7 @@ state.m = {
   mark: '', quitAsk: false,
   cat: null, activity: null, typing: false, activityText: '',
   dir: 'out', amount: '', startMin: mDefaultStart(), durMin: 60,
-  note: '', noteOpen: false,
+  note: '', noteOpen: false, mealAsk: false, mealAsked: false,
   // the row being re-edited, if this is an edit rather than a new entry
   editId: null, editKind: null,
   // detail
@@ -16945,6 +16988,7 @@ function mobileApp() {
   ${notePromptDialog()}
   ${rowNewDialog()}
   ${mealNoteDialog()}
+  ${mMealDialog()}
   ${mQuitDialog()}
   ${state.reportOpen ? reportSheet() : ''}
   ${pickDeleteDialog()}
@@ -16997,6 +17041,9 @@ function mResetDraft() {
     cat: null, activity: null, typing: false, activityText: '',
     dir: 'out', amount: '', startMin: mDefaultStart(), durMin: 60,
     note: '', noteOpen: false, editId: null, editKind: null,
+    /* Whether the meal question is open over this draft, and whether it has
+       already been put once. See mMealNeedsFoods. */
+    mealAsk: false, mealAsked: false,
     // Retaken at the first paint of the next flow. See mFlowDirty().
     mark: '', quitAsk: false
   });
@@ -17007,6 +17054,10 @@ function mResetDraft() {
    asked for, so this works with no network at all; `touch` stamps updated_at
    and drops the row in the outbox, which is what makes the sync resolve. */
 function mCommit() {
+  /* A meal with nothing written on it is charged a placeholder rather than
+     read, and that is worth saying before it happens rather than after. Takes
+     the turn when it asks; the save is what the answer leads back to. */
+  if (mMealNeedsFoods()) return;
   const s = state.m;
   const date = mDraftIso();
   const label = (mDraftLabel() || (mIsMoney() ? 'Money' : 'Activity')).slice(0, 200);
@@ -17527,6 +17578,22 @@ const M_ACTIONS = {
   'm-act': (el) => mSet({ activity: el.dataset.name, typing: false, activityText: '' }),
   'm-type-open': () => { state.focusField = 'm-activity'; mSet({ typing: true, activity: null }); },
   'm-note-open': () => { state.focusField = 'm-note'; mSet({ noteOpen: true }); },
+
+  /* Back to the field, open and with the caret in it. The question is not
+     marked skipped: asking to write this one down is not the answer of
+     somebody who wants to stop being asked. */
+  'm-meal-note': () => {
+    state.focusField = 'm-note';
+    mSet({ mealAsk: false, noteOpen: true });
+  },
+  /* The placeholder accepted on purpose, and the line of questioning closed
+     for the session. Then the save that was interrupted, which now runs
+     straight through — noteSkipped.food is what mMealNeedsFoods checks first. */
+  'm-meal-skip': () => {
+    state.m.mealAsk = false;
+    state.noteSkipped.food = true;
+    mCommit();
+  },
 
   'm-dir': (el) => mSet({ dir: el.dataset.dir }),
   'm-key': (el) => {
