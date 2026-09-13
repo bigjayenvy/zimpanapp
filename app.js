@@ -1154,8 +1154,10 @@ const state = {
      about the server on the other end of the last push, and the next one
      re-makes it. */
   syncStale: {},
-  // Whether the money rows behind the card's figures are being read.
+  // Whether the money rows behind the card's figures are being read, and which
+  // half of them — 'in', 'out', or null for the lot. See moneyLogDialog().
   moneyLogOpen: false,
+  moneyLogDir: null,
   /* The money tracker's pad, and which of its lines has its delete armed. Held
      apart from the to-do pad's pair rather than shared: the two open from
      different places and one must not close the other. */
@@ -13137,8 +13139,16 @@ const ACTIONS = {
 
   /* ── the money pad ── Same shape as the to-do actions above, because it is
      the same object doing a different job. */
-  'money-log-open': () => { state.moneyLogOpen = true; render(); },
-  'money-log-close': () => { state.moneyLogOpen = false; render(); },
+  // Opened whole every time: a half kept from last time is a half nobody chose.
+  'money-log-open': () => { state.moneyLogOpen = true; state.moneyLogDir = null; render(); },
+  'money-log-close': () => { state.moneyLogOpen = false; state.moneyLogDir = null; render(); },
+  /* One half, or both. Pressing the half already on puts both back, so the way
+     out is the control that got you here. */
+  'money-log-dir': (el) => {
+    const want = el.dataset.dir === 'in' ? 'in' : 'out';
+    state.moneyLogDir = state.moneyLogDir === want ? null : want;
+    render();
+  },
   // The rows in that dialog are there to be read, not opened.
   'money-log-noop': () => {},
 
@@ -15188,13 +15198,45 @@ function mTimerCard() {
    for the window on screen: opened from the figure, so the answer arrives
    where the question was asked. Read-only on purpose — the log below is where
    a row is opened and edited. */
+/* The two figures at the top of the log are the two halves of what is under
+   them, so they are the way to see one half on its own.
+
+   A stat tile that filters has to look like it can be pressed, which is the
+   whole of why these carry a count and a pressed state rather than only a
+   figure: the count says what pressing would leave you with, and the ring says
+   which half you are looking at. Pressing the one already chosen puts both
+   back — the way out is the same control as the way in, so there is no third
+   button for "show everything again".
+
+   The totals themselves never move. They are the window's, and a figure that
+   changed when it was pressed would be answering a different question from the
+   one it was asked. */
 function moneyLogDialog() {
   if (!state.moneyLogOpen) return '';
   const dates = mRangeDates();
-  const rows = mDayList(dates).filter((e) => e.kind === 'money');
-  const inCents = mSumCents(mMoneyRows(dates), 'in');
-  const outCents = mSumCents(mMoneyRows(dates), 'out');
+  const all = mDayList(dates).filter((e) => e.kind === 'money');
+  const on = state.moneyLogDir;
+  const rows = on ? all.filter((e) => e.dir === on) : all;
   const multi = dates.length > 1;
+  const tile = (dir, label, cents, ink, tint) => {
+    const n = all.filter((e) => e.dir === dir).length;
+    const chosen = on === dir;
+    /* An empty half cannot be pressed — there is nothing to look at — but the
+       chosen one always can, whatever it holds. A row deleted while the filter
+       is on can empty the very half it is showing, and a disabled tile there
+       would be a filter with no way out of it. */
+    return `
+    <button class="mlog-tile${chosen ? ' is-on' : ''}" data-act="money-log-dir" data-dir="${dir}"
+      style="--mlog-ink:${ink};--mlog-tint:${tint};" aria-pressed="${chosen}"${n || chosen ? '' : ' disabled'}>
+      <span class="mlog-lab">${esc(label)}</span>
+      <span class="mlog-fig">${esc(amount(cents / 100))}</span>
+      <span class="mlog-n">${chosen ? 'Showing these'
+    : n ? `${n} ${n === 1 ? 'entry' : 'entries'}` : 'Nothing here'}</span>
+    </button>`;
+  };
+  const empty = on === 'in' ? 'Nothing came in during this window.'
+    : on === 'out' ? 'Nothing went out during this window.'
+      : 'Nothing logged against money in this window.';
   return lightbox({
     icon: 'scales',
     tone: '#16a394',
@@ -15202,21 +15244,16 @@ function moneyLogDialog() {
     title: 'Money Logs',
     closeAct: 'money-log-close',
     body: `
-      <div style="display:flex;gap:8px;margin:0 0 14px;">
-        ${[['In', amount(inCents / 100), MONEY_IN_INK, '#e3f5ed'], ['Out', amount(outCents / 100), MONEY_OUT_INK, '#fdecf1']]
-    .map((c) => `
-        <div style="flex:1;min-width:0;padding:9px 11px;border-radius:12px;background:${c[3]};text-align:left;">
-          <div style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:${c[2]};opacity:.85;font-weight:600;">${c[0]}</div>
-          <div style="font-family:var(--font-heading);font-weight:700;font-size:18px;color:${c[2]};margin-top:2px;
-                      font-variant-numeric:tabular-nums;">${esc(c[1])}</div>
-        </div>`).join('')}
+      <div class="mlog-tiles${on ? ' is-filtered' : ''}">
+        ${tile('in', 'In', mSumCents(mMoneyRows(dates), 'in'), MONEY_IN_INK, '#e3f5ed')}
+        ${tile('out', 'Out', mSumCents(mMoneyRows(dates), 'out'), MONEY_OUT_INK, '#fdecf1')}
       </div>
       ${rows.length
     ? `<div style="display:flex;flex-direction:column;gap:9px;max-height:46vh;overflow-y:auto;overscroll-behavior:contain;">
           ${rows.map((e) => mEntryRow(e, { act: 'money-log-noop', showDate: multi })).join('')}
         </div>`
     : `<p style="margin:0;font-size:13.5px;color:var(--color-neutral-600);line-height:1.5;">
-          Nothing logged against money in this window.</p>`}`,
+          ${esc(empty)}</p>`}`,
     actions: `<button class="btn btn-primary" data-act="money-log-close">Done</button>`
   });
 }

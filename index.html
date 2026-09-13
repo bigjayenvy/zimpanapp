@@ -1112,6 +1112,39 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      beside the page, not instead of it. Paper-coloured, because that is what
      it is pretending to be, and the one surface in the app that is not on the
      app's own background. */
+  /* ── the two halves of a money log ──
+
+     The figures at the top of the Money Logs dialog are the two halves of the
+     list under them, so they are also the way to see one half on its own. A
+     stat tile that filters has to look like it can be pressed: the count says
+     what pressing would leave you with, and the ring says which half is on
+     screen. See moneyLogDialog().
+
+     The unchosen one fades rather than greying out — it is still a figure
+     worth reading, it is simply not the one being listed. */
+  .mlog-tiles { display: flex; gap: 8px; margin: 0 0 14px; }
+  .mlog-tile {
+    flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+    padding: 9px 11px; border-radius: 12px; text-align: left; cursor: pointer;
+    border: 1.5px solid transparent; background: var(--mlog-tint); font: inherit;
+    transition: opacity .12s ease, border-color .12s ease;
+  }
+  .mlog-tile:disabled { cursor: default; opacity: .5; }
+  /* A class on the row rather than :has() on it. The selector would read
+     better and this has to work on whatever phone somebody already owns. */
+  .mlog-tiles.is-filtered .mlog-tile:not(.is-on) { opacity: .6; }
+  .mlog-tile.is-on { border-color: var(--mlog-ink); }
+  .mlog-tile:focus-visible { outline: 2px solid var(--mlog-ink); outline-offset: 2px; }
+  .mlog-lab {
+    font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--mlog-ink); opacity: .85; font-weight: 600;
+  }
+  .mlog-fig {
+    font-family: var(--font-heading); font-weight: 700; font-size: 18px;
+    color: var(--mlog-ink); font-variant-numeric: tabular-nums;
+  }
+  .mlog-n { font-size: 11px; font-weight: 600; color: var(--mlog-ink); opacity: .78; }
+
   /* ── you are not on today ──
 
      A button rather than a notice, because the one thing anybody wants on
