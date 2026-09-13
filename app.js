@@ -16077,6 +16077,16 @@ function mHome() {
   </div>
   ${mRangeChips('m-range', mRangeKey())}
 
+  <!-- Above the figures rather than under them. The card is a reading of the
+       day so far and the timer is the way to add to it, and on a phone the
+       reading is tall enough that the thing you came to press sat below the
+       fold. What is actionable goes first; what is there to be read follows.
+
+       Only on Today, which is why the hero is not moved instead: on every
+       other range there is no timer, and the figures stay where they have
+       always been rather than shuffling up and down as the range changes. -->
+  ${mRangeKey() === 'today' ? mTimerCard() : ''}
+
   <div class="m-hero" data-m-hero>
     <!-- The hours, alone on the top line. This is the Activity Tracker's own
          home, so the time is its headline; money used to sit opposite it at the
@@ -16183,8 +16193,6 @@ function mHome() {
       </div>`;
     })()}
   </div>
-
-  ${mRangeKey() === 'today' ? mTimerCard() : ''}
 
   <div style="display:flex;gap:10px;margin-bottom:22px;">
     ${[['m-log-time', '#f2eefe', '#5f3ac9', nodeIcon('clock', 17), workMode() ? 'Log work' : 'Log time', '15px']]
