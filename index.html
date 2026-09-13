@@ -694,6 +694,17 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      Android browsers claim hover capability, and a delete that never appears
      is a feature that does not exist. */
   .m-pick .pick-del { opacity: .55; width: 34px; }
+  /* The mark on one of Zimpan's own. It sits in the slot the rename and delete
+     buttons sat in, so a locked row lines up with the rest of the list, and it
+     is always visible rather than appearing on hover: the two it replaces are
+     controls you go looking for, and this is an answer to looking. */
+  .pick-lock {
+    flex: none; width: 56px; display: grid; place-items: center;
+    color: color-mix(in srgb, var(--color-text) 26%, transparent);
+  }
+  .pick-lock svg { width: 13px; height: 13px; display: block; }
+  @media (hover: none) { .pick-lock { width: 68px; } }
+  .m-pick .pick-lock { width: 68px; }
 
   /* Renaming happens in the row itself rather than in a dialog over the top of
      it: the list is the thing being edited, and a panel covering it would hide
@@ -2783,6 +2794,10 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .pref-row:first-child { border-top: 0; padding-top: 4px; }
   .pref-name { font-weight: 600; font-size: 14px; }
   .pref-note { margin: 3px 0 10px; font-size: 12.5px; line-height: 1.45; color: var(--color-neutral-700); }
+  /* A list rather than a choice between two or three, so it is a select. Full
+     width, because a control that sizes to its longest option jumps as the
+     option changes. */
+  .pref-pick { width: 100%; min-height: 46px; font-size: 14.5px; cursor: pointer; }
   .pref-seg { display: flex; width: 100%; }
   .pref-seg .seg-opt { flex: 1 1 0; justify-content: center; text-align: center; }
 

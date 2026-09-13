@@ -19,6 +19,13 @@ const PALETTE = ['#4a2458', '#9b7bab', '#2e1b3d', '#e79aa4', '#6b4478', '#c9a04f
 // Money runs on green. Same light/dark rhythm as PALETTE so slices stay apart.
 const MONEY_PALETTE = ['#1f6b63', '#4fbfae', '#0f3f3a', '#a8dcd2', '#2a8b7d', '#7fc9bd', '#154f49', '#35a596'];
 const PURPOSES = ['Shopping', 'Projects', 'Movies', 'Petrol', 'Groceries', 'Eat Out', 'House Improvements', 'Birthdays', 'Commute', 'Gadgets', 'Utilities', 'Appliances'];
+/* What a new account is given to file its hours under. Named here rather than
+   written inside seedState, because the same list is what stockVocab reads to
+   decide which entries are the app's own. */
+const SEED_CATEGORIES = [
+  'Chores', 'Workout', 'Potato Couching', 'Family Time', 'Focus Work',
+  'Eat / Drink', 'Sleep', 'Prayers and Reflections', 'Meetings', 'Cooking'
+];
 const STORE_KEY = 'zimpan.v1';
 
 /* ─────────────────────────── brand ───────────────────────────
@@ -479,10 +486,7 @@ function seedState() {
     entries: seed.concat(hist),
     money: mSeed.concat(mHist),
     // Starting set for a new account. Existing accounts keep whatever they have.
-    categories: [
-      'Chores', 'Workout', 'Potato Couching', 'Family Time', 'Focus Work',
-      'Eat / Drink', 'Sleep', 'Prayers and Reflections', 'Meetings', 'Cooking'
-    ].map((name, i) => ({ name, color: PALETTE[i % PALETTE.length] })),
+    categories: SEED_CATEGORIES.map((name, i) => ({ name, color: PALETTE[i % PALETTE.length] })),
     purposes: PURPOSES.map((n, i) => ({ name: n, color: MONEY_PALETTE[i % MONEY_PALETTE.length] }))
   };
 }
@@ -4278,7 +4282,15 @@ function renamePick() {
   const from = t.name;
   const to = String(state.pickRenameName || '').trim().slice(0, 60);
 
+  if (lockedPick(t.kind, from)) { ACTIONS['pick-rename-cancel'](); return; }
   if (!to || to === from) { ACTIONS['pick-rename-cancel'](); return; }
+  /* Nor renamed INTO one of the app's own. Two rows under the same name is a
+     vocabulary the sync cannot key, and a "Chores" you wrote by hand taking
+     the locked one's place is the lock undone from the other side. */
+  if (lockedPick(t.kind, to)) {
+    flash(`${to} is one of Zimpan's own — pick another name`);
+    return;
+  }
   if (state[vocab].some((c) => c.name !== from && c.name.toLowerCase() === to.toLowerCase())) {
     flash(`There is already a ${noun} called ${to}`);
     return;
@@ -4360,6 +4372,54 @@ function pickCreateRow(kind, newLabel) {
     </div>`;
 }
 
+/* ── the vocabulary the app brought, and the vocabulary you wrote ──
+
+   Every account starts with a set of categories and purposes it did not
+   choose: the ten seeded into a new store, or the six the phone's setup lays
+   down. Those are the app's own, and they stay put — they cannot be renamed
+   and they cannot be deleted.
+
+   The reason is what deleting one takes with it. A category is not a label on
+   a row, it is the row's filing, and pick-del-confirm removes every entry
+   filed under the name it removes. "Sleep" holds the nights, "Eat / Drink"
+   holds the meals the calorie reading is taken from, and a tap meant to tidy
+   an unused name has always been able to take a month of them. Renaming is the
+   quieter half of the same thing: the rows follow the new name, and every
+   reading that recognises the old one stops recognising it.
+
+   Matched on the name rather than a flag on the row, so it needs no column, no
+   migration and nothing to sync — and an account restored from an older device
+   is protected the moment it loads rather than whenever a flag catches up. A
+   category somebody happens to have written by hand under one of these names
+   is, for this purpose, that category.
+
+   Work mode is left out of it. There the vocabulary is the team's projects,
+   made and unmade in the team sheet by whoever is allowed to, and this picker
+   is not the place that decides. */
+let stockNames = null;
+function stockVocab() {
+  if (!stockNames) {
+    const low = (v) => String(v || '').trim().toLowerCase();
+    stockNames = {
+      categories: new Set(SEED_CATEGORIES.map(low).concat(M_CATS.map((c) => low(c.name)))),
+      purposes: new Set(PURPOSES.map(low).concat(M_PURPOSES.map((p) => low(p.name))))
+    };
+  }
+  return stockNames;
+}
+
+const lockedPick = (kind, name) => !workMode()
+  && stockVocab()[kind === 'purpose' ? 'purposes' : 'categories']
+    .has(String(name || '').trim().toLowerCase());
+
+/* Said in the slot the two buttons sat in, so a locked row lines up with the
+   rest. A mark rather than a greyed-out button: a control that cannot be used
+   invites the press that proves it, and this is not a control. */
+const pickLock = (name) => `
+  <span class="pick-lock" title="Zimpan's own — ${esc(name)} cannot be renamed or deleted"
+    aria-label="${esc(name)} is one of Zimpan's own and cannot be renamed or deleted"
+    role="img">${nodeIcon('lock', 13)}</span>`;
+
 function pickerField(kind, label, names, selected, newLabel) {
   const open = state.pickOpen === kind;
   return `
@@ -4391,10 +4451,11 @@ function pickerField(kind, label, names, selected, newLabel) {
                   <button type="button" class="pick-opt${n === selected ? ' is-on' : ''}" role="option"
                     aria-selected="${n === selected}" data-act="pick-choose" data-pick="${esc(kind)}"
                     data-name="${esc(n)}" data-find="${esc(n.toLowerCase())}">${esc(withIcon(n))}</button>
+                  ${lockedPick(kind, n) ? pickLock(n) : `
                   <button type="button" class="pick-del" data-act="pick-rename" data-pick="${esc(kind)}"
                     data-name="${esc(n)}" aria-label="Rename ${esc(n)}" title="Rename ${esc(n)}">✎</button>
                   <button type="button" class="pick-del" data-act="pick-del" data-pick="${esc(kind)}"
-                    data-name="${esc(n)}" aria-label="Delete ${esc(n)}" title="Delete ${esc(n)}">✕</button>
+                    data-name="${esc(n)}" aria-label="Delete ${esc(n)}" title="Delete ${esc(n)}">✕</button>`}
                 </span>`)).join('')}
                 <div class="pick-empty" hidden>Nothing matches that.</div>
               </div>
@@ -6356,6 +6417,9 @@ const ICON_PATHS = {
     + '<path d="M12 8.1V12l2.9 1.7"/>',
   shield: '<path d="M12 3.2 19.4 6v6c0 4.4-3 7.3-7.4 8.8C7.6 19.3 4.6 16.4 4.6 12V6Z" stroke-linejoin="round"/>'
     + '<path d="M9.2 12.2 11.3 14.3 15 10.4"/>',
+  // Shackle and body. Drawn shut, because that is the only state it is used in.
+  lock: '<rect x="4.9" y="10.4" width="14.2" height="9.4" rx="2.4"/>'
+    + '<path d="M8.3 10.4V7.8a3.7 3.7 0 0 1 7.4 0v2.6"/>',
   /* Two rails set to different points: the shape of a default you can move. */
   sliders: '<path d="M4.4 8.6h8.4M17.2 8.6h2.4"/><path d="M4.4 15.4h2.4M10.8 15.4h8.8"/>'
     + '<circle cx="15.1" cy="8.6" r="2" fill="currentColor" stroke="none"/>'
@@ -12734,6 +12798,22 @@ function prefsRow(title, note, opts, act, now) {
     </div>`;
 }
 
+/* One question with more answers than a row of chips can hold. Six currencies
+   is a list, not a choice between two or three, so it is a select — the same
+   control the money card on the full layout uses, and the same action behind
+   it, so there is one way currency is set however you reach it. */
+function prefsPick(title, note, act, options, now) {
+  return `
+    <div class="pref-row">
+      <div class="pref-name">${esc(title)}</div>
+      <p class="pref-note">${esc(note)}</p>
+      <select class="input pref-pick" data-act="${esc(act)}" aria-label="${esc(title)}">
+        ${options.map(([val, label]) => `
+        <option value="${esc(val)}"${String(now) === String(val) ? ' selected' : ''}>${esc(label)}</option>`).join('')}
+      </select>
+    </div>`;
+}
+
 function prefsDialog() {
   if (!state.prefsOpen) return '';
   const consented = state.aiConsent || state.chatConsent;
@@ -12743,9 +12823,15 @@ function prefsDialog() {
     icon: 'sliders',
     tone: 'var(--color-accent)',
     kicker: 'Preferences',
-    title: 'What this app stops asking',
+    title: 'How Zimpan behaves',
     closeAct: 'prefs-close',
     body: `
+      ${prefsPick(
+        'Currency',
+        'What every amount is written in. The figures themselves are untouched — this is the sign in front of them.',
+        'set-currency',
+        CURRENCIES.map((c) => [c.code, `${c.label} (${c.symbol.trim()})`]),
+        currency().code)}
       ${prefsRow(
         'Money you spend',
         'Whether a spend comes off your balance or is kept aside.',
@@ -12775,8 +12861,13 @@ function prefsDialog() {
       <button class="btn btn-primary" data-act="prefs-close">Done</button>`,
     /* Checked rather than assumed: neither standing answer is in the sync
        payload, and consent is deliberately per-device. So this says the device,
-       and does not promise a phone what a laptop was told. */
-    foot: 'These are remembered on this device only. Another device asks you separately.'
+       and does not promise a phone what a laptop was told.
+
+       The currency is the exception and is named as one, because it does
+       travel — it is on the account, and a blanket "this device only" over a
+       panel that now holds it would be a plain untruth about the first row. */
+    foot: 'Your currency follows your account. Everything under it is remembered on '
+      + 'this device only — another device asks you separately.'
   });
 }
 
@@ -14032,7 +14123,11 @@ const ACTIONS = {
   'money-made': (el) => { state.moneyMade = el.dataset.dir === 'in' ? 'in' : 'out'; render(); },
   'money-made-close': () => { state.moneyMade = null; render(); },
 
+  /* Guarded here as well as drawn without its buttons. The markup is what
+     somebody sees; this is what actually decides, and a delete fired straight
+     at ACTIONS would otherwise take a month of rows with it. */
   'pick-rename': (el) => {
+    if (lockedPick(el.dataset.pick, el.dataset.name)) return;
     state.pickRename = { kind: el.dataset.pick, name: el.dataset.name };
     state.pickRenameName = el.dataset.name || '';
     // Tapping "rename" is asking to type, so the caret belongs in the field.
@@ -14045,13 +14140,14 @@ const ACTIONS = {
   'pick-rename-save': () => renamePick(),
 
   'pick-del': (el) => {
+    if (lockedPick(el.dataset.pick, el.dataset.name)) return;
     state.pickDelete = { kind: el.dataset.pick, name: el.dataset.name };
     render();
   },
   'pick-del-cancel': () => { state.pickDelete = null; render(); },
   'pick-del-confirm': () => {
     const t = state.pickDelete;
-    if (!t) return;
+    if (!t || lockedPick(t.kind, t.name)) return;
     const money = t.kind === 'purpose';
     const kind = money ? 'money' : 'entries';
     // Every row under it goes, each tombstoned so the deletion travels rather
@@ -16412,10 +16508,11 @@ function mFlowCategory() {
             <span style="width:9px;height:9px;flex:none;border-radius:50%;background:${esc(mColor(c.name, money))};"></span>
             <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;">${esc(c.name)}</span>
           </button>
+          ${lockedPick(money ? 'purpose' : 'category', c.name) ? pickLock(c.name) : `
           <button type="button" class="pick-del" data-act="pick-rename" data-pick="${money ? 'purpose' : 'category'}"
             data-name="${esc(c.name)}" aria-label="Rename ${esc(c.name)}">✎</button>
           <button type="button" class="pick-del" data-act="pick-del" data-pick="${money ? 'purpose' : 'category'}"
-            data-name="${esc(c.name)}" aria-label="Delete ${esc(c.name)}">✕</button>
+            data-name="${esc(c.name)}" aria-label="Delete ${esc(c.name)}">✕</button>`}
         </span>`)).join('')}
       <div class="pick-empty" hidden style="padding:12px 10px;font-size:14px;color:#756f88;">Nothing matches that.</div>
     </div>
