@@ -908,6 +908,9 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   /* The second half of the team headline: the same sentence-level idea at
      half the size and out of caps, so one h1 can carry a claim and its two
      qualifiers without shouting all three. */
+  /* The teams headline runs in sentence case: it is a plain claim rather than
+     a masthead, and caps made it read as one. */
+  .hero-h1.is-sentence { text-transform: none; letter-spacing: -.015em; }
   .hero-h1-sub {
     display: block; margin-top: 10px; text-transform: none;
     font-size: .44em; font-weight: 700; line-height: 1.2;
@@ -2180,32 +2183,6 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .chat-tab:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 
-  /* The question the panel opens on. Cards rather than the row of two above,
-     because this is the first thing on screen and it has to say what the
-     difference is — which two words on a toggle cannot. */
-  .chat-pick { margin: auto 0; display: flex; flex-direction: column; gap: 9px; }
-  .chat-pick-q {
-    margin: 0 0 2px; text-align: center;
-    font-family: var(--font-heading); font-weight: 700; font-size: 15px; color: var(--color-text);
-  }
-  .chat-pick-opt {
-    display: flex; align-items: flex-start; gap: 11px; text-align: left; width: 100%;
-    border: 1px solid var(--color-divider); border-radius: 14px; background: transparent;
-    padding: 13px 14px; cursor: pointer; font-family: var(--font-body);
-  }
-  .chat-pick-opt:hover {
-    border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
-    background: color-mix(in srgb, var(--color-accent) 6%, transparent);
-  }
-  .chat-pick-opt:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
-  .chat-pick-mark {
-    width: 32px; height: 32px; flex: none; border-radius: 10px; display: grid; place-items: center;
-    background: color-mix(in srgb, var(--color-accent) 14%, transparent); color: var(--color-accent-700);
-  }
-  .chat-pick-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-  .chat-pick-text strong { font-family: var(--font-heading); font-size: 14.5px; color: var(--color-text); }
-  .chat-pick-text span { font-size: 12px; line-height: 1.5; color: var(--color-neutral-700); }
-
   .chat-empty { margin: auto 0; text-align: center; }
   .chat-empty p { margin: 0 0 12px; font-size: 13px; line-height: 1.5; color: var(--color-neutral-700); }
   .chat-seeds { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; }
@@ -2461,13 +2438,37 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .tm-plan-flag { left: 14px; top: 9px; transform: none; font-size: 9.5px; padding: 3px 9px; }
 
-  /* Nothing lifts on a phone, where the cards are already stacked and a raised
-     one only breaks the rhythm of the column. */
+  /* Two across on a phone rather than one.
+     auto-fit resolves against the real width, and 190px twice plus the gap does
+     not fit a 390px screen, so every card took a row of its own and the section
+     became a column five screens long. The count is stated outright here and
+     the minimum drops to zero so the columns divide whatever there is. */
+  @media (max-width: 720px) {
+    .plans { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .plan { padding: 16px 10px 14px; border-radius: 15px; }
+    .plan-name { font-size: 15px; }
+    .plan-seats { font-size: 11px; min-height: 28px; }
+    .plan-price { margin: 4px 0 10px; }
+    .plan-amount { font-size: 25px; }
+    .plan-go { font-size: 13px; padding-left: 8px; padding-right: 8px; }
+    /* The flag is wider than a half-width card, so it sits inside the card
+       rather than across its top border. */
+    .plan.is-popular { padding-top: 26px; }
+    .plan-flag { font-size: 9px; padding: 3px 8px; top: 7px; letter-spacing: .06em; }
+  }
+
+  /* Nothing lifts on a phone, where a raised card in a grid of halves pulls its
+     own row out of line with the one beside it. */
   @media (max-width: 560px) {
     .plan.is-popular { transform: none; }
   }
 
-  .plans-foot { margin: 14px 0 0; text-align: center; font-size: 12.5px; color: var(--color-neutral-600); }
+  /* The terms, above the cards rather than under them. They are what you need
+     before reading a price, not a footnote to one. */
+  .plans-note {
+    margin: -6px 0 16px; text-align: center; font-size: 12.5px;
+    line-height: 1.55; color: var(--color-neutral-600);
+  }
 
   /* — the team sheet —
      One lightbox with tabs rather than a screen of its own: managing a team is
@@ -2590,9 +2591,24 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .ex-pill:hover { border-color: var(--color-accent); color: var(--color-accent-700); }
   .ex-pill.is-on { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+  /* The dates the named period resolved to, said once under the pills. "This
+     Month" is a name, not a boundary, and the file is named after the two
+     dates — so the two dates are on screen before the button is pressed. */
+  .ex-when {
+    margin: -4px 0 0 98px; font-size: 12px; color: var(--color-neutral-600);
+    font-variant-numeric: tabular-nums;
+  }
+  .ex-dates { display: flex; flex-wrap: wrap; gap: 10px; margin: -2px 0 0 98px; }
+  .ex-dates .seg-date { flex: 1 1 140px; min-width: 0; }
   .ex-count {
     margin: 16px 0 0; font-size: 13px; color: var(--color-neutral-800);
     font-variant-numeric: tabular-nums;
+  }
+
+  /* At phone width the label sits on its own line, so the indent that lined
+     these up with the pills would only push them off-centre. */
+  @media (max-width: 520px) {
+    .ex-when, .ex-dates { margin-left: 0; }
   }
 
   .tm-range {

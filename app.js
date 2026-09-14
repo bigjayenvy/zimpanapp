@@ -881,7 +881,14 @@ const state = {
      an errand, not a setting. */
   exportOpen: false,
   exportKind: 'time',
-  exportAll: false,
+  /* Which stretch of days the file covers. Its own choice rather than the
+     window on screen: exporting is an errand you arrive at with a period in
+     mind — the month for an accountant, yesterday for a timesheet — and
+     inheriting whatever range the page happened to be on meant changing the
+     page to change the file. Named periods, and Custom for everything else. */
+  exportRange: 'today',
+  exportFrom: '',
+  exportTo: '',
   exportBusy: '',
 
   /* The team's audit trail, as far as it has been read. Paged by the id of the
@@ -996,11 +1003,16 @@ const state = {
        is why an answer started talking at people who had not asked it to. */
     speak: readJson(CHAT_SPEAK_KEY, null),
     /* Which of the two sections is open: 'log' reads what you tracked, 'app'
-       only explains the app. Null until chosen, which is the first thing the
-       panel asks — a how-to question answered out of somebody's diary is the
-       wrong answer to the right question, and it was the only answer on
-       offer. Session state: it is a question about this conversation. */
-    mode: null
+       only explains the app.
+
+       It opens on the log. It used to open on neither, asking which first,
+       and that screen was a toll on the common case: almost everybody taps
+       this to ask about what they tracked, and being made to say so before
+       being allowed to type is a question the app could answer itself. The
+       tabs are still there, so the how-to side is one tap away — which is
+       what the chooser was really for. Session state: it is a question about
+       this conversation. */
+    mode: 'log'
   },
   chatConsent: readJson(CHAT_CONSENT_KEY, false) === true,
   chatAsking: false,
@@ -7063,13 +7075,11 @@ function teamsScreen() {
     <section class="hero">
       <div class="hero-copy">
         <span class="hero-eyebrow">For teams · From $9 a month</span>
-        <!-- One heading, two voices. The first sentence is the headline and
-             wears the page's caps; the two that follow are the promise and the
-             limit, and setting them in caps at headline size would shout three
-             times over. They stay inside the h1 because they are part of the
-             title, and a crawler reading the markup should find the whole of
-             it in one place rather than a fragment. -->
-        <h1 class="hero-h1">Know where your team&rsquo;s week went.<span class="hero-h1-sub">One flat price. Nothing personal.</span></h1>
+        <!-- Sentence case, and one voice. The caps and the second line both
+             went: what the page sells is a measurement, and a headline that
+             shouts it then qualifies it twice underneath reads as three
+             claims rather than one. The lede below says the rest. -->
+        <h1 class="hero-h1 is-sentence">Measure your team&rsquo;s productivity</h1>
         <p class="hero-lede">
           Your team logs hours against real projects. You see where the time went.
           Nobody sees anything else.
@@ -7080,9 +7090,12 @@ function teamsScreen() {
             <li><span class="hero-check">${CHECK_ICON}</span>${esc(t)}</li>`).join('')}
         </ul>
 
+        <!-- The account first. Opening one is what this page is for; the
+             price is a thing you check on the way, and it was the filled
+             button of the two. -->
         <div class="hero-ctas">
-          <button data-act="scroll-pricing" class="btn btn-primary" style="font-size:16px;font-weight:600;padding:13px 30px;border-radius:999px;cursor:pointer;">See pricing</button>
-          <button class="btn btn-secondary hero-cta2" data-act="auth-open-work">Create Teams Account</button>
+          <button data-act="auth-open-work" class="btn btn-primary" style="font-size:16px;font-weight:600;padding:13px 30px;border-radius:999px;cursor:pointer;">Create Teams Account</button>
+          <button class="btn btn-secondary hero-cta2" data-act="scroll-pricing">See pricing</button>
         </div>
       </div>
 
@@ -7140,8 +7153,8 @@ function teamsScreen() {
         <span class="strip-rule"></span>
         <span class="strip-note">One price per team, not per seat</span>
       </div>
+      <p class="plans-note">Start free for ${TEAM_TRIAL_DAYS} days with up to 3 people, then subscribe from inside your team. Billed monthly in USD.</p>
       <div class="plans">${TEAM_OFFERED.map(plan).join('')}</div>
-      <p class="plans-foot">Start free for ${TEAM_TRIAL_DAYS} days with up to 3 people, then subscribe from inside your team. Billed monthly in USD. The personal Zimpan stays free for everyone.</p>
     </section>
 
     <footer style="padding:22px 28px 34px;display:flex;flex-direction:column;align-items:center;gap:12px;">
@@ -7431,15 +7444,53 @@ function lightbox(o) {
    The dialog asks the two things the file depends on — which log, and over
    what — and then hands over a file.
 
-   The window offered is the one already on screen, whatever it is: choosing a
-   fortnight and then exporting should not mean choosing it twice. "Everything"
-   is the other end, and is there because the commonest reason to want a CSV at
-   all is to have a copy that does not depend on this app. */
+   The period is the dialog's own, not the page's. It used to be whichever
+   range the page was parked on, which read as economical and worked as a
+   trap: wanting last month's file meant putting the whole app on last month
+   first. Five named periods instead, and Custom — seeded with everything ever
+   logged, because the commonest reason to want a CSV at all is a copy that
+   does not depend on this app. */
 const EXPORT_KINDS = [['time', 'Activity'], ['money', 'Money'], ['both', 'Both']];
 
+/* The periods offered, in the order somebody would look for them: the two
+   single days first, then the two months, then the escape hatch. Today and
+   Yesterday are worked out from the real date rather than from the day the
+   page is parked on — "Today" that means the 3rd because the 3rd is selected
+   is not what the word says. */
+const EXPORT_SPANS = [
+  ['today', 'Today'], ['yesterday', 'Yesterday'],
+  ['thismonth', 'This Month'], ['lastmonth', 'Last Month'],
+  ['custom', 'Custom']
+];
+
+/* Custom opens on everything ever logged rather than on an arbitrary month.
+   It is the widest thing the picker can mean, it is what somebody taking a
+   copy of their log wants, and narrowing two dates is easier than guessing
+   which day the first entry was. */
+function exportEverWindow() {
+  let first = todayIso;
+  const consider = (d) => { if (d && d < first) first = d; };
+  state.entries.forEach((e) => consider(e.date));
+  state.money.forEach((e) => consider(e.date));
+  return { from: first, to: todayIso };
+}
+
+function exportWindow() {
+  const r = state.exportRange;
+  if (r === 'custom') {
+    const ever = exportEverWindow();
+    const a = state.exportFrom || ever.from;
+    const b = state.exportTo || ever.to;
+    return a <= b ? { from: a, to: b } : { from: b, to: a };
+  }
+  if (r === 'yesterday') { const y = windowStart(todayIso, 2); return { from: y, to: y }; }
+  if (r === 'thismonth' || r === 'lastmonth') return rangeWindow(r, todayIso);
+  return { from: todayIso, to: todayIso };
+}
+
 const exportRows = (kind) => {
-  const w = state.exportAll ? null : currentWindow();
-  const inside = (list) => (w ? list.filter((e) => e.date >= w.from && e.date <= w.to) : list.slice());
+  const w = exportWindow();
+  const inside = (list) => list.filter((e) => e.date >= w.from && e.date <= w.to);
   const by = (a, b) => (a.date === b.date ? (a.from || 0) - (b.from || 0) : (a.date < b.date ? -1 : 1));
   if (kind === 'money') return inside(state.money).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   return inside(state.entries).sort(by);
@@ -7485,7 +7536,7 @@ const MONEY_COLUMNS = [
 function exportDialog() {
   if (!state.exportOpen) return '';
   const kind = state.exportKind;
-  const w = state.exportAll ? null : currentWindow();
+  const w = exportWindow();
   const counts = {
     time: kind === 'money' ? 0 : exportRows('time').length,
     money: kind === 'time' ? 0 : exportRows('money').length
@@ -7505,12 +7556,19 @@ function exportDialog() {
     .filter(([k]) => !(workMode() && k !== 'time'))
     .map(([k, label]) => pill('export-kind', label, kind === k, ` data-kind="${k}"`)).join('')}</div>
       </div>
-      <div class="ex-row"><span class="ex-lab">How much</span>
-        <div class="ex-pills">
-          ${pill('export-window', w ? spanLabel(w) : spanLabel(currentWindow()), !state.exportAll)}
-          ${pill('export-everything', 'Everything', state.exportAll)}
-        </div>
+      <div class="ex-row"><span class="ex-lab">Duration</span>
+        <div class="ex-pills">${EXPORT_SPANS
+    .map(([k, label]) => pill('export-span', label, state.exportRange === k, ` data-span="${k}"`)).join('')}</div>
       </div>
+      ${state.exportRange === 'custom' ? `
+      <div class="ex-dates">
+        <label class="seg-date"><span>From</span>
+          <input class="input date-in" type="date" data-k="export-from" data-change="export-from"
+            value="${esc(w.from)}" max="${esc(todayIso)}"></label>
+        <label class="seg-date"><span>To</span>
+          <input class="input date-in" type="date" data-k="export-to" data-change="export-to"
+            value="${esc(w.to)}" max="${esc(todayIso)}"></label>
+      </div>` : `<p class="ex-when">${esc(spanLabel(w))}</p>`}
       <p class="ex-count">${counts.time + counts.money === 0
     ? 'Nothing to export in that window.'
     : `${[counts.time ? `${counts.time} ${counts.time === 1 ? 'entry' : 'entries'}` : '',
@@ -8105,27 +8163,43 @@ function paintChatDraft() {
    The app section is given no log at all — not an empty one, none — which is
    also why it needs no consent: nothing about the person leaves the device to
    answer a question about a button. */
+/* Openers that match the tracker you opened this from.
+
+   The panel was offering "Am I burning more than I eat?" over the money
+   tracker. The assistant reads the whole log either way and would have
+   answered it — but an opener is a suggestion about what to ask next, and
+   suggesting the hours while somebody is looking at their spending is the
+   panel talking about the wrong screen. The questions differ; what is sent
+   does not. */
+const LOG_SEEDS = {
+  time: ['Am I burning more than I eat?', 'Where did my time go this week?', 'What took the most hours?', 'How has my sleep been?'],
+  money: ['Where did my money go this week?', 'What am I spending most on?', 'Am I spending more than I receive?', 'What went out off budget?']
+};
+
 const CHAT_MODES = {
   log: {
-    label: 'My log',
+    /* Plural, because what it reads is every log there is — the hours, the
+       money, the meals and the sleep — not the one tracker on screen. */
+    label: 'My Logs',
     icon: 'pulse',
     blurb: (days) => `What you tracked — hours, money, meals, sleep. Sends your last ${days} days so it can read them.`,
     ask: 'Ask about your log',
-    seeds: ['Am I burning more than I eat?', 'Where did my time go this week?', 'What am I spending most on?', 'How has my sleep been?']
+    seeds: () => (state.app === 'money' ? LOG_SEEDS.money : LOG_SEEDS.time)
   },
   app: {
     label: 'How the app works',
     icon: 'question',
     blurb: () => 'Buttons, features and where things live. Sends nothing but the question — it cannot see your log.',
     ask: 'Ask how something works',
-    seeds: ['How do I start using it?', 'How do I edit a category?', 'What is the To Do pad for?', 'How is my calorie burn worked out?']
+    seeds: () => ['How do I start using it?', 'How do I edit a category?', 'What is the To Do pad for?', 'How is my calorie burn worked out?']
   }
 };
 
 function chatBody(closeAct) {
   const c = state.chat;
   const empty = !c.messages.length;
-  const spec = CHAT_MODES[c.mode] || null;
+  // Always one of the two now; the panel opens on the log rather than asking.
+  const spec = CHAT_MODES[c.mode] || CHAT_MODES.log;
 
   const bubbles = c.messages.map((m) => `
     <div class="chat-turn is-${m.role === 'user' ? 'me' : 'it'}">
@@ -8136,26 +8210,7 @@ function chatBody(closeAct) {
   /* Openers rather than an empty box. Nobody's first instinct is to know what
      an assistant can be asked, and these are the questions each side answers
      well. */
-  const seeds = spec ? spec.seeds : [];
-
-  /* The choice, before anything is asked. Two cards rather than a segmented
-     control at this point: it is the first thing on screen and it has to say
-     what the difference is, which a two-word toggle cannot. */
-  const chooser = `
-        <div class="chat-pick">
-          <p class="chat-pick-q">What can I help with?</p>
-          ${Object.keys(CHAT_MODES).map((key) => {
-    const m = CHAT_MODES[key];
-    return `
-          <button type="button" class="chat-pick-opt" data-act="chat-mode" data-mode="${esc(key)}">
-            <span class="chat-pick-mark" aria-hidden="true">${nodeIcon(m.icon, 18)}</span>
-            <span class="chat-pick-text">
-              <strong>${esc(m.label)}</strong>
-              <span>${esc(m.blurb(CHAT_DAYS))}</span>
-            </span>
-          </button>`;
-  }).join('')}
-        </div>`;
+  const seeds = spec.seeds();
 
   return `
   <div class="chat">
@@ -8163,7 +8218,7 @@ function chatBody(closeAct) {
       <span class="chat-mark" aria-hidden="true">${nodeIcon('pulse', 18)}</span>
       <div class="chat-title">
         <strong>Chat with Zimpan</strong>
-        <span>${spec ? esc(spec.blurb(CHAT_DAYS)) : 'Your log, and how this app works. Nothing beyond that.'}</span>
+        <span>${esc(spec.blurb(CHAT_DAYS))}</span>
       </div>
       ${canSpeak() ? `<button type="button" class="chat-icon${c.speak ? ' is-on' : ''}" data-act="chat-speak"
         aria-pressed="${c.speak}" title="${c.speak ? 'Replies are read aloud' : 'Replies stay silent'}"
@@ -8171,15 +8226,14 @@ function chatBody(closeAct) {
       <button type="button" class="chat-icon" data-act="${esc(closeAct)}" aria-label="Close">✕</button>
     </div>
 
-    ${spec ? `
     <div class="chat-tabs" role="group" aria-label="What to ask about">
       ${Object.keys(CHAT_MODES).map((key) => `
-      <button type="button" class="chat-tab${key === c.mode ? ' is-on' : ''}" data-act="chat-mode" data-mode="${esc(key)}"
-        aria-pressed="${key === c.mode}">${esc(CHAT_MODES[key].label)}</button>`).join('')}
-    </div>` : ''}
+      <button type="button" class="chat-tab${CHAT_MODES[key] === spec ? ' is-on' : ''}" data-act="chat-mode" data-mode="${esc(key)}"
+        aria-pressed="${CHAT_MODES[key] === spec}">${esc(CHAT_MODES[key].label)}</button>`).join('')}
+    </div>
 
     <div class="chat-log" data-chat-log>
-      ${!spec ? chooser : empty ? `
+      ${empty ? `
         <div class="chat-empty">
           <p>${esc(spec.blurb(CHAT_DAYS))}</p>
           <div class="chat-seeds">
@@ -8191,7 +8245,6 @@ function chatBody(closeAct) {
       ${c.error ? `<div class="chat-err">${esc(c.error)}</div>` : ''}
     </div>
 
-    ${spec ? `
     <div class="chat-ask">
       ${canHear() ? `<button type="button" class="chat-mic${c.listening ? ' is-live' : ''}" data-act="chat-listen"
         aria-pressed="${c.listening}" aria-label="${c.listening ? 'Stop listening' : 'Ask by voice'}"
@@ -8200,12 +8253,10 @@ function chatBody(closeAct) {
         data-enter="chat-send" value="${esc(c.draft)}" autocomplete="off"
         placeholder="${c.listening ? 'Listening…' : esc(spec.ask)}" aria-label="${esc(spec.ask)}">
       <button type="button" class="btn btn-primary chat-send" data-act="chat-send"${c.busy ? ' disabled' : ''}>Ask</button>
-    </div>` : ''}
-    <p class="chat-foot">${!spec
-    ? 'Answers can be wrong either way, and nothing here can change your log.'
-    : c.mode === 'app'
-      ? 'Answers describe the app and can be wrong. This section cannot see your log.'
-      : 'Answers are read from what you logged and can be wrong. Nothing here can change your log.'}</p>
+    </div>
+    <p class="chat-foot">${c.mode === 'app'
+    ? 'Answers describe the app and can be wrong. This section cannot see your log.'
+    : 'Answers are read from what you logged and can be wrong. Nothing here can change your log.'}</p>
   </div>`;
 }
 
@@ -14010,13 +14061,23 @@ const ACTIONS = {
   },
   'export-close': () => { state.exportOpen = false; render(); },
   'export-kind': (el) => { state.exportKind = el.dataset.kind || 'time'; render(); },
-  'export-window': () => { state.exportAll = false; render(); },
-  'export-everything': () => { state.exportAll = true; render(); },
+  'export-span': (el) => {
+    const span = el.dataset.span || 'today';
+    /* Custom is seeded with the whole log the first time it is opened, so the
+       two date fields start somewhere real rather than empty. */
+    if (span === 'custom' && !state.exportFrom && !state.exportTo) {
+      const ever = exportEverWindow();
+      state.exportFrom = ever.from;
+      state.exportTo = ever.to;
+    }
+    state.exportRange = span;
+    render();
+  },
   /* Two files rather than one with a blank row between the two tables: a CSV
      holds one table, and a spreadsheet opening a file with two headers in it
      reads the second as data. */
   'export-go': () => {
-    const w = state.exportAll ? null : currentWindow();
+    const w = exportWindow();
     const kind = state.exportKind;
     if (kind !== 'money') {
       const rows = exportRows('time');
@@ -14390,6 +14451,8 @@ const CHANGES = {
 
   /* A cleared date is not a date. The field keeps whatever it had rather than
      the window collapsing to the epoch under somebody mid-edit. */
+  'export-from': (el) => { if (el.value) { state.exportFrom = el.value; render(); } else scheduleRender(); },
+  'export-to': (el) => { if (el.value) { state.exportTo = el.value; render(); } else scheduleRender(); },
   'custom-from': (el) => { if (el.value) { state.customFrom = el.value; render(); } else scheduleRender(); },
   'custom-to': (el) => { if (el.value) { state.customTo = el.value; render(); } else scheduleRender(); },
   'team-from': (el) => { if (el.value) { state.teamFrom = el.value; render(); teamReload(); } else scheduleRender(); },
