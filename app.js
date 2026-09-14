@@ -2775,6 +2775,22 @@ const MEAL_LABEL = /^\s*(?:breakfast|brunch|lunch|dinner|supper|snack|merienda|m
 const describesFood = (r) => !!((r.note || '').trim()
   || String(r.activity || '').toLowerCase().replace(MEAL_LABEL, '').trim());
 
+/* The rows that make up a day's estimate, in the order they are sent in.
+
+   One meal per line, and the estimate tags every item it finds with the number
+   of the line it was on — so this is the list those numbers index into. Kept
+   beside foodDetail rather than derived again at the reader, because a row
+   this skipped and that one kept would shift every number after it and file
+   somebody's dinner under their breakfast. */
+const foodLines = (rows) => rows.filter(describesFood);
+
+/* One row, as one line. Whitespace is collapsed on purpose: a note written
+   across two lines used to go up as two lines, and the numbering the estimate
+   answers with counts lines. A meal whose note had a newline in it would have
+   renumbered every meal after it. */
+const foodLine = (r) => [String(r.activity || '').trim(), String(r.note || '').trim()]
+  .filter(Boolean).join(': ').replace(/\s+/g, ' ');
+
 /* What would be sent for an AI estimate, and what the cache is keyed on. Only
    the food itself — no dates, no amounts, nothing identifying.
 
@@ -2782,9 +2798,7 @@ const describesFood = (r) => !!((r.note || '').trim()
    look right and miss the cache on the first difference in punctuation. Joined
    only where both halves exist, so a row described by its activity alone does
    not go up as "half glass wine:" with a dangling colon. */
-const foodDetail = (rows) => rows.filter(describesFood)
-  .map((r) => [String(r.activity || '').trim(), String(r.note || '').trim()].filter(Boolean).join(': '))
-  .join('\n');
+const foodDetail = (rows) => foodLines(rows).map(foodLine).join('\n');
 const foodKey = (rows) => { const d = foodDetail(rows); return d ? textKey(d) : ''; };
 
 /* The figure a set of meals is worth, with any day that has been calibrated by
@@ -3180,19 +3194,29 @@ function entryEnergy(e) {
 
   // Eaten, not bought: a grocery run has no business wearing a "kcal eaten" chip.
   if (isEatenRow(e)) {
-    const local = nutritionFor([e]).kcal;
-    if (!local) return null;
     /* A refinement has to reach the row as well as the block above it. Refined
        in one place and not the other, the card and the "What you ate" figure
        disagree about the same meal — which is the thing the report block's own
        comment says must never happen, applied one level down.
 
-       The day's correction is apportioned across the day's rows rather than
-       claimed per item: the estimate is asked for a day's worth of text at
-       once, so what it actually knows is that day's total. Scaling by the ratio
-       keeps the rows summing to exactly the figure on the block, which is the
-       property that matters — no row claims a precision the estimate has not
-       got. */
+       First choice is what the estimate said about this meal: it names every
+       item it read and which meal it read it on, so this row's figure is the
+       sum of its own items rather than a share of the day. */
+    const mine = aiForRow(e);
+    if (mine) {
+      return mine.kcal
+        ? { kind: 'food', kcal: mine.kcal, refined: true, label: `~${mine.kcal.toLocaleString('en-US')} kcal eaten` }
+        : null;
+    }
+
+    const local = nutritionFor([e]).kcal;
+    if (!local) return null;
+    /* And where it cannot — an estimate from before items were attributed —
+       the day's correction is shared across the day's rows on the local
+       reading's shape. Less true than the sum above, and the only thing such
+       an estimate supports: what it knows is the day's total. Scaling keeps
+       the rows summing to exactly the figure on the block, which is the
+       property that matters either way. */
     const day = dayFood(e.date);
     const kcal = day && day.ai && day.local.kcal
       ? Math.max(1, Math.round(local * (day.ai.kcal / day.local.kcal)))
@@ -3271,6 +3295,82 @@ function buildDayFood(date) {
   // handed — foodReport reads it as a number and an array was never one.
   return rows.length ? foodReport(rows, [], 1) : null;
 }
+
+/* The estimate read back per meal.
+
+   A day is estimated in one request, so what comes back is one list of items
+   for the whole day. Those items used to carry only a name and a figure, which
+   meant the app knew what the day came to and nothing about which meal any of
+   it belonged to — so the meals were shown as shares of the day's total, cut
+   to the shape the local table read them in.
+
+   That shape is wrong exactly where the table is. A snack of 100g of peanuts,
+   two eggs and a tea itemised at 805 kcal was shown as 637, because the table
+   under-reads nuts and the share was cut from the table's reading. The figure
+   the model actually produced for that snack never reached the screen.
+
+   Every item now says which line it was written on, so a meal is the sum of
+   the items read in it. This returns that sum per row, or null where it cannot
+   be had.
+
+   All or nothing. An estimate made before items carried a line number — one
+   already on this device, or one synced from another still running older code
+   — has nothing to attribute; so does one where the model tagged an item with
+   a line that does not exist. Either way the day falls back to the share it
+   always used, rather than showing three meals that add up and a fourth that
+   does not. */
+function buildAiSplit(date) {
+  const day = dayFood(date);
+  const ai = day && day.ai;
+  const items = ai && Array.isArray(ai.items) ? ai.items : null;
+  if (!items || !items.length) return null;
+
+  const lines = foodLines(state.entries.filter((r) => r.date === date));
+  if (!lines.length) return null;
+
+  const by = new Map();
+  lines.forEach((r) => by.set(r.id, { kcal: 0, protein: 0, carbs: 0, fat: 0, items: [] }));
+  for (const it of items) {
+    const row = lines[(Number(it.line) || 0) - 1];
+    // One item nobody can place makes the whole day unplaceable — see above.
+    if (!row) return null;
+    const t = by.get(row.id);
+    t.kcal += Number(it.kcal) || 0;
+    t.protein += Number(it.protein) || 0;
+    t.carbs += Number(it.carbs) || 0;
+    t.fat += Number(it.fat) || 0;
+    t.items.push(it);
+  }
+
+  /* Rounded so the rows still add to the day. The sums above are whole numbers
+     already — every figure is rounded in validate() before it leaves the
+     server — but the day's total is its own rounded figure, and apportion is
+     what guarantees the two agree to the calorie however they were made. */
+  const ids = [...by.keys()];
+  ['kcal', 'protein', 'carbs', 'fat'].forEach((key) => {
+    const whole = Math.round(Number(ai[key]) || 0);
+    const parts = apportion(ids.map((id) => by.get(id)[key]), whole);
+    ids.forEach((id, i) => { by.get(id)[key] = parts[i]; });
+  });
+  return by;
+}
+
+/* Memoised per render, like dayFood above it and for the same reason: the
+   entry list asks about the same day once per row. */
+let aiSplitMemo = { at: -1, map: new Map() };
+function aiSplit(date) {
+  if (aiSplitMemo.at !== renderSeq) aiSplitMemo = { at: renderSeq, map: new Map() };
+  if (aiSplitMemo.map.has(date)) return aiSplitMemo.map.get(date);
+  const r = buildAiSplit(date);
+  aiSplitMemo.map.set(date, r);
+  return r;
+}
+
+/* What the estimate says one row is worth, when it can say. */
+const aiForRow = (e) => {
+  const split = e && e.date ? aiSplit(e.date) : null;
+  return split ? split.get(e.id) || null : null;
+};
 
 let renderSeq = 0;
 let dayFoodMemo = { at: -1, map: new Map() };
@@ -16036,13 +16136,18 @@ function mCalItems(dates, kind) {
   if (kind === 'food') {
     return rows.filter(isEatenRow).map((e) => {
       const n = nutritionFor([e]);
+      /* What the estimate itself said about this meal, where it can say. The
+         row keeps its local reading beside it — the panel needs both: one to
+         show, and one to fall back to the old share on a day the estimate
+         cannot be split. */
+      const mine = aiForRow(e);
       return {
         name: e.activity || 'Meal',
         meta: e.note ? String(e.note).trim() : 'nothing written down',
         when: `${clock12(e.from)} · ${dayLabel(e.date)}`,
-        kcal: n.kcal, macros: n, vague: !n.kcal
+        kcal: n.kcal, macros: n, vague: !n.kcal && !mine, ai: mine
       };
-    }).sort((a, b) => b.kcal - a.kcal);
+    }).sort((a, b) => (b.ai ? b.ai.kcal : b.kcal) - (a.ai ? a.ai.kcal : a.kcal));
   }
 
   const kg = Number(state.weightKg) || DEFAULT_WEIGHT_KG;
@@ -16153,10 +16258,30 @@ function calBreakdown(kind, dates, report, scope, closeAct) {
   const macroTotal = food && counted ? grams : null;
 
   const priced = read.filter((r) => !r.vague);
-  const items = !food || !report || !priced.length || !localTotal || !headline ? read : (() => {
-    const kcals = apportion(priced.map((r) => r.kcal), headline);
+  /* Whose shape the shares are cut from.
+
+     The estimate's own, wherever every meal on screen has one: it named the
+     items it read and which meal it read them on, so a meal is the sum of its
+     own items. A snack of peanuts that the table under-reads is no longer
+     handed the table's share of the day.
+
+     The local reading's, otherwise — which is every day calibrated before this
+     was added, and any window holding one. apportion still runs over whichever
+     shape it is, because the rows have to add to the figure above them either
+     way, and that is a question about rounding rather than about shape.
+
+     `ai` is in the test rather than only the rows: a window whose headline came
+     from the table would otherwise be shaped by the estimate and scaled to the
+     table's total, and the note under it would claim a sum it had not made. */
+  const attributed = !!ai && !!priced.length && priced.every((r) => r.ai);
+  const shapeOf = (r, key) => (attributed
+    ? r.ai[key]
+    : (key === 'kcal' ? r.kcal : (r.macros && r.macros[key]) || 0));
+
+  const items = !food || !report || !priced.length || (!localTotal && !attributed) || !headline ? read : (() => {
+    const kcals = apportion(priced.map((r) => shapeOf(r, 'kcal')), headline);
     const shares = ['protein', 'carbs', 'fat'].reduce((acc, key) => {
-      acc[key] = apportion(priced.map((r) => (r.macros && r.macros[key]) || 0), grams[key] || 0);
+      acc[key] = apportion(priced.map((r) => shapeOf(r, key)), grams[key] || 0);
       return acc;
     }, {});
     let i = -1;
@@ -16243,7 +16368,9 @@ function calBreakdown(kind, dates, report, scope, closeAct) {
   ${refine}
   <p style="margin:14px 0 0;font-size:11.5px;line-height:1.5;color:#9995ab;">
     ${food
-      ? `Calories and grams are read from what you wrote in each entry, against a table of typical servings. An entry with nothing written down cannot be priced, which is what “not read” means. The day is read as a whole${ai ? ' — by AI, from what you wrote —' : ''} and shared across the meals in proportion to what each one weighs, so the figures here add up to the total above.`
+      ? `Calories and grams are read from what you wrote in each entry, against a table of typical servings. An entry with nothing written down cannot be priced, which is what “not read” means. ${attributed
+        ? 'Each meal here is the sum of the items read in it, so these figures add up to the total above.'
+        : `The day is read as a whole${ai ? ' — by AI, from what you wrote —' : ''} and shared across the meals in proportion to what each one came to on its own, so the figures here add up to the total above.`}`
       : 'Priced from the activity and how long it ran, against your weight. Overlapping entries are counted once.'}
   </p>`;
 }

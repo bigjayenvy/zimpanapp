@@ -91,55 +91,94 @@ export async function warmAI() {
    person see whether it read them correctly. */
 const SYSTEM = `You estimate the nutrition of food described in free text.
 
-- Read every item, including quantities and weights ("250g", "2 large", "1 cup").
+The text arrives as numbered lines. Each line is one meal as it was logged.
+
+- Read every item on every line, including quantities and weights ("250g", "2 large", "1 cup").
+- Return one entry per item, and tag it with the number of the line it came from.
 - Use typical published values for the named brand or dish where you know it.
 - Items that are not food (supplements with no calories, water, plain black coffee) count as near zero.
 - If an item is too vague to price, include it with your best typical estimate.
-- All figures are for the whole text combined, in kilocalories and grams.`;
+- Figures are per item, in kilocalories and grams. Do not total them — that is done from your items.`;
 
 /* Structured outputs. Every object needs additionalProperties:false and a
    complete `required` list; numeric bounds are not part of the supported subset,
    which is why the sanity check below is a separate step rather than a schema. */
+/* Items only, and every figure on one.
+
+   The day's totals used to be asked for beside the items, as four more numbers
+   the model wrote down. Nothing made the two agree, and they did not: a day
+   itemised at 2,230 kcal was reported as 2,130, and the macros beside it worked
+   out to 2,182 under Atwater. Three answers to one question, all from the same
+   reply, because the schema never asked them to reconcile.
+
+   So the items are the answer and the totals are arithmetic over them. A
+   reader who adds up what is on screen arrives at what is printed above it,
+   because that is literally how it was made.
+
+   `line` is which numbered line of the input the item came from, which is what
+   lets a day's estimate be read back per meal instead of poured into the
+   local table's shape. */
 const SCHEMA = {
   type: 'object',
   properties: {
-    kcal: { type: 'number' },
-    protein: { type: 'number' },
-    carbs: { type: 'number' },
-    fat: { type: 'number' },
     items: {
       type: 'array',
       items: {
         type: 'object',
-        properties: { name: { type: 'string' }, kcal: { type: 'number' } },
-        required: ['name', 'kcal'],
+        properties: {
+          line: { type: 'integer', description: 'The numbered line this item was written on.' },
+          name: { type: 'string' },
+          kcal: { type: 'number' },
+          protein: { type: 'number' },
+          carbs: { type: 'number' },
+          fat: { type: 'number' }
+        },
+        required: ['line', 'name', 'kcal', 'protein', 'carbs', 'fat'],
         additionalProperties: false
       }
     }
   },
-  required: ['kcal', 'protein', 'carbs', 'fat', 'items'],
+  required: ['items'],
   additionalProperties: false
 };
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
-/* Sanity bounds. A day's eating above 20,000 kcal is a parse failure, not a
-   meal, and the macros have to be within reach of the energy they describe. */
-function validate(parsed) {
-  if (!parsed || typeof parsed !== 'object') return null;
-  const kcal = num(parsed.kcal), p = num(parsed.protein), c = num(parsed.carbs), f = num(parsed.fat);
-  if (kcal === null || kcal < 0 || kcal > 20000) return null;
-  if ([p, c, f].some((x) => x === null || x < 0 || x > 2000)) return null;
+/* Sanity bounds, and the totals.
 
-  const items = Array.isArray(parsed.items)
-    ? parsed.items
-        .filter((i) => i && typeof i.name === 'string' && num(i.kcal) !== null)
-        .slice(0, 40)
-        .map((i) => ({ name: i.name.slice(0, 80), kcal: Math.round(Math.max(0, i.kcal)) }))
-    : [];
+   A schema guarantees shape, not sense: 999,999 kcal on one item is perfectly
+   well-formed. Every figure is clamped here, the items are summed, and a day's
+   eating above 20,000 kcal is read as a parse failure rather than as a meal.
+
+   An item with no usable line number is kept and filed under line 0, which no
+   meal claims. It still counts towards the day — dropping food because the
+   model mislabelled which line it was on would silently lose calories, which is
+   the worse failure of the two. */
+function validate(parsed, lines) {
+  if (!parsed || typeof parsed !== 'object') return null;
+  if (!Array.isArray(parsed.items)) return null;
+
+  const gram = (v) => Math.round(Math.min(2000, Math.max(0, num(v) ?? 0)));
+  const items = parsed.items
+    .filter((i) => i && typeof i.name === 'string' && num(i.kcal) !== null)
+    .slice(0, 60)
+    .map((i) => {
+      const line = Number.isInteger(i.line) && i.line >= 1 && i.line <= lines ? i.line : 0;
+      return {
+        line,
+        name: i.name.slice(0, 80),
+        kcal: Math.round(Math.min(20000, Math.max(0, i.kcal))),
+        protein: gram(i.protein), carbs: gram(i.carbs), fat: gram(i.fat)
+      };
+    });
+  if (!items.length) return null;
+
+  const add = (key) => items.reduce((a, i) => a + i[key], 0);
+  const kcal = add('kcal');
+  if (kcal > 20000) return null;
 
   return {
-    kcal: Math.round(kcal), protein: Math.round(p), carbs: Math.round(c), fat: Math.round(f),
+    kcal, protein: add('protein'), carbs: add('carbs'), fat: add('fat'),
     items, source: 'ai'
   };
 }
@@ -148,6 +187,13 @@ export async function estimateNutrition(text) {
   if (!aiConfigured()) throw new Error('AI estimates are not configured on this server.');
   const clean = String(text || '').trim().slice(0, MAX_TEXT);
   if (!clean) throw new Error('Nothing to estimate.');
+
+  /* Numbered here rather than by the caller, so the cache key stays the plain
+     text it always was. A key derived from numbered lines would miss every
+     estimate already on every device, and the numbering is an argument to the
+     model rather than a fact about the meal. */
+  const lines = clean.split('\n').map((l) => l.trim()).filter(Boolean);
+  const numbered = lines.map((l, i) => `${i + 1}. ${l}`).join('\n');
 
   let res;
   try {
@@ -167,7 +213,7 @@ export async function estimateNutrition(text) {
         { format: { type: 'json_schema', schema: SCHEMA } },
         effortLevel() ? { effort: effortLevel() } : {}
       ),
-      messages: [{ role: 'user', content: clean }]
+      messages: [{ role: 'user', content: numbered }]
     }, { timeout: TIMEOUT_MS });
   } catch (err) {
     /* Typed, most specific first: the three a user can actually hit are worth
@@ -212,7 +258,7 @@ export async function estimateNutrition(text) {
     throw new Error('The estimate came back in a form we could not read.');
   }
 
-  const checked = validate(parsed);
+  const checked = validate(parsed, lines.length);
   if (!checked) {
     console.error('[zimpan] estimate returned values outside sane bounds');
     throw new Error('The estimate came back in a form we could not read.');

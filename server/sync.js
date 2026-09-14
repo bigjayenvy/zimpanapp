@@ -446,7 +446,14 @@ export async function applyChanges(userId, changes) {
      steps it is client-grown, so it is validated key by key and rebuilt rather
      than stored as sent — an unknown shape would otherwise be handed back to
      every device forever. Numbers are clamped, not trusted; items is a short
-     list of {name, kcal}; anything else on the object is dropped. */
+     list of {line, name, kcal, protein, carbs, fat}; anything else on the
+     object is dropped.
+
+     `line` is which meal of the day the item was read on, and it is what lets
+     a day's estimate be shown per meal rather than shared out by ratio. It is
+     rebuilt like everything else here, and a row written by an older device —
+     which had no line on its items — comes back as line 0, which no meal
+     claims and which the client reads as "this estimate cannot be split". */
   let aiCache = null;
   if (c.aiCache && typeof c.aiCache === 'object' && !Array.isArray(c.aiCache)) {
     const clean = {};
@@ -457,9 +464,13 @@ export async function applyChanges(userId, changes) {
       const row = c.aiCache[key];
       if (!row || typeof row !== 'object') fail(`aiCache.${key} is not an object`);
       const items = Array.isArray(row.items)
-        ? row.items.slice(0, 40).map((it, i) => ({
+        ? row.items.slice(0, 60).map((it, i) => ({
+          line: int((it && it.line) ?? 0, `aiCache.${key}.items[${i}].line`, 0, 200),
           name: str((it && it.name) ?? '', `aiCache.${key}.items[${i}].name`, 80, { allowEmpty: true }),
-          kcal: int((it && it.kcal) ?? 0, `aiCache.${key}.items[${i}].kcal`, 0, 100000)
+          kcal: int((it && it.kcal) ?? 0, `aiCache.${key}.items[${i}].kcal`, 0, 100000),
+          protein: int((it && it.protein) ?? 0, `aiCache.${key}.items[${i}].protein`, 0, 100000),
+          carbs: int((it && it.carbs) ?? 0, `aiCache.${key}.items[${i}].carbs`, 0, 100000),
+          fat: int((it && it.fat) ?? 0, `aiCache.${key}.items[${i}].fat`, 0, 100000)
         }))
         : [];
       clean[key] = {
