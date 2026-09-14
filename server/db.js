@@ -44,7 +44,25 @@ const CONFIG = {
   // Keeps BIGINT updated_at values as JS numbers; they are ms timestamps, well
   // inside the safe integer range.
   supportBigNumbers: true,
-  bigNumberStrings: false
+  bigNumberStrings: false,
+  /* ── the other failure a retry cures ──
+
+     A pooled connection MySQL has already hung up on looks exactly like a good
+     one from here: the pool does not check before handing it out, so the first
+     query after a quiet spell goes down a dead socket and comes back as
+     PROTOCOL_CONNECTION_LOST or ECONNRESET. Shared hosting is where this
+     bites, because wait_timeout there is measured in minutes rather than the
+     eight hours MySQL ships with.
+
+     Two settings, doing different halves of it. Keep-alive probes hold the
+     connection open from this side, so an idle one stays alive rather than
+     being collected by the server. idleTimeout drops anything that has sat
+     unused for a minute anyway, so the pool refills with a fresh connection
+     instead of offering a stale one — a minute being comfortably under any
+     wait_timeout worth having. */
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 10000,
+  idleTimeout: 60000
 };
 
 /* The settings actually in use, and how they were arrived at. Reassigned if

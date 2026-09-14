@@ -1156,6 +1156,32 @@ server.on('error', (err) => {
   process.exit(1);
 });
 
+/* ── the 502 that never reaches this log ──
+
+   Node hangs up on an idle keep-alive connection after five seconds. The proxy
+   in front of this app — nginx, then Passenger — holds those connections open
+   and reuses them, and its own idle timeout is far longer than five seconds.
+   So the proxy is routinely holding a socket this app has already decided to
+   close, and a request sent down it in the moment between that decision and
+   the FIN arriving lands on a reset. The proxy has no request to retry and no
+   app to blame, so it answers 502.
+
+   Every symptom follows from that. It is intermittent, because it needs the
+   request to fall inside a window of milliseconds. It is commonest on a quiet
+   site, where connections sit idle long enough to reach the timeout at all.
+   It always clears on a retry, because the retry opens a fresh connection.
+   And nothing appears below in stderr.log, because this process never saw the
+   request — which is why a 502 with a silent log points here rather than at
+   anything the app did.
+
+   The rule is that whatever sits behind the proxy must hang up last. 76
+   seconds clears nginx's default keepalive_timeout of 75. headersTimeout has
+   to be longer again, or the socket can be closed while a request line is
+   still on its way in — which would trade this bug for a rarer one. Both are
+   settable, because the proxy in front is not this app's to know. */
+server.keepAliveTimeout = Number(process.env.KEEPALIVE_MS) || 76000;
+server.headersTimeout = Number(process.env.HEADERS_MS) || 80000;
+
 /* ── the two ways a process dies without saying why ──
 
    Node kills the process on an unhandled promise rejection. Every route here
