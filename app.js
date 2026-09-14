@@ -3074,10 +3074,53 @@ const METS = [
    read "cheese spinach sandwich" was priced as a spin class, so the card said
    95 kcal burned while the block above it said 829 eaten. When the words and
    the category disagree, the category the person chose wins. */
+/* Watched, read or listened to — not done.
+
+   A word is in a title as often as it is in a day. "Reel: The 30-Second
+   Soleus Pushup" is forty-six minutes of holding a phone, and the table
+   billed it as forty-six minutes of press-ups because the word was in it. The
+   same goes for a cycling documentary, a podcast episode about running and a
+   yoga tutorial: every one of them names an effort that somebody else made.
+
+   Read against the activity first, and against the note only where the note
+   is the whole of the case for the reading — "morning run" with "podcast:
+   Huberman" written under it is a run, because the activity says so on its
+   own. Silencing that would trade the reported bug for a quieter one in the
+   other direction.
+
+   Said before the table, which is the shape the follow-ups already use for
+   cooking: a rule that exists to claim a row before a later one can, and has
+   no reading of its own to offer in its place. */
+const WATCHED = /\breels?\b|\bvideos?\b|\bvlogs?\b|\byoutube\b|\btiktok\b|\bnetflix\b|\bpodcasts?\b|\bepisodes?\b|\bdocumentar\w*|\bmovies?\b|\bfilms?\b|\btrailers?\b|\blivestream\w*|\bstreaming\b|\btwitch\b|\bwebinars?\b|\btutorials?\b|\bwatch(?:es|ed|ing)?\b|\bscroll\w*|\bbinge\w*|\breading\b|\barticles?\b/;
+
+/* Unless the category says otherwise, which is the rule this file already
+   follows for food: when the words and the category disagree, the category
+   the person chose wins. Somebody who files "followed a 20 min HIIT video"
+   under Workout meant the effort, and has said so in the one field that is a
+   choice rather than a sentence. */
+const EXERCISE_CAT = /\bworkouts?\b|\bexercis\w*|\bfitness\b|\bgym\b|\btraining\b|\bsports?\b|\bcardio\b/;
+
 const metHit = (e) => {
   if (isEatenRow(e)) return null;
-  const text = `${e.activity || ''} ${e.category || ''} ${e.note || ''}`.toLowerCase();
-  return METS.find((m) => m.re.test(text)) || null;
+  const act = String(e.activity || '').toLowerCase();
+  const cat = String(e.category || '').toLowerCase();
+  const note = String(e.note || '').toLowerCase();
+
+  /* The category is the one field that is a choice rather than a sentence, so
+     when it says exercise the words never get to argue. */
+  const chosen = EXERCISE_CAT.test(cat);
+  if (!chosen && WATCHED.test(act)) return null;
+
+  const hit = METS.find((m) => m.re.test(`${act} ${cat} ${note}`)) || null;
+  if (!hit || chosen) return hit;
+
+  /* Same rule, one field further in. The note is read as well as the activity,
+     so "Break" with "watched a yoga tutorial" under it was priced as yoga. It
+     only applies where the note is the sole source of the reading: "Morning
+     run" noted "podcast: Huberman" is still a run, because the activity itself
+     names one. */
+  if (!hit.re.test(`${act} ${cat}`) && WATCHED.test(note)) return null;
+  return hit;
 };
 
 const DEFAULT_WEIGHT_KG = 70;
