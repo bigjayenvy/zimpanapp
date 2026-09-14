@@ -825,6 +825,17 @@ function rollDay() {
      against on every render, so a device left open overnight raises tomorrow's
      reminders the same way one opened fresh does. */
   if (state) state.planAlertHid = false;
+  /* And a planner still standing on yesterday moves with it, on the same rule
+     as selectedDate above: whoever was on today stays on today, and whoever
+     had walked off to another day is left where they put themselves. */
+  if (state && state.pl) {
+    ['todo', 'plan'].forEach((side) => {
+      const w = state.pl[side];
+      if (!w || w.day !== was) return;
+      w.day = now;
+      w.month = now.slice(0, 7);
+    });
+  }
   return true;
 }
 const storedRaw = load();
@@ -1165,6 +1176,12 @@ const state = {
      take away something written. */
   todoOpen: false,
   todoArm: '',
+  /* Where each planner's month view is standing: which month it is showing,
+     which day it has open under the grid, and whether it is on the grid at
+     all. Session state on purpose — which month you were looking at is a
+     question about this visit, and a planner that opened on last March
+     because that is where you left it is a planner lying about today. */
+  pl: { todo: {}, plan: {} },
   /* Kinds this server acknowledged a push for without counting them — an
      install running code older than the kind. Not stored: it is an observation
      about the server on the other end of the last push, and the next one
@@ -4980,10 +4997,17 @@ function plSection(o) {
    lose your position, and the picker popovers already know how to keep
    themselves inside whatever [data-todo-list] turns out to be. */
 function todoBody() {
+  if (plView('todo') === 'cal') {
+    return `
+  ${padWaitNote('todos', 'The Activity Planner')}
+  ${plShell('todo', plDaySection('todo') + plLooseSection('todo'), 'data-todo-list')}`;
+  }
+
   const planned = todoPlanned();
   const notes = todoNotes();
   return `
   ${padWaitNote('todos', 'The Activity Planner')}
+  ${plCalBar('todo')}
   <div class="todo-list pl-list" data-todo-list>
     ${plSection({
     name: 'Planned',
@@ -5023,6 +5047,11 @@ function todoPlanner() {
     tone: '#8a7a35',
     wide: true,
     flat: true,
+    /* Bounded to the screen, with the scrolling done by the list inside it.
+       The month above the list is a third of the dialog's height and it does
+       not scroll away, so without this the Done button fell off the bottom of
+       a short laptop and the whole dialog had to be scrolled to reach it. */
+    tall: true,
     kicker: late ? `${late} for today or earlier` : `${open} open`,
     title: 'Activity Planner',
     body: `<div class="pl-wrap is-todo">${todoBody()}</div>`,
@@ -5676,6 +5705,290 @@ const ordinal = (n) => {
   return `${n}${suffix}`;
 };
 
+/* ── the planners, as a month ──
+
+   A planner holds things with dates on them, and a column is the wrong shape
+   for that. "What is on the 18th" and "how loaded is next week" are both one
+   look at a calendar, and both of them were a scroll down a sorted list that
+   could only be sorted one way. Rent, three subscriptions and a dentist read
+   as four lines a fortnight apart; on a grid they read as a week.
+
+   So both planners open on a month. Every dated line puts a dot on its day in
+   its own status colour; resting on a day says what is on it without
+   committing to anything; pressing one opens that day underneath in full —
+   the same card the list always showed, because nothing about a line is
+   edited anywhere else and a second editor is a second thing to keep true.
+
+   One component for both, the way plSection already is. The activity side
+   puts to-dos on it and the money side puts subscriptions and dues; the two
+   differing in anything but their contents would be two calendars to keep in
+   step.
+
+   The list is still there, a press away, and it is not a fallback: the money
+   planner groups by subscriptions, dues and notes, which is a real question a
+   grid cannot answer. */
+
+const PL_DOWS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/* Where each planner is looking. Session state: which month you were on is
+   a question about this visit, not a setting. */
+const plWhere = (side) => (state.pl[side] = state.pl[side] || {});
+const plMonth = (side) => plWhere(side).month || todayIso.slice(0, 7);
+const plDay = (side) => plWhere(side).day || todayIso;
+const plView = (side) => (plWhere(side).view === 'list' ? 'list' : 'cal');
+
+const plShiftMonth = (ym, delta) => {
+  const [y, m] = dParts(ym + '-01');
+  const d = new Date(y, (m - 1) + delta, 1);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+};
+
+/* Every dot one month shows: which day, which line, and what to say about it.
+
+   A subscription is placed on its day of the month in whatever month is being
+   looked at, because that is what a subscription is — one row that lands
+   twelve times a year. A due is placed on the one date it actually holds: a
+   repeating due rolls forward when it is marked paid, and drawing the
+   occurrences after that would be drawing dates the app does not yet know.
+
+   A line that is paused, cancelled or already paid keeps its place and goes
+   grey. Taking it off would leave a cancelled subscription with a day on it
+   reachable from nowhere, and "there is nothing on the 3rd" is the wrong
+   answer about a charge you stopped. */
+function plMarks(side, ym) {
+  if (side === 'todo') {
+    return state.todos.filter((t) => t.date && t.date.slice(0, 7) === ym).map((t) => {
+      const st = todoStatus(t.status);
+      return {
+        date: t.date, id: t.id, tone: st.tone, tint: st.tint,
+        title: String(t.text || '').trim() || 'Untitled',
+        sub: st.label, dim: t.status === 'done'
+      };
+    });
+  }
+  const [y, m] = dParts(ym + '-01');
+  const len = monthLen(y, m);
+  const out = [];
+  state.plans.forEach((r) => {
+    const kind = planKind(r);
+    if (kind === 'note') return;
+    const st = planStatus(r.status);
+    const dir = planDir(r);
+    const cents = mCents(r.amount);
+    const mark = (date) => out.push({
+      date, id: r.id, tone: st.tone, tint: st.tint,
+      title: String(r.text || '').trim() || planKindOf(kind).one,
+      // The amount if there is one, and what state it is in if there is not.
+      sub: cents ? `${dir === 'in' ? '+' : '−'}${amount(money2(r.amount))}`
+        : ((kind === 'sub' && st.subLabel) || planStatusLabel(st, dir)),
+      dim: !planOwed(r)
+    });
+    if (kind === 'sub') {
+      const day = Number(r.day) || 0;
+      // February has no 31st; a charge on the 31st lands on the last day of it.
+      if (day) mark(`${ym}-${pad(Math.min(day, len))}`);
+      return;
+    }
+    if (r.due && r.due.slice(0, 7) === ym) mark(r.due);
+  });
+  return out;
+}
+
+/* The lines open under the grid, in the order their own list would put them. */
+function plDayRows(side, date) {
+  if (side === 'todo') return state.todos.filter((t) => t.date === date).sort(byTodoRank);
+  const ids = plMarks('plan', date.slice(0, 7)).filter((k) => k.date === date).map((k) => k.id);
+  return ids.map((id) => findRow('plans', id)).filter(Boolean).sort(byPlanDate);
+}
+
+/* Everything with no day on it, which is everything the grid cannot show. It
+   is not the Notes list: a due whose date has not been decided and a
+   subscription whose day has not been picked are in neither list and would be
+   reachable from nowhere at all if this only asked about kind. */
+function plLoose(side) {
+  if (side === 'todo') return todoNotes();
+  return state.plans.filter((r) => {
+    const kind = planKind(r);
+    if (kind === 'note') return true;
+    if (kind === 'sub') return !Number(r.day);
+    return !r.due;
+  }).sort(byPlanDate);
+}
+
+const plCard = (side, row) => (side === 'todo' ? todoNote(row) : planLine(row));
+
+/* One day, drawn small enough to fit seven across and still be a target.
+
+   The dots are capped and counted after that: a cell is 40-odd pixels across
+   and a row of eleven dots is a smear rather than a reading. What is on the
+   day in full is one hover or one press away, which is what the cap is
+   trading against.
+
+   The hover card is CSS, not script — drawn on :hover and on :focus-visible,
+   so it answers a keyboard as well as a mouse, and so a phone, which has
+   neither, simply never draws it and gets the day panel on a tap instead. */
+function plCell(side, date, n, marks, chosen) {
+  // Three on a phone, four on a laptop: the cap is what the cell is wide
+  // enough to draw, and a phone's is narrower.
+  const shown = marks.slice(0, isPhone() ? 3 : 4);
+  const extra = marks.length - shown.length;
+  const cls = ['pl-cell'];
+  if (date === chosen) cls.push('is-on');
+  if (date === todayIso) cls.push('is-today');
+  if (marks.length) cls.push('has-any');
+  if (marks.some((k) => !k.dim && date < todayIso)) cls.push('is-late');
+  return `
+  <button type="button" class="${cls.join(' ')}" data-act="pl-day" data-side="${esc(side)}" data-date="${esc(date)}"
+    aria-pressed="${date === chosen}" aria-label="${esc(mLongDate(date))}${marks.length ? `, ${marks.length} ${marks.length === 1 ? 'line' : 'lines'}` : ', nothing planned'}">
+    <span class="pl-cell-n">${n}</span>
+    <span class="pl-cell-dots" aria-hidden="true">
+      ${shown.map((k) => `<i style="background:${esc(k.tone)}${k.dim ? ';opacity:.38' : ''}"></i>`).join('')}
+      ${extra > 0 ? `<b>+${extra}</b>` : ''}
+    </span>
+    ${marks.length ? `
+    <span class="pl-peek" role="tooltip">
+      <span class="pl-peek-day">${esc(mLongDate(date))}</span>
+      ${marks.slice(0, 6).map((k) => `
+      <span class="pl-peek-row${k.dim ? ' is-dim' : ''}">
+        <i style="background:${esc(k.tone)}"></i>
+        <em>${esc(k.title)}</em>
+        <u>${esc(k.sub)}</u>
+      </span>`).join('')}
+      ${marks.length > 6 ? `<span class="pl-peek-more">and ${marks.length - 6} more</span>` : ''}
+    </span>` : ''}
+  </button>`;
+}
+
+function plCalendar(side) {
+  const ym = plMonth(side);
+  const chosen = plDay(side);
+  const byDay = {};
+  plMarks(side, ym).forEach((k) => { (byDay[k.date] = byDay[k.date] || []).push(k); });
+  const [y, m] = dParts(ym + '-01');
+  // Monday-first, which is how the app's other calendar writes a week.
+  const lead = (new Date(y, m - 1, 1).getDay() + 6) % 7;
+  const len = monthLen(y, m);
+
+  const cells = [];
+  for (let i = 0; i < lead; i++) cells.push('<span class="pl-cell is-pad"></span>');
+  for (let d = 1; d <= len; d++) {
+    const date = `${ym}-${pad(d)}`;
+    cells.push(plCell(side, date, d, byDay[date] || [], chosen));
+  }
+  // Whole weeks, so the grid keeps its height as the months change under it.
+  while (cells.length % 7) cells.push('<span class="pl-cell is-pad"></span>');
+
+  return `
+  <div class="pl-cal">
+    ${plCalBar(side, true)}
+    <div class="pl-dows" aria-hidden="true">${PL_DOWS.map((d) => `<span>${d}</span>`).join('')}</div>
+    <div class="pl-days">${cells.join('')}</div>
+  </div>`;
+}
+
+/* The month and the day it opened, arranged for the screen they are on.
+
+   On a laptop the calendar stands outside the scroller. It is the fixed thing
+   you navigate from, so it should not slide away from under the cards it
+   opened — and a hover card drawn inside a box with `overflow-y: auto` is a
+   hover card clipped at the first edge it reaches.
+
+   On a phone it goes inside and scrolls with everything else, because a
+   phone's dialog is short and a grid pinned to the top of it leaves the list
+   under it too small to hold anything: the category picker opens a panel about
+   250px tall, and a list with 225px of room could not show it at either end.
+   Nothing is lost by scrolling it there — a phone has no hover, so the card
+   the pinning was protecting is never drawn on one. */
+function plShell(side, inner, listAttr) {
+  const cal = plCalendar(side);
+  const phone = isPhone();
+  return `
+  ${phone ? '' : cal}
+  <div class="todo-list pl-list" ${listAttr}>
+    ${phone ? cal : ''}
+    ${inner}
+  </div>`;
+}
+
+/* The bar above both views: which month, and which of the two you are in.
+
+   The month nav only appears over the grid — there is no month in a list
+   grouped by kind, and a pair of arrows that moved something invisible would
+   be two buttons doing nothing. The toggle is in both, in the same place, so
+   the way back is where the way out was. */
+function plCalBar(side, withMonth) {
+  const view = plView(side);
+  const ym = plMonth(side);
+  const [y, m] = dParts(ym + '-01');
+  const step = (d, label, aria) => `
+    <button type="button" class="pl-nav" data-act="pl-month" data-side="${esc(side)}" data-d="${d}"
+      aria-label="${esc(aria)}">${label}</button>`;
+  return `
+    <div class="pl-cal-bar${withMonth ? '' : ' is-bare'}">
+      ${withMonth ? `
+      ${step(-1, '‹', 'Previous month')}
+      <h4 class="pl-cal-name">${esc(new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }))}</h4>
+      ${step(1, '›', 'Next month')}
+      ${ym === todayIso.slice(0, 7) && plDay(side) === todayIso ? ''
+    : `<button type="button" class="pl-cal-today" data-act="pl-today" data-side="${esc(side)}">Today</button>`}` : ''}
+      <div class="pl-vws" role="group" aria-label="How to read this planner">
+        ${[['cal', 'Calendar'], ['list', 'List']].map(([k, label]) => `
+        <button type="button" class="pl-vw${view === k ? ' is-on' : ''}" data-act="pl-view"
+          data-side="${esc(side)}" data-v="${k}" aria-pressed="${view === k}">${label}</button>`).join('')}
+      </div>
+    </div>`;
+}
+
+/* The day the grid has open, in full. The heading says which day out loud —
+   a grid tells you where you are and a heading tells you what you are reading,
+   and a column of cards under a highlighted square says neither. */
+function plDaySection(side) {
+  const date = plDay(side);
+  const rows = plDayRows(side, date);
+  const near = dayNear(date);
+  const adds = side === 'todo'
+    ? [{ act: 'todo-add', data: ` data-when="${esc(date)}"`, label: 'Plan an activity' }]
+    : [
+      { act: 'plan-add', data: ` data-kind="due" data-when="${esc(date)}"`, label: 'Add a due on this day' },
+      { act: 'plan-add', data: ` data-kind="sub" data-day="${dParts(date)[2]}"`, label: `Add a subscription on the ${ordinal(dParts(date)[2])}` }
+    ];
+  return `
+  <section class="pl-sec">
+    <div class="pl-sec-head">
+      <h3 class="pl-sec-name">${esc(mKicker(date))}</h3>
+      ${rows.length ? `<span class="pl-sec-n">${rows.length}</span>` : ''}
+      <span class="pl-near${near.late ? ' is-late' : near.soon ? ' is-soon' : ''}">${esc(near.label)}</span>
+    </div>
+    ${adds.map((a) => `<button class="todo-new" data-act="${a.act}"${a.data}>+ ${esc(a.label)}</button>`).join('')}
+    ${rows.length
+    ? `<div class="pl-rows">${rows.map((r) => plCard(side, r)).join('')}</div>`
+    : `<p class="todo-empty">${side === 'todo'
+      ? 'Nothing planned for this day. Anything you add here starts with the date already on it.'
+      : 'Nothing lands on this day.'}</p>`}
+  </section>`;
+}
+
+/* And what has no day at all, under it. Kept on the same screen rather than
+   behind the List button: a note with no date is the thing most likely to
+   need one, and putting it a press away is how it gets forgotten. */
+function plLooseSection(side) {
+  const rows = plLoose(side);
+  return plSection({
+    name: side === 'todo' ? 'No day yet' : 'No date yet',
+    count: rows.length,
+    blurb: side === 'todo'
+      ? 'Written down, not scheduled. Put a date on one and it moves up onto the month.'
+      : 'Money you are thinking about, and anything still waiting for a date. Give one a day and it appears on the month above.',
+    addAct: side === 'todo' ? 'todo-add' : 'plan-add',
+    addData: side === 'todo' ? '' : ' data-kind="note"',
+    add: side === 'todo' ? 'New note' : 'New note',
+    rows: rows.map((r) => plCard(side, r)),
+    empty: side === 'todo'
+      ? 'Nothing on the pad. A note is a line of text and a status — write one and it follows you to your other devices.'
+      : 'Nothing undated. Everything on the books has a day against it.'
+  });
+}
+
 /* Writes the plan into the ledger, and then does whatever was asked of the
    line itself.
 
@@ -5843,9 +6156,16 @@ function planAlertDialog() {
    the activity planner gives: three lists that scroll on their own is three
    places to lose your position. */
 function planBody() {
+  if (plView('plan') === 'cal') {
+    return `
+  ${planSum()}
+  ${padWaitNote('plans', 'The Money Planner')}
+  ${plShell('plan', plDaySection('plan') + plLooseSection('plan'), 'data-plan-list')}`;
+  }
   return `
   ${planSum()}
   ${padWaitNote('plans', 'The Money Planner')}
+  ${plCalBar('plan')}
   <div class="todo-list pl-list" data-plan-list>
     ${PLAN_KINDS.map((k) => {
     const rows = planRows(k.key);
@@ -5876,6 +6196,7 @@ function planPlanner() {
     tone: '#10756c',
     wide: true,
     flat: true,
+    tall: true,
     kicker: soon ? `${soon} needing attention` : `${t.count} on the books`,
     title: 'Money Planner',
     body: `<div class="pl-wrap is-money">${planBody()}</div>`,
@@ -7414,7 +7735,7 @@ function lightbox(o) {
   const tone = o.tone || 'var(--color-accent)';
   return `
   <div class="no-print lb-back"${o.closeAct ? ` data-backdrop="${esc(o.closeAct)}"` : ''}>
-    <div class="lb${o.wide ? ' lb-wide' : ''}" role="dialog" aria-modal="true" aria-label="${esc(o.title)}">
+    <div class="lb${o.wide ? ' lb-wide' : ''}${o.tall ? ' lb-tall' : ''}" role="dialog" aria-modal="true" aria-label="${esc(o.title)}">
       ${o.closeAct ? `<button class="lb-x" data-act="${esc(o.closeAct)}" aria-label="Close">✕</button>` : ''}
       ${o.flat
     /* A workbench, not a question. The medallion, the centred kicker and the
@@ -13213,6 +13534,49 @@ const ACTIONS = {
     if (state.m) state.m.accountOpen = false;
     render();
   },
+  /* ── the planners' month view ──
+     One set of handlers for both, told apart by data-side, the same way
+     plCalendar draws both from one component. */
+  'pl-month': (el) => {
+    const side = el.dataset.side === 'plan' ? 'plan' : 'todo';
+    const d = Number(el.dataset.d) || 0;
+    const where = plWhere(side);
+    where.month = plShiftMonth(plMonth(side), d);
+    /* The open day stays where it was rather than jumping to the 1st. Stepping
+       through months to see what is coming is not the same as choosing a day,
+       and a grid that reset what was open under it every time an arrow was
+       pressed would make looking ahead cost you your place. */
+    render();
+  },
+  'pl-today': (el) => {
+    const side = el.dataset.side === 'plan' ? 'plan' : 'todo';
+    const where = plWhere(side);
+    where.month = todayIso.slice(0, 7);
+    where.day = todayIso;
+    render();
+  },
+  'pl-day': (el) => {
+    const side = el.dataset.side === 'plan' ? 'plan' : 'todo';
+    const date = String(el.dataset.date || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    const where = plWhere(side);
+    where.day = date;
+    where.month = date.slice(0, 7);
+    if (side === 'plan') state.planArm = ''; else state.todoArm = '';
+    // Back to the top of the panel, which is where the day just opened is.
+    if (side === 'plan') planScroll = 0; else todoScroll = 0;
+    render();
+  },
+  'pl-view': (el) => {
+    const side = el.dataset.side === 'plan' ? 'plan' : 'todo';
+    const want = el.dataset.v === 'list' ? 'list' : 'cal';
+    const where = plWhere(side);
+    if (where.view === want || (want === 'cal' && !where.view)) return;
+    where.view = want;
+    if (side === 'plan') planScroll = 0; else todoScroll = 0;
+    render();
+  },
+
   'todo-toggle': () => { state.todoOpen = !state.todoOpen; if (!state.todoOpen) todoTidy(); state.todoArm = ''; render(); },
   'todo-close': () => {
     if (!state.todoOpen) return;
@@ -13257,14 +13621,19 @@ const ACTIONS = {
        planner is opened to do is plan today — and the field is right there
        when it is not. */
     const when = String((el && el.dataset.when) || '');
+    const dated = /^\d{4}-\d{2}-\d{2}$/.test(when) ? when : undefined;
     const row = touch('todos', {
       id: newTodoId(), text: '', status: 'pending',
-      date: /^\d{4}-\d{2}-\d{2}$/.test(when) ? when : undefined,
+      date: dated,
       createdAt: Date.now()
     });
     state.todos = state.todos.concat([row]);
     state.todoOpen = true;
     state.todoArm = '';
+    /* And the grid goes to the day it was made on, so the new card is under
+       the caret that is about to be put in it rather than on a day nobody is
+       looking at. */
+    if (dated) { plWhere('todo').day = dated; plWhere('todo').month = dated.slice(0, 7); }
     /* The caret goes into the note that was just made — this is the one place
        in the app where opening a field is exactly what was asked for. The list
        is put back to the top with it, since that is where the new note is. */
@@ -13443,13 +13812,26 @@ const ACTIONS = {
     // The section the button sits under decides which list the new line joins.
     const want = String((el && el.dataset.kind) || 'due');
     const kind = PLAN_KINDS.some((k) => k.key === want) ? want : 'due';
+    /* And the day it was added on, when it was added from the month view: a
+       due gets the date, a subscription gets the day of the month, and a note
+       gets neither because a note is the list with no date in it. */
+    const when = String((el && el.dataset.when) || '');
+    const dated = kind === 'due' && /^\d{4}-\d{2}-\d{2}$/.test(when) ? when : '';
+    const dayOf = kind === 'sub' ? Math.max(0, Math.min(31, parseInt(el && el.dataset.day, 10) || 0)) : 0;
     const row = touch('plans', {
       id: newPlanId(), text: '', amount: 0, dir: 'out', status: 'planned',
-      kind, createdAt: Date.now()
+      kind, createdAt: Date.now(),
+      due: dated || (dayOf ? firstMonthly(dayOf) : undefined),
+      day: dated ? dParts(dated)[2] : (dayOf || undefined)
     });
     state.plans = state.plans.concat([row]);
     state.planOpen = true;
     state.planArm = '';
+    /* Only a due moves the grid. A subscription lands on the same day of
+       every month, so the mark is already on the square that was pressed —
+       jumping to whichever month its first charge falls in would be answering
+       a question nobody asked. */
+    if (dated) { plWhere('plan').day = dated; plWhere('plan').month = dated.slice(0, 7); }
     // Same rule as todo-add: the caret goes where the writing goes.
     state.focusField = `plan-${row.id}`;
     planScroll = 0;
@@ -14343,6 +14725,8 @@ const CHANGES = {
       // subscription on the 31st rather than creeping earlier every February.
       row.day = dParts(want)[2];
     } else { delete row.due; delete row.day; }
+    // Same as todo-date: the month view goes where the card went.
+    if (want) { plWhere('plan').day = want; plWhere('plan').month = want.slice(0, 7); }
     delete state.planSeen[row.id];
     touch('plans', row);
     save(); queueSync(0); render();
@@ -14397,6 +14781,10 @@ const CHANGES = {
     if (want && !/^\d{4}-\d{2}-\d{2}$/.test(want)) return;
     if ((row.date || '') === want) return;
     if (want) row.date = want; else delete row.date;
+    /* The grid follows it. A card edited on the 3rd and given the 9th would
+       otherwise vanish from under the hand that was typing into it — the row
+       is fine, but it reads as having been thrown away. */
+    if (want) { plWhere('todo').day = want; plWhere('todo').month = want.slice(0, 7); }
     touch('todos', row);
     save(); queueSync(0); render();
   },
