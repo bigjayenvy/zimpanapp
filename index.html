@@ -1272,18 +1272,14 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .pl-rows { display: flex; flex-direction: column; gap: 14px; }
   /* ── the month a planner opens on ──
 
-     On a laptop it stands outside the scroller below it, so the grid stays put
-     while the day it opened scrolls, and so the hover card has somewhere to
-     go: a box with `overflow-y: auto` clips anything sticking out of it, in
-     both directions, however the other axis is declared. On a phone plShell
-     puts it inside instead — see the note there. */
+     Inside the scroller, one more thing in the column rather than a header
+     pinned over it — see the note on plShell. flex:none so it keeps its own
+     height while the column scrolls rather than being squeezed by it. */
   .pl-cal {
+    flex: none;
     border: 1px solid var(--pad-line); border-radius: 16px;
     background: var(--pad-bg); padding: 12px 12px 14px; margin-bottom: 14px;
   }
-  /* Where it is inside, it is one more thing in the column rather than a
-     header over it, and it keeps its own height while the column scrolls. */
-  .pl-list > .pl-cal { flex: none; }
   .pl-cal-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
   /* With no month on it the toggle is the only thing left, and it goes to the
      right where it sits over the grid. */
@@ -1927,7 +1923,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .lb-tall .lb-flat, .lb-tall .lb-acts, .lb-tall .lb-foot { flex: none; }
   .lb-tall .pl-wrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-  .lb-tall .pl-cal, .lb-tall .plan-sum, .lb-tall .pad-wait { flex: none; }
+  .lb-tall .plan-sum, .lb-tall .pad-wait { flex: none; }
   .lb-tall .pl-list { flex: 1 1 auto; min-height: 0; max-height: none; }
 
   /* Its own corner, clear of the title. The consent dialogs used to borrow the

@@ -6052,26 +6052,26 @@ function plCalendar(side) {
   </div>`;
 }
 
-/* The month and the day it opened, arranged for the screen they are on.
+/* The month, and the day it opened, in one scroller.
 
-   On a laptop the calendar stands outside the scroller. It is the fixed thing
-   you navigate from, so it should not slide away from under the cards it
-   opened — and a hover card drawn inside a box with `overflow-y: auto` is a
-   hover card clipped at the first edge it reaches.
+   The calendar used to stand outside the scroller on a laptop, pinned above
+   the cards while they moved under it. It reads as a header that will not get
+   out of the way: the grid is a third of the dialog, so a day with four cards
+   on it was four cards read through a slot, and scrolling to the undated
+   section meant scrolling past nothing at all.
 
-   On a phone it goes inside and scrolls with everything else, because a
-   phone's dialog is short and a grid pinned to the top of it leaves the list
-   under it too small to hold anything: the category picker opens a panel about
-   250px tall, and a list with 225px of room could not show it at either end.
-   Nothing is lost by scrolling it there — a phone has no hover, so the card
-   the pinning was protecting is never drawn on one. */
+   So it scrolls with everything else, which is what the phone has always done.
+   The hover card is the one thing this costs — a box with `overflow-y: auto`
+   clips what leaves it, on both axes — and it costs less than it looks like:
+   the calendar sits at the top of the scroller, which is where it is while
+   anybody is hovering it, and the peek opens into the middle of the list from
+   there. Cells in the last two rows already open upwards rather than down. By
+   the time the grid has scrolled far enough to clip one, it has scrolled far
+   enough that you are reading cards instead. */
 function plShell(side, inner, listAttr) {
-  const cal = plCalendar(side);
-  const phone = isPhone();
   return `
-  ${phone ? '' : cal}
   <div class="todo-list pl-list" ${listAttr}>
-    ${phone ? cal : ''}
+    ${plCalendar(side)}
     ${inner}
   </div>`;
 }
