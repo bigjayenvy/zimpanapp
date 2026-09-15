@@ -5088,7 +5088,10 @@ function plSection(o) {
        children — the sections — and not the cards inside them, so a section of
        six cards drew them edge to edge with nothing between. */
     ? `<div class="pl-rows">${o.rows.join('')}</div>`
-    : `<p class="todo-empty">${esc(o.empty)}</p>`}
+    /* A section emptied by a filter is not an empty section, and telling
+       somebody their pad is bare while three words in a search box are hiding
+       it is how a working app reads as a broken one. */
+    : `<p class="todo-empty">${esc(o.filtered ? 'Nothing here matches what you are filtering by.' : o.empty)}</p>`}
   </section>`;
 }
 
@@ -5103,8 +5106,8 @@ function todoBody() {
   ${plShell('todo', plDaySection('todo') + plLooseSection('todo'), 'data-todo-list')}`;
   }
 
-  const planned = todoPlanned();
-  const notes = todoNotes();
+  const planned = plKeep('todo', todoPlanned());
+  const notes = plKeep('todo', todoNotes());
   return `
   ${padWaitNote('todos', 'The Activity Planner')}
   ${plCalBar('todo')}
@@ -5117,6 +5120,7 @@ function todoBody() {
     addData: ` data-when="${esc(todayIso)}"`,
     add: 'Plan an activity',
     rows: planned.map(todoNote),
+    filtered: plFiltering('todo'),
     empty: 'Nothing planned. Put a date on a note below and it moves up here.'
   })}
     ${plSection({
@@ -5126,6 +5130,7 @@ function todoBody() {
     addAct: 'todo-add',
     add: 'New note',
     rows: notes.map(todoNote),
+    filtered: plFiltering('todo'),
     empty: 'Nothing on the pad yet. A note is a line of text and a status — write one and it follows you to your other devices.'
   })}
   </div>`;
@@ -5843,6 +5848,66 @@ const plShiftMonth = (ym, delta) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
 };
 
+/* ── narrowing a planner ──
+
+   A planner fills up. Eleven notes and a month of subscriptions is a list you
+   scroll rather than read, and the two questions people actually arrive with —
+   "what is still open" and "what is under this category" — were answerable only
+   by eye.
+
+   Three controls, and one predicate behind all of them, because a filter that
+   the grid and the list disagreed about would be two filters. Everything a
+   planner draws from a row list runs through plMatch: the dots on the month,
+   the day opened under it, the undated section, and the grouped list behind
+   the toggle.
+
+   Nothing outside the view is narrowed. The badge on the button, the totals
+   strip and the alert dialog all count what is there rather than what is on
+   screen — a filter is a way of looking at the pad, not a statement about what
+   is on it, and a bill that stops being due because a category is selected
+   would be a lie with money in it. */
+
+/* A value no category can have, so "filed under nothing" is a choice on the
+   same control rather than a fourth one beside it. */
+const PL_NO_CAT = '\u0000none';
+
+/* Which field carries the "category" idea on each side. The money planner
+   files a line under a purpose — or a source, when the money is coming in —
+   which is the same question asked about the other direction. */
+const PL_FILTER = {
+  todo: { rows: () => state.todos, field: 'category', statuses: () => TODO_STATUSES, status: (r) => todoStatus(r.status).key, label: 'Category', any: 'Any category', none: 'No category' },
+  plan: { rows: () => state.plans, field: 'purpose', statuses: () => PLAN_STATUSES, status: (r) => planStatus(r.status).key, label: 'Purpose', any: 'Any purpose', none: 'No purpose' }
+};
+
+const plQuery = (side) => String(plWhere(side).q || '').trim().toLowerCase();
+const plCat = (side) => String(plWhere(side).cat || '');
+const plStatus = (side) => String(plWhere(side).st || '');
+const plFiltering = (side) => !!(plQuery(side) || plCat(side) || plStatus(side));
+
+/* The title, and only the title.
+
+   The suggestions under the box are the titles on the pad, so matching on
+   anything wider would mean a query picked from the list could turn up rows
+   that do not contain it — and "3 of 11" beside a title box that reads
+   "Netflix" ought to mean three lines called Netflix. The category has a
+   control of its own, which is the honest place for that question. */
+function plMatch(side, row) {
+  if (!row) return false;
+  const spec = PL_FILTER[side];
+  const q = plQuery(side);
+  if (q && String(row.text || '').toLowerCase().indexOf(q) < 0) return false;
+  const cat = plCat(side);
+  if (cat) {
+    const held = String(row[spec.field] || '').trim();
+    if (cat === PL_NO_CAT ? !!held : held !== cat) return false;
+  }
+  const st = plStatus(side);
+  if (st && spec.status(row) !== st) return false;
+  return true;
+}
+
+const plKeep = (side, rows) => rows.filter((r) => plMatch(side, r));
+
 /* Every dot one month shows: which day, which line, and what to say about it.
 
    A subscription is placed on its day of the month in whatever month is being
@@ -5857,7 +5922,7 @@ const plShiftMonth = (ym, delta) => {
    answer about a charge you stopped. */
 function plMarks(side, ym) {
   if (side === 'todo') {
-    return state.todos.filter((t) => t.date && t.date.slice(0, 7) === ym).map((t) => {
+    return plKeep('todo', state.todos.filter((t) => t.date && t.date.slice(0, 7) === ym)).map((t) => {
       const st = todoStatus(t.status);
       return {
         date: t.date, id: t.id, tone: st.tone, tint: st.tint,
@@ -5872,6 +5937,7 @@ function plMarks(side, ym) {
   state.plans.forEach((r) => {
     const kind = planKind(r);
     if (kind === 'note') return;
+    if (!plMatch('plan', r)) return;
     const st = planStatus(r.status);
     const dir = planDir(r);
     const cents = mCents(r.amount);
@@ -5896,7 +5962,7 @@ function plMarks(side, ym) {
 
 /* The lines open under the grid, in the order their own list would put them. */
 function plDayRows(side, date) {
-  if (side === 'todo') return state.todos.filter((t) => t.date === date).sort(byTodoRank);
+  if (side === 'todo') return plKeep('todo', state.todos.filter((t) => t.date === date)).sort(byTodoRank);
   const ids = plMarks('plan', date.slice(0, 7)).filter((k) => k.date === date).map((k) => k.id);
   return ids.map((id) => findRow('plans', id)).filter(Boolean).sort(byPlanDate);
 }
@@ -5906,13 +5972,13 @@ function plDayRows(side, date) {
    subscription whose day has not been picked are in neither list and would be
    reachable from nowhere at all if this only asked about kind. */
 function plLoose(side) {
-  if (side === 'todo') return todoNotes();
-  return state.plans.filter((r) => {
+  if (side === 'todo') return plKeep('todo', todoNotes());
+  return plKeep('plan', state.plans.filter((r) => {
     const kind = planKind(r);
     if (kind === 'note') return true;
     if (kind === 'sub') return !Number(r.day);
     return !r.due;
-  }).sort(byPlanDate);
+  })).sort(byPlanDate);
 }
 
 const plCard = (side, row) => (side === 'todo' ? todoNote(row) : planLine(row));
@@ -6036,7 +6102,74 @@ function plCalBar(side, withMonth) {
         <button type="button" class="pl-vw${view === k ? ' is-on' : ''}" data-act="pl-view"
           data-side="${esc(side)}" data-v="${k}" aria-pressed="${view === k}">${label}</button>`).join('')}
       </div>
-    </div>`;
+    </div>
+    ${plFilterBar(side)}`;
+}
+
+/* The three ways to narrow a planner, on one row under the month.
+
+   A box, and two pickers. The box suggests the titles already on the pad
+   rather than offering an empty field and hoping: a datalist is the browser's
+   own typeahead, it filters as you type, it shows the whole list on a tap, and
+   on a phone it arrives as the native picker instead of a popover this app
+   would have to place, size and dismiss itself.
+
+   The pickers offer the categories actually in use rather than every category
+   the account has. A list padded with names that match nothing is a list of
+   dead ends, and the account's full set is one tap away on any card.
+
+   Under it, only while something is on: how much of the pad is being shown,
+   and the way out. A planner that looks empty because of a filter set five
+   minutes ago is a planner that looks broken. */
+function plFilterBar(side) {
+  const spec = PL_FILTER[side];
+  const rows = spec.rows();
+  const q = plWhere(side).q || '';
+  const cat = plCat(side);
+  const st = plStatus(side);
+
+  const held = rows.map((r) => String(r[spec.field] || '').trim());
+  const named = [...new Set(held.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const anyBlank = held.some((h) => !h);
+
+  // Distinct titles, shortest-first inside a tie so the suggestion list reads
+  // as names rather than as sentences.
+  const titles = [...new Set(rows.map((r) => String(r.text || '').trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b)).slice(0, 200);
+
+  const shown = plKeep(side, rows).length;
+  const listId = `pl-sug-${side}`;
+
+  return `
+    <div class="pl-filt">
+      <div class="pl-filt-box">
+        <span class="pl-filt-mark" aria-hidden="true">${nodeIcon('search', 15)}</span>
+        <input class="pl-filt-in" type="search" list="${listId}" data-pl-search="${esc(side)}"
+          data-k="pl-search-${esc(side)}" value="${esc(q)}" autocomplete="off"
+          placeholder="Search by name" aria-label="Search this planner by name">
+      </div>
+      <datalist id="${listId}">${titles.map((t) => `<option value="${esc(t)}"></option>`).join('')}</datalist>
+
+      <select class="pl-filt-sel${cat ? ' is-on' : ''}" data-change="pl-cat" data-side="${esc(side)}"
+        aria-label="${esc(spec.label)}">
+        <option value=""${cat ? '' : ' selected'}>${esc(spec.any)}</option>
+        ${named.map((n) => `<option value="${esc(n)}"${n === cat ? ' selected' : ''}>${esc(n)}</option>`).join('')}
+        ${anyBlank ? `<option value="${esc(PL_NO_CAT)}"${cat === PL_NO_CAT ? ' selected' : ''}>${esc(spec.none)}</option>` : ''}
+      </select>
+
+      <select class="pl-filt-sel${st ? ' is-on' : ''}" data-change="pl-status" data-side="${esc(side)}"
+        aria-label="Status">
+        <option value=""${st ? '' : ' selected'}>Any status</option>
+        ${spec.statuses().map((o) => `<option value="${esc(o.key)}"${o.key === st ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}
+      </select>
+    </div>
+    ${plFiltering(side) ? `
+    <p class="pl-filt-note">
+      <span>${shown === rows.length
+    ? `All ${rows.length} shown`
+    : `Showing ${shown} of ${rows.length}`}</span>
+      <button type="button" class="pl-filt-clear" data-act="pl-filter-clear" data-side="${esc(side)}">Clear</button>
+    </p>` : ''}`;
 }
 
 /* The day the grid has open, in full. The heading says which day out loud —
@@ -6062,9 +6195,11 @@ function plDaySection(side) {
     ${adds.map((a) => `<button class="todo-new" data-act="${a.act}"${a.data}>+ ${esc(a.label)}</button>`).join('')}
     ${rows.length
     ? `<div class="pl-rows">${rows.map((r) => plCard(side, r)).join('')}</div>`
-    : `<p class="todo-empty">${side === 'todo'
-      ? 'Nothing planned for this day. Anything you add here starts with the date already on it.'
-      : 'Nothing lands on this day.'}</p>`}
+    : `<p class="todo-empty">${esc(plFiltering(side)
+      ? 'Nothing on this day matches what you are filtering by.'
+      : (side === 'todo'
+        ? 'Nothing planned for this day. Anything you add here starts with the date already on it.'
+        : 'Nothing lands on this day.'))}</p>`}
   </section>`;
 }
 
@@ -6083,6 +6218,7 @@ function plLooseSection(side) {
     addData: side === 'todo' ? '' : ' data-kind="note"',
     add: side === 'todo' ? 'New note' : 'New note',
     rows: rows.map((r) => plCard(side, r)),
+    filtered: plFiltering(side),
     empty: side === 'todo'
       ? 'Nothing on the pad. A note is a line of text and a status — write one and it follows you to your other devices.'
       : 'Nothing undated. Everything on the books has a day against it.'
@@ -6268,7 +6404,7 @@ function planBody() {
   ${plCalBar('plan')}
   <div class="todo-list pl-list" data-plan-list>
     ${PLAN_KINDS.map((k) => {
-    const rows = planRows(k.key);
+    const rows = plKeep('plan', planRows(k.key));
     return plSection({
       name: k.name,
       count: rows.length,
@@ -6277,6 +6413,7 @@ function planBody() {
       addData: ` data-kind="${esc(k.key)}"`,
       add: k.add,
       rows: rows.map(planLine),
+      filtered: plFiltering('plan'),
       empty: k.empty
     });
   }).join('')}
@@ -11770,6 +11907,7 @@ function render() {
   const search = root.querySelector('[data-pick-search]');
   if (search) { search.value = state.pickQuery; filterPicker(search); }
   if (pickJustOpened) { pickJustOpened = false; showPicker(); }
+  paintPlCaret();
   paintDeck();
 }
 
@@ -13676,6 +13814,16 @@ const ACTIONS = {
     if (side === 'plan') planScroll = 0; else todoScroll = 0;
     render();
   },
+  'pl-filter-clear': (el) => {
+    const side = el.dataset.side === 'plan' ? 'plan' : 'todo';
+    const where = plWhere(side);
+    where.q = ''; where.cat = ''; where.st = '';
+    /* Back to the top with it. What was on screen was a short list under a
+       filter; the full one starts somewhere else entirely, and leaving the
+       scroll where it was lands you in the middle of it. */
+    if (side === 'plan') planScroll = 0; else todoScroll = 0;
+    render();
+  },
 
   'todo-toggle': () => { state.todoOpen = !state.todoOpen; if (!state.todoOpen) todoTidy(); state.todoArm = ''; render(); },
   'todo-close': () => {
@@ -14939,6 +15087,20 @@ const CHANGES = {
 
   /* A cleared date is not a date. The field keeps whatever it had rather than
      the window collapsing to the epoch under somebody mid-edit. */
+  /* The two planner pickers. A filter is about looking rather than about the
+     pad, so neither is stored and neither is pushed — see plMatch. */
+  'pl-cat': (el) => {
+    const side = el.dataset.side === 'plan' ? 'plan' : 'todo';
+    plWhere(side).cat = String(el.value || '');
+    if (side === 'plan') planScroll = 0; else todoScroll = 0;
+    render();
+  },
+  'pl-status': (el) => {
+    const side = el.dataset.side === 'plan' ? 'plan' : 'todo';
+    plWhere(side).st = String(el.value || '');
+    if (side === 'plan') planScroll = 0; else todoScroll = 0;
+    render();
+  },
   'export-from': (el) => { if (el.value) { state.exportFrom = el.value; render(); } else scheduleRender(); },
   'export-to': (el) => { if (el.value) { state.exportTo = el.value; render(); } else scheduleRender(); },
   'custom-from': (el) => { if (el.value) { state.customFrom = el.value; render(); } else scheduleRender(); },
@@ -18975,6 +19137,37 @@ root.addEventListener('input', (ev) => {
   state.pickQuery = el.value;
   filterPicker(el);
 });
+
+/* The planner's own search. A full render, because what it changes is the
+   month's dots as well as the list under them, and those are in different
+   parts of the tree — a targeted repaint would have to know about both and
+   would drift the first time one of them moved.
+
+   So the caret is put back instead. Where it was, not at the end: a datalist
+   suggestion accepted mid-word, or a character deleted from the middle, would
+   otherwise send the cursor to the end of the box on the next keystroke. */
+let plCaret = null;
+root.addEventListener('input', (ev) => {
+  const el = ev.target;
+  if (!el.dataset || !el.dataset.plSearch) return;
+  const side = el.dataset.plSearch === 'plan' ? 'plan' : 'todo';
+  plWhere(side).q = el.value;
+  plCaret = { side, at: el.selectionStart };
+  if (side === 'plan') planScroll = 0; else todoScroll = 0;
+  render();
+});
+
+function paintPlCaret() {
+  const want = plCaret;
+  plCaret = null;
+  if (!want) return;
+  const el = root.querySelector(`[data-pl-search="${want.side}"]`);
+  if (!el) return;
+  el.focus();
+  // A search input refuses setSelectionRange in some browsers; the focus is
+  // the part that matters and it has already happened.
+  try { el.setSelectionRange(want.at, want.at); } catch (e) { /* not selectable */ }
+}
 
 root.addEventListener('input', (ev) => {
   const el = ev.target;

@@ -1319,6 +1319,75 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     outline: 2px solid var(--color-accent); outline-offset: 2px;
   }
 
+  /* ── narrowing a planner ──
+     A row of three under the month: a name to search for, and the two pickers.
+     It wraps rather than shrinks — three controls squeezed onto 330px are
+     three controls nobody can hit. */
+  .pl-filt {
+    display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+    margin: 0 0 10px;
+  }
+  .pl-filt-box {
+    position: relative; display: flex; align-items: center;
+    flex: 1 1 160px; min-width: 0;
+  }
+  .pl-filt-mark {
+    position: absolute; left: 9px; display: grid; place-items: center;
+    color: var(--pad-soft); pointer-events: none;
+  }
+  .pl-filt-mark svg { display: block; }
+  .pl-filt-in {
+    width: 100%; min-width: 0; min-height: 34px;
+    padding: 6px 10px 6px 30px;
+    border: 1px solid var(--pad-line); border-radius: 999px;
+    background: var(--color-surface, #fff); color: var(--pad-ink);
+    font: inherit; font-size: 12.5px;
+  }
+  .pl-filt-in::placeholder { color: var(--pad-soft); }
+  /* Safari draws its own round cancel button on a search field, which lands on
+     top of the border radius. The datalist arrow is Chrome's and is welcome. */
+  .pl-filt-in::-webkit-search-decoration,
+  .pl-filt-in::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+  .pl-filt-sel {
+    flex: 0 1 auto; max-width: 100%; min-height: 34px;
+    padding: 6px 10px; border: 1px solid var(--pad-line); border-radius: 999px;
+    background: var(--color-surface, #fff); color: var(--pad-mid);
+    font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  }
+  /* A picker that is doing something says so, so a planner showing four of
+     eleven rows is never a mystery. */
+  .pl-filt-sel.is-on {
+    border-color: var(--pad-dash); background: var(--pad-tint); color: var(--pad-ink);
+  }
+  .pl-filt-in:focus-visible, .pl-filt-sel:focus-visible {
+    outline: 2px solid var(--color-accent); outline-offset: 1px;
+  }
+  .pl-filt-note {
+    display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+    margin: -4px 0 10px; font-size: 11.5px; color: var(--pad-soft);
+  }
+  .pl-filt-clear {
+    border: 0; background: transparent; padding: 0; cursor: pointer;
+    font: inherit; font-size: 11.5px; font-weight: 700; color: var(--pad-ink);
+    text-decoration: underline; text-underline-offset: 2px;
+  }
+  .pl-filt-clear:hover { color: var(--color-accent); }
+  /* In the list view the bar has no calendar box around it, so it carries its
+     own gap to the list below. */
+  .pl-cal-bar.is-bare + .pl-filt { margin-bottom: 12px; }
+
+  /* Two rows on a phone rather than three. Left to wrap on its own the box
+     takes a whole line and pushes each picker onto one of its own, which is
+     most of a short dialog spent on chrome. The name gets the first line and
+     the two pickers share the second. */
+  @media (max-width: 720px) {
+    .pl-filt { gap: 6px; }
+    .pl-filt-box { flex: 1 1 100%; }
+    /* Narrower type and tighter sides, so "Any category" fits inside half a
+       phone rather than being cut to "Any cate…" before it has said anything. */
+    .pl-filt-sel { flex: 1 1 0; min-width: 0; font-size: 12px; padding: 6px 6px; }
+  }
+
   .pl-dows, .pl-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
   .pl-dows {
     margin-bottom: 4px; font-size: 10px; font-weight: 700; letter-spacing: .06em;
