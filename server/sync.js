@@ -474,6 +474,12 @@ export async function applyChanges(userId, changes) {
         }))
         : [];
       clean[key] = {
+        /* Which day it was made about. The key is the meal text, which is what
+           makes an estimate stop applying the moment a meal is edited; this is
+           what lets the app say that out loud rather than quietly reverting.
+           Optional — every row written before it existed has none. */
+        date: row.date == null || row.date === '' ? null
+          : isoDate(row.date, `aiCache.${key}.date`),
         kcal: int(row.kcal ?? 0, `aiCache.${key}.kcal`, 0, 100000),
         protein: int(row.protein ?? 0, `aiCache.${key}.protein`, 0, 100000),
         carbs: int(row.carbs ?? 0, `aiCache.${key}.carbs`, 0, 100000),

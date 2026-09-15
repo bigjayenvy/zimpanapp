@@ -1629,20 +1629,44 @@ async function refineFood(scope) {
   if (scope === 'past' && !compute().pastSingleDate) return;
   if (scope === 'm' && mRangeDates().length !== 1) return;
 
-  return askEstimate(food.detail, food.key, scope);
+  return askEstimate(food.detail, food.key, scope, food.day);
 }
 
 /* The estimate for one named day, for the automatic path. Same fetch, same
    cache, same key — only the thing that decided to ask is different. */
 function refineDay(date) {
   const day = buildDayFood(date);
-  if (day) askEstimate(day.detail, day.key, 'auto');
+  if (day) askEstimate(day.detail, day.key, 'auto', date);
+}
+
+// The text one day's meals make now, as the key an estimate would be filed
+// under. The same derivation foodReport uses, asked about a single day.
+const keyForDay = (date) => {
+  const detail = foodDetail(foodDayRows(new Set([date])));
+  return detail ? textKey(detail) : '';
+};
+
+/* Whether this day has been read by the model before, under text it no longer
+   matches. A meal edited or added after a calibration moves the key, so the
+   estimate stops applying — correctly, but with nothing on screen to say why
+   the figures went back to the table's. This is what lets the block say it.
+
+   The day's current key is worked out once and the cache is then a scan of
+   stamps: doing it the other way round rebuilt the day's text for every row in
+   the cache, four hundred times over on an account that has used this a lot. */
+function calibratedBefore(date) {
+  if (!date) return false;
+  const now = keyForDay(date);
+  return Object.keys(state.aiCache).some((k) => {
+    const row = state.aiCache[k];
+    return !!row && row.date === date && k !== now;
+  });
 }
 
 /* The one place an estimate is fetched and stored. The button and the automatic
    refresh both come through here so the key, the stamping and the error
    handling cannot drift apart between them. */
-async function askEstimate(detail, key, scope) {
+async function askEstimate(detail, key, scope, date) {
   if (!detail || !key) return;
   if (state.aiCache[key]) { render(); return; }
 
@@ -1653,8 +1677,15 @@ async function askEstimate(detail, key, scope) {
     const res = await API.estimate(detail);
     /* Stamped and queued so the answer reaches the other devices: the cache is
        keyed on the meal text, so once it has synced a meal refined on the
-       laptop really is already refined on the phone. */
-    state.aiCache[key] = Object.assign({}, res.estimate, { at: Date.now() });
+       laptop really is already refined on the phone.
+
+       The day is stamped on it too. Keying on the text is what makes an
+       estimate stop applying the moment a meal is edited — right, but silent:
+       the figures went back to the table's and the button offered itself as
+       though the day had never been read. Kept beside it so that can be said
+       out loud. */
+    state.aiCache[key] = Object.assign({}, res.estimate, { at: Date.now() },
+      /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? { date } : {});
     capAiCache();
     state.dirty.ai = true;
     writeJson(AI_CACHE_KEY, state.aiCache);
@@ -2781,8 +2812,28 @@ const describesFood = (r) => !!((r.note || '').trim()
    of the line it was on — so this is the list those numbers index into. Kept
    beside foodDetail rather than derived again at the reader, because a row
    this skipped and that one kept would shift every number after it and file
-   somebody's dinner under their breakfast. */
+   somebody's dinner under their breakfast. Which is exactly what happened: the
+   reader built its list from everything on the day and the request was built
+   from the meals, so on a day with a stand-up between breakfast and lunch the
+   items landed one row late and the meals at the end came out as zero. */
 const foodLines = (rows) => rows.filter(describesFood);
+
+/* Every meal on a set of dates, asked of the day itself rather than of
+   whatever list a caller happens to be holding.
+
+   Today's report is clipped to the current minute — an entry still running is
+   counted only as far as now, and one that has not started is left out — which
+   is right for hours and wrong for a key. The same Tuesday was filed under one
+   text at breakfast, another at bedtime, and a third the next morning when it
+   came back as a finished day, so a calibration made in the evening was
+   invisible to Looking back by the next afternoon. It had not been lost; it was
+   filed under a sentence nobody would ask for again.
+
+   So both halves of the deal come from here: the text that goes up, and the
+   list the line numbers that come back are counted against. Two readers of the
+   same date get the same answer, and the only thing that moves it is what was
+   actually written down about the food. */
+const foodDayRows = (dates) => state.entries.filter((e) => dates.has(e.date) && isEatenRow(e));
 
 /* One row, as one line. Whitespace is collapsed on purpose: a note written
    across two lines used to go up as two lines, and the numbering the estimate
@@ -3325,8 +3376,16 @@ function buildAiSplit(date) {
   const items = ai && Array.isArray(ai.items) ? ai.items : null;
   if (!items || !items.length) return null;
 
-  const lines = foodLines(state.entries.filter((r) => r.date === date));
+  const rows = foodDayRows(new Set([date]));
+  const lines = foodLines(rows);
   if (!lines.length) return null;
+
+  /* And that this is the list those numbers were counted against. The line
+     numbers answer one exact piece of text; if this device cannot rebuild the
+     text the estimate is filed under, they are about a different list and the
+     safe answer is the old share rather than somebody's lunch filed under
+     their stand-up. Cheap, and it is what would have caught this. */
+  if (!day.key || textKey(foodDetail(rows)) !== day.key) return null;
 
   const by = new Map();
   lines.forEach((r) => by.set(r.id, { kcal: 0, protein: 0, carbs: 0, fat: 0, items: [] }));
@@ -3440,6 +3499,13 @@ function burnFor(entries, weightKg, days, dates) {
   };
 }
 
+/* What a set of days ate, read from the entries given.
+
+   `entries` must be the store's own rows for the days being reported on, or
+   copies of them — compute() hands over clipped copies of today, which carry
+   the same id and date. The key and the estimate are asked of the day itself
+   rather than of this list (see foodDayRows), so a caller inventing rows that
+   are in no store gets a report with nothing to calibrate. */
 function foodReport(entries, money, days) {
   /* One tracker owns intake: the activity tracker.
 
@@ -3536,12 +3602,18 @@ function foodReport(entries, money, days) {
     : `Keep the pattern and keep logging it. General guidance only — for anything specific to you, your doctor is the right person to ask.`;
 
   const n = nutritionFor(rows);
-  const detail = foodDetail(rows);
+  /* Keyed on the whole day rather than on the rows this report is holding —
+     see foodDayRows. The figures above still come from `rows`, which is the
+     window actually being reported on; only what the estimate is filed under,
+     and what is sent to make one, are asked of the day. */
+  const reportDates = [...new Set(rows.map((r) => r.date))];
+  const keyRows = foodDayRows(new Set(reportDates));
+  const detail = foodDetail(keyRows);
   /* A refinement already asked for and answered, keyed by the text it was asked
      about — so it survives a reload and is found again the moment the same
      meals are on screen. Resolved a day at a time; see foodRefined(). */
   const key = detail ? textKey(detail) : '';
-  const { kcal: effective, ai } = foodRefined(rows, n);
+  const { kcal: effective, ai } = foodRefined(keyRows, n);
   const perDay = days > 1 ? ` (about ${Math.round(n.kcal / days)} a day)` : '';
   /* Both kinds of gap are named: a meal that said nothing at all, and an item
      inside a readable meal that is not in the table. Saying so is what stops
@@ -3562,6 +3634,10 @@ function foodReport(entries, money, days) {
        nobody on the page can answer. `local` keeps the original so the block
        can still show what the reading was before. */
     kcal: effective,
+    /* The one day this is about, where it is one. A calibration is asked for a
+       single day and stamped with it, so this is what says whether a day that
+       is not calibrated now has been before. */
+    day: reportDates.length === 1 ? reportDates[0] : null,
     ai,
     local: { kcal: n.kcal, protein: n.protein, carbs: n.carbs, fat: n.fat },
     detail,
@@ -9695,6 +9771,8 @@ function foodBlock(food, scope, canRefine) {
   if (!food) return '';
   const ai = food.ai;
   const busy = state.aiBusy === scope;
+  // Read before, but not under the text it now has. See calibratedBefore().
+  const stale = !ai && calibratedBefore(food.day);
 
   /* The AI figure replaces the local one rather than sitting beside it. Two
      different totals for the same meal is not a second opinion, it is a
@@ -9715,10 +9793,11 @@ function foodBlock(food, scope, canRefine) {
   const refine = !state.aiEstimates || !food.detail ? '' : `
             <div style="margin-top: 9px; display: flex; align-items: center; gap: 9px; flex-wrap: wrap;">
               ${canRefine ? `<button class="drawer-btn btn-refine" data-act="refine-food" data-scope="${esc(scope)}"${busy ? ' disabled' : ''}>
-                ${busy ? '<span class="spinner"></span> Calibrating…' : (ai ? 'Calibrate again' : 'Calibrate with AI')}
+                ${busy ? '<span class="spinner"></span> Calibrating…' : (ai || stale ? 'Calibrate again' : 'Calibrate with AI')}
               </button>` : ''}
               ${busy && !canRefine ? '<span style="font-size: 11px; color: var(--color-neutral-600); display: inline-flex; align-items: center; gap: 7px;"><span class="spinner"></span> Calibrating with AI…</span>' : ''}
               ${ai ? `<span style="font-size: 11px; color: var(--color-neutral-600);">Local reading was ${food.local.kcal.toLocaleString('en-US')} kcal</span>` : ''}
+              ${!ai && stale ? '<span style="font-size: 11px; color: var(--color-neutral-600);">This day was calibrated before, then the meals changed.</span>' : ''}
               ${state.aiError && state.aiBusy === null ? `<span style="font-size: 11px; color: var(--color-text);">${esc(state.aiError)}</span>` : ''}
             </div>`;
 
@@ -16465,16 +16544,20 @@ function calBreakdown(kind, dates, report, scope, closeAct) {
      much more expensive one. */
   const canRefine = food && state.aiEstimates && report && report.detail && dates.length === 1;
   const busy = state.aiBusy === scope;
+  // Read before, but not under the text it now has. Same rule the desktop
+  // block follows — see calibratedBefore().
+  const stale = food && !ai && calibratedBefore(report && report.day);
   // The desktop's button, in the phone's shape. The dialog still asks at the
   // moment the note is written; this is the way back to it afterwards.
-  const refine = !canRefine && !busy && !ai && !state.aiError ? '' : `
+  const refine = !canRefine && !busy && !ai && !stale && !state.aiError ? '' : `
   <div style="margin:14px 0 0;display:flex;flex-direction:column;gap:8px;">
     ${canRefine ? `<button class="btn btn-secondary" data-act="refine-food" data-scope="${esc(scope)}"${busy ? ' disabled' : ''}
       style="width:100%;min-height:46px;font-size:14.5px;display:inline-flex;align-items:center;justify-content:center;gap:9px;">
-      ${busy ? '<span class="spinner"></span> Calibrating…' : (ai ? 'Calibrate again' : 'Calibrate with AI')}
+      ${busy ? '<span class="spinner"></span> Calibrating…' : (ai || stale ? 'Calibrate again' : 'Calibrate with AI')}
     </button>` : ''}
     ${busy && !canRefine ? '<span style="font-size:12px;color:#756f88;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:8px;"><span class="spinner"></span> Calibrating with AI…</span>' : ''}
     ${ai ? `<span style="font-size:11.5px;color:#9995ab;text-align:center;">Local reading was ${localTotal.toLocaleString('en-US')} kcal.</span>` : ''}
+    ${!ai && stale ? '<span style="font-size:11.5px;color:#9995ab;text-align:center;">This day was calibrated before, then the meals changed.</span>' : ''}
     ${state.aiError && !busy ? `<span style="font-size:11.5px;color:#8a2f4a;text-align:center;">${esc(state.aiError)}</span>` : ''}
   </div>`;
 
