@@ -5461,22 +5461,63 @@ function planRoll(row) {
    is a reminder nobody reads. A subscription gets the day before and the day,
    because there is nothing to arrange, only something to know about.
 
-   Anything already past its date is said every day until it is dealt with. A
-   bill that was due on Tuesday does not stop being due on Wednesday. */
+   Nothing here is negative, and that is the whole of the rule about a date
+   that has gone: it matches none of these, so it is not raised. See
+   planAlerts, which used to say it every day until it was dealt with. */
 const PLAN_WARN = { sub: [1, 0], due: [3, 1, 0] };
 
-/* Lines that need attention today: dated, still owed, and at one of the
-   distances above. Cancelled subscriptions are not owed, which is how "only
-   active subscriptions notify" is enforced — in one place, by the same
-   `planOwed` the totals use, rather than by a second rule that could disagree
-   with it. */
+/* The date a line is told about, which is not always the date it holds.
+
+   A subscription is a day of the month, and its stored date is whatever the
+   last logging rolled it to. Nobody logs every charge — a standing order goes
+   out whether or not you write it down — so that date falls behind, and
+   reading it would have meant a charge nobody logged in March silencing
+   April's as well. The next time that day comes round is the thing worth
+   knowing about, and it is arithmetic rather than a write: the row is not
+   touched.
+
+   Unless the stored date is still ahead, which is what logging early leaves
+   behind: settle the 18th on the 16th and the row already points at next
+   month. Taking the day of the month there would raise it again on the 18th,
+   two days after it was dealt with.
+
+   A due holds one date and means it. */
+function planAlertDate(r) {
+  const due = r.due || '';
+  if (planKind(r) !== 'sub' || !Number(r.day)) return due;
+  return due && due >= todayIso ? due : firstMonthly(Number(r.day));
+}
+
+/* Lines to raise today: dated, still owed, and at one of the distances above.
+   Cancelled subscriptions are not owed, which is how "only active
+   subscriptions notify" is enforced — in one place, by the same `planOwed` the
+   totals use, rather than by a second rule that could disagree with it.
+
+   Nothing already past is raised. It used to be, every day until it was dealt
+   with, on the reasoning that a bill due on Tuesday is still due on Wednesday
+   — true, and not worth interrupting somebody about a second time, still less
+   a fifth. A charge that has already left the account is not news at all. The
+   distances in PLAN_WARN are all on or before the day, so a date that has gone
+   simply matches none of them; what is late is still counted on the button and
+   still drawn in red on the month. */
 function planAlerts() {
   return state.plans.filter((r) => {
-    if (planKind(r) === 'note' || !r.due || !planOwed(r)) return false;
-    const left = daysApart(todayIso, r.due);
-    return left <= 0 || PLAN_WARN[planKind(r)].indexOf(left) >= 0;
-  }).sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : 0));
+    if (planKind(r) === 'note' || !planOwed(r)) return false;
+    const when = planAlertDate(r);
+    if (!when) return false;
+    return PLAN_WARN[planKind(r)].indexOf(daysApart(todayIso, when)) >= 0;
+  }).sort((a, b) => {
+    const x = planAlertDate(a), y = planAlertDate(b);
+    return x < y ? -1 : x > y ? 1 : 0;
+  });
 }
+
+/* Money that was owed on a day that has gone. Not raised — see above — but
+   counted, because the badge is the last place outside the planner that
+   mentions it, and a bill nobody paid should not become invisible for having
+   been ignored once. Only a due can be late: a subscription charges itself. */
+const planLate = (r) => planKind(r) === 'due' && planOwed(r) && !!r.due && r.due < todayIso;
+
 // The ones not already waved away today. See state.planSeen.
 const planAlertsNew = () => planAlerts().filter((r) => state.planSeen[r.id] !== todayIso);
 
@@ -5503,7 +5544,7 @@ const planRows = (kind) => state.plans.filter((r) => planKind(r) === kind).sort(
 const planOpenCount = () => state.plans.filter(planLive).length;
 /* What the button outside wears, on the same rule the activity planner's badge
    follows: what needs attention, not what exists. */
-const planDueCount = () => planAlerts().length;
+const planDueCount = () => planAlerts().length + state.plans.filter(planLate).length;
 
 function newPlanId() {
   let id;
@@ -6441,7 +6482,9 @@ function planAlertDialog() {
     body: `
       <div class="pl-alerts">
         ${rows.map((r) => {
-    const near = dayNear(r.due);
+    // The same date the alert was raised on, which for a subscription is the
+    // charge coming round rather than the one it was last rolled to.
+    const near = dayNear(planAlertDate(r));
     const value = mCents(r.amount);
     return `
         <div class="pl-alert">
@@ -6460,7 +6503,10 @@ function planAlertDialog() {
     actions: `
       <button class="btn btn-secondary" data-act="plan-alert-hide">Not now</button>
       <button class="btn btn-primary" data-act="plan-alert-open">Open the planner</button>`,
-    foot: 'Waved away here, these come back tomorrow if they are still unpaid.'
+    /* It used to say they came back tomorrow, which was true when anything
+       past its date was raised every day. Now they come back as the date gets
+       nearer and stop once it has gone, so that is what it says. */
+    foot: 'Waved away here, these come back as the date gets nearer, and stop once it has passed. Anything still unpaid stays in the planner.'
   });
 }
 
