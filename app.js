@@ -2832,8 +2832,22 @@ const foodLines = (rows) => rows.filter(describesFood);
    So both halves of the deal come from here: the text that goes up, and the
    list the line numbers that come back are counted against. Two readers of the
    same date get the same answer, and the only thing that moves it is what was
-   actually written down about the food. */
-const foodDayRows = (dates) => state.entries.filter((e) => dates.has(e.date) && isEatenRow(e));
+   actually written down about the food.
+
+   Two readers on two devices, as well, which is what the sort is for. The
+   lines were joined in whatever order state.entries happened to hold, and that
+   order is not a fact about the day: rows arrive from the server with no ORDER
+   BY on them and mergeChanges appends what it is given, so the laptop that
+   logged breakfast first and the phone that pulled it down third wrote the
+   same three meals as two different sentences — and a key is a sentence. A
+   calibration made on one was invisible on the other, and one made before a
+   sync was invisible after it. By the clock, then by id for the two logged in
+   the same minute: an order both devices can work out for themselves, and the
+   order somebody ate in. */
+const foodDayRows = (dates) => state.entries
+  .filter((e) => dates.has(e.date) && isEatenRow(e))
+  .sort((a, b) => (Number(a.from) || 0) - (Number(b.from) || 0)
+    || String(a.id).localeCompare(String(b.id)));
 
 /* One row, as one line. Whitespace is collapsed on purpose: a note written
    across two lines used to go up as two lines, and the numbering the estimate
@@ -9843,7 +9857,7 @@ function foodBlock(food, scope, canRefine) {
               </button>` : ''}
               ${busy && !canRefine ? '<span style="font-size: 11px; color: var(--color-neutral-600); display: inline-flex; align-items: center; gap: 7px;"><span class="spinner"></span> Calibrating with AI…</span>' : ''}
               ${ai ? `<span style="font-size: 11px; color: var(--color-neutral-600);">Local reading was ${food.local.kcal.toLocaleString('en-US')} kcal</span>` : ''}
-              ${!ai && stale ? '<span style="font-size: 11px; color: var(--color-neutral-600);">This day was calibrated before, then the meals changed.</span>' : ''}
+              ${!ai && stale ? '<span style="font-size: 11px; color: var(--color-neutral-600);">This day was calibrated before. Read it again for what is on it now.</span>' : ''}
               ${state.aiError && state.aiBusy === null ? `<span style="font-size: 11px; color: var(--color-text);">${esc(state.aiError)}</span>` : ''}
             </div>`;
 
@@ -16603,7 +16617,7 @@ function calBreakdown(kind, dates, report, scope, closeAct) {
     </button>` : ''}
     ${busy && !canRefine ? '<span style="font-size:12px;color:#756f88;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:8px;"><span class="spinner"></span> Calibrating with AI…</span>' : ''}
     ${ai ? `<span style="font-size:11.5px;color:#9995ab;text-align:center;">Local reading was ${localTotal.toLocaleString('en-US')} kcal.</span>` : ''}
-    ${!ai && stale ? '<span style="font-size:11.5px;color:#9995ab;text-align:center;">This day was calibrated before, then the meals changed.</span>' : ''}
+    ${!ai && stale ? '<span style="font-size:11.5px;color:#9995ab;text-align:center;">This day was calibrated before. Read it again for what is on it now.</span>' : ''}
     ${state.aiError && !busy ? `<span style="font-size:11.5px;color:#8a2f4a;text-align:center;">${esc(state.aiError)}</span>` : ''}
   </div>`;
 
