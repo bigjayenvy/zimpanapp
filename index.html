@@ -2430,69 +2430,211 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   .chat-tab:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 
   /* ── logging out loud ──
-     A transcript, what is about to be written, and the way back to the form.
-     Sized for a thumb and a phone: this is the one panel somebody is looking
-     at while talking rather than reading. */
-  .mv { display: flex; flex-direction: column; gap: 12px; }
-  .mv-head { display: flex; align-items: center; gap: 10px; }
-  .mv-head strong { flex: 1; font-family: var(--font-heading); font-size: 17px; color: #16131f; }
-  .mv-x {
-    width: 34px; height: 34px; flex: none; border: 0; border-radius: 50%; cursor: pointer;
-    background: color-mix(in srgb, #16131f 7%, transparent); color: #56506a; font-size: 15px; line-height: 1;
+     The one panel nobody reads. It is looked at while talking, so it says one
+     word at a time and spends the rest of the screen on whether it is
+     listening. Dark because the room usually is, and because a white sheet at
+     arm's length while speaking is a torch. */
+  .mvw {
+    position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column;
+    justify-content: flex-end; background: rgba(14, 10, 26, .62);
+    backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
   }
-  /* Which way the conversation is facing. It pulses only while listening —
-     a dot that never stops moving stops meaning anything. */
-  .mv-dot {
-    width: 11px; height: 11px; flex: none; border-radius: 50%;
-    background: #c9c5d4; transition: background .2s;
+  .mv {
+    position: relative; display: flex; flex-direction: column; gap: 14px;
+    padding: 18px 20px calc(20px + env(safe-area-inset-bottom, 0px));
+    border-radius: 30px 30px 0 0; min-height: 90dvh; max-height: 97dvh; overflow-y: auto;
+    overscroll-behavior: contain; animation: zStep .26s ease both;
+    color: #fff; isolation: isolate;
+    background:
+      radial-gradient(110% 62% at 50% 6%, #4b2ea8 0%, transparent 62%),
+      radial-gradient(86% 46% at 12% 98%, #3a2b8f 0%, transparent 66%),
+      linear-gradient(176deg, #241a49 0%, #17102f 58%, #120c26 100%);
+    box-shadow: 0 -20px 54px rgba(10, 6, 26, .5);
   }
-  .mv-dot.is-listening { background: #5f3ac9; animation: mvPulse 1.4s ease-in-out infinite; }
-  .mv-dot.is-speaking { background: #0e9f6e; }
-  @keyframes mvPulse {
-    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, #5f3ac9 55%, transparent); }
-    60% { box-shadow: 0 0 0 9px color-mix(in srgb, #5f3ac9 0%, transparent); }
-  }
-  @media (prefers-reduced-motion: reduce) { .mv-dot.is-listening { animation: none; } }
 
-  .mv-status { margin: 0; font-size: 13px; color: #756f88; }
-  .mv-err {
-    margin: 0; padding: 11px 13px; border-radius: 13px; font-size: 13px; line-height: 1.5;
-    background: #fdecf1; border: 1px solid #f3c9d6; color: #8a2f4a;
+  .mv-top { display: flex; align-items: center; gap: 10px; }
+  .mv-kick {
+    flex: 1; font-size: 10.5px; letter-spacing: .22em; text-transform: uppercase;
+    font-weight: 700; color: rgba(255, 255, 255, .46);
   }
-  /* Newest last and the box scrolls, so the last thing said is the thing on
-     screen without any script to put it there. */
+  .mv-count {
+    font-size: 11px; font-weight: 700; padding: 5px 11px; border-radius: 999px;
+    color: #9ff3d2; background: rgba(14, 159, 110, .17); border: 1px solid rgba(14, 159, 110, .34);
+  }
+
+  /* The orb carries the state, so the screen needs no sentence to explain
+     itself. Everything else on it is arranged around the fact that this is
+     the part being looked at. */
+  .mv-stage {
+    flex: 1; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 22px; padding: 4px 0 2px; text-align: center;
+  }
+  .mv-orb { position: relative; width: 172px; height: 172px; flex: none; }
+  .mv-orb > span { position: absolute; border-radius: 50%; }
+  /* A thin containing ring. Nothing structural — it gives the light an edge to
+     sit inside, which is the difference between an orb and a smudge. */
+  .mv-orb::after {
+    content: ''; position: absolute; inset: 4%; border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, .13);
+    box-shadow: inset 0 0 26px rgba(150, 112, 255, .22);
+  }
+
+  .mv-halo {
+    inset: -4%; background: radial-gradient(circle at 50% 52%,
+      rgba(150, 110, 255, .3) 0%, rgba(110, 78, 235, .12) 44%, transparent 68%);
+    filter: blur(13px); animation: mvBreathe 5.2s ease-in-out infinite;
+  }
+  /* Ellipses rather than circles, turned to different angles and swept at
+     different speeds. Three blurred circles stacked on one point make a blob;
+     three blurred ellipses crossing each other make lobes that move past one
+     another, which is the whole of the effect. */
+  .mv-petal {
+    inset: 7% 26%; border-radius: 50%; filter: blur(7px); mix-blend-mode: screen;
+    animation: mvTurn 13s linear infinite;
+  }
+  .mv-petal:nth-child(2) {
+    background: linear-gradient(170deg, #d9c4ff 4%, #9a6bff 44%, rgba(120, 78, 240, 0) 82%);
+  }
+  .mv-petal:nth-child(3) {
+    background: linear-gradient(170deg, #b79dff 6%, #6f56f0 46%, rgba(86, 62, 210, 0) 84%);
+    animation-duration: 19s; animation-direction: reverse; transform: rotate(64deg);
+  }
+  .mv-petal:nth-child(4) {
+    background: linear-gradient(170deg, #fff 2%, #cdb4ff 38%, rgba(168, 140, 255, 0) 76%);
+    animation-duration: 25s; transform: rotate(128deg); opacity: .7;
+  }
+  .mv-core {
+    inset: 36%; background: radial-gradient(circle at 50% 50%,
+      #fff 0%, #f4ecff 34%, rgba(196, 166, 255, .5) 58%, rgba(170, 140, 255, 0) 82%);
+    filter: blur(4px); animation: mvBreathe 3.4s ease-in-out infinite;
+  }
+
+  /* Listening is the resting state and barely moves. Speaking is the one that
+     should catch the eye, because it is the one that means wait. */
+  .mv-orb.is-speaking .mv-halo { animation-duration: 1.5s; }
+  .mv-orb.is-speaking .mv-core { animation-duration: 1.05s; }
+  .mv-orb.is-speaking .mv-petal { animation-duration: 5.5s; }
+  .mv-orb.is-speaking .mv-petal:nth-child(3) { animation-duration: 7s; }
+  .mv-orb.is-speaking .mv-petal:nth-child(4) { animation-duration: 9s; }
+  .mv-orb.is-wake { opacity: .55; }
+  .mv-orb.is-wake .mv-petal { animation-duration: 30s; }
+  /* Muted, ended and failed all mean the same thing to the eye: it is not
+     listening. Colour is dropped rather than changed, so nothing about a
+     stopped orb reads as activity. */
+  .mv-orb.is-muted, .mv-orb.is-done { filter: grayscale(.72) brightness(.62); opacity: .55; }
+  .mv-orb.is-error { filter: grayscale(.45) sepia(.5) hue-rotate(-38deg) saturate(2.2) brightness(.8); opacity: .7; }
+  .mv-orb.is-muted .mv-halo, .mv-orb.is-muted .mv-core,
+  .mv-orb.is-done .mv-halo, .mv-orb.is-done .mv-core,
+  .mv-orb.is-error .mv-halo, .mv-orb.is-error .mv-core { animation: none; }
+
+  /* Composed rather than plain, so each petal keeps the angle it was set at:
+     a transform animation otherwise overwrites the rotate() above it. */
+  @keyframes mvTurn { to { rotate: 360deg; } }
+  @keyframes mvBreathe {
+    0%, 100% { transform: scale(1); opacity: .88; }
+    50% { transform: scale(1.09); opacity: 1; }
+  }
+
+  .mv-say {
+    margin: 0; font-family: var(--font-heading); font-size: 19px; font-weight: 600;
+    letter-spacing: .13em; text-transform: uppercase; color: #fff;
+    text-shadow: 0 2px 18px rgba(124, 88, 255, .5);
+  }
+
+  .mv-hints { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; }
+  /* Not buttons. There is nothing to tap here — they are the three things
+     worth saying, and dressing them as controls would promise otherwise. */
+  .mv-hint {
+    font-size: 12px; padding: 7px 13px; border-radius: 999px;
+    color: rgba(255, 255, 255, .8); background: rgba(255, 255, 255, .08);
+    border: 1px solid rgba(255, 255, 255, .16);
+  }
+  .mv-err {
+    margin: 0; max-width: 30ch; padding: 11px 14px; border-radius: 15px;
+    font-size: 13px; line-height: 1.5; color: #ffd9e2;
+    background: rgba(214, 51, 92, .2); border: 1px solid rgba(255, 141, 173, .36);
+  }
+
+  /* Newest last and it scrolls, so the last thing said is on screen without
+     any script to put it there. */
   .mv-said {
-    display: flex; flex-direction: column; gap: 7px;
-    max-height: 34vh; overflow-y: auto; overscroll-behavior: contain;
+    display: flex; flex-direction: column; gap: 7px; flex: none;
+    max-height: 22vh; overflow-y: auto; overscroll-behavior: contain;
   }
   .mv-line { margin: 0; display: flex; font-size: 13.5px; line-height: 1.5; }
-  .mv-line span { padding: 8px 12px; border-radius: 15px; max-width: 86%; }
+  .mv-line span { padding: 8px 13px; border-radius: 16px; max-width: 86%; }
   .mv-line.is-you { justify-content: flex-end; }
-  .mv-line.is-you span { background: #f2eefe; color: #2f1c66; border-bottom-right-radius: 5px; }
-  .mv-line.is-zimpan span { background: #f4f3f7; color: #3b3648; border-bottom-left-radius: 5px; }
+  .mv-line.is-you span {
+    background: linear-gradient(140deg, #7856f5, #5b3fd0); color: #fff; border-bottom-right-radius: 5px;
+  }
+  .mv-line.is-zimpan span {
+    background: rgba(255, 255, 255, .1); color: rgba(255, 255, 255, .9);
+    border: 1px solid rgba(255, 255, 255, .13); border-bottom-left-radius: 5px;
+  }
 
-  /* What it is about to write, in the words it just read out. */
+  /* The one solid thing on the screen, because it is the one thing about to
+     become a row. */
   .mv-draft {
-    display: flex; flex-direction: column; gap: 3px;
-    padding: 14px; border-radius: 17px;
-    background: var(--color-surface, #fff); border: 1.5px solid #5f3ac9;
-    box-shadow: 0 10px 26px rgba(79, 70, 229, .16);
+    display: flex; flex-direction: column; gap: 3px; flex: none;
+    padding: 15px; border-radius: 19px;
+    background: rgba(255, 255, 255, .1); border: 1px solid rgba(190, 162, 255, .44);
+    box-shadow: 0 14px 34px rgba(8, 4, 22, .42), inset 0 1px 0 rgba(255, 255, 255, .16);
+    backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px);
   }
   .mv-draft-kick {
-    font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; font-weight: 700; color: #5f3ac9;
+    font-size: 10.5px; letter-spacing: .13em; text-transform: uppercase;
+    font-weight: 700; color: #c9b4ff;
   }
-  .mv-draft strong { font-family: var(--font-heading); font-size: 16.5px; color: #16131f; }
-  .mv-draft-meta { font-size: 12.5px; color: #756f88; line-height: 1.5; }
-  .mv-draft-acts { display: flex; gap: 9px; margin-top: 9px; }
-  .mv-draft-acts .btn { flex: 1 1 0; min-height: 46px; border-radius: 999px; justify-content: center; }
-  .mv-done { margin: 0; font-size: 12px; color: #0e7a5c; font-weight: 600; }
+  .mv-draft strong { font-family: var(--font-heading); font-size: 17px; color: #fff; }
+  .mv-draft-meta { font-size: 12.5px; color: rgba(255, 255, 255, .74); line-height: 1.5; }
+  .mv-draft-acts { display: flex; gap: 9px; margin-top: 11px; }
+  .mv-draft-acts .btn { flex: 1 1 0; min-height: 47px; border-radius: 999px; justify-content: center; }
+  /* The secondary is built for a white card and vanishes on this one. */
+  .mv-draft-acts .btn-secondary {
+    background: rgba(255, 255, 255, .12); color: #fff; border-color: rgba(255, 255, 255, .3);
+  }
+  .mv-draft-acts .btn-secondary:hover { background: rgba(255, 255, 255, .2); }
 
-  /* Not a cancel. It is the other way of doing the same thing, so it reads as
-     a way on rather than a way out. */
-  .mv-manual {
-    margin-top: 2px; border: 0; background: transparent; padding: 10px; cursor: pointer;
-    font: inherit; font-size: 13.5px; font-weight: 600; color: #5f3ac9;
-    text-decoration: underline; text-underline-offset: 3px;
+  .mv-bar { display: flex; align-items: center; gap: 12px; flex: none; margin-top: auto; }
+  .mv-ghost {
+    flex: 1 1 0; min-height: 44px; padding: 0 14px; cursor: pointer;
+    font: inherit; font-size: 13px; font-weight: 600; color: rgba(255, 255, 255, .82);
+    background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .16);
+    border-radius: 999px; transition: background .18s;
+  }
+  .mv-ghost:hover { background: rgba(255, 255, 255, .15); }
+  .mv-round { flex: none; width: 44px; padding: 0; font-size: 15px; }
+
+  /* The control this screen is about. Big enough to hit without looking,
+     which is the entire point of logging by voice. */
+  .mv-mic {
+    flex: none; width: 66px; height: 66px; border-radius: 50%; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: #fff; border: 1px solid rgba(255, 255, 255, .28);
+    background: radial-gradient(circle at 50% 30%, #9b7bff 0%, #6d4ae8 56%, #4a2fb8 100%);
+    box-shadow: 0 0 0 7px rgba(124, 88, 255, .14), 0 12px 30px rgba(74, 47, 184, .5);
+    transition: transform .16s, box-shadow .2s, background .2s;
+  }
+  .mv-mic:hover { transform: translateY(-1px); }
+  .mv-mic:active { transform: scale(.95); }
+  .mv-mic.is-off {
+    background: rgba(255, 255, 255, .1); color: rgba(255, 255, 255, .66);
+    box-shadow: 0 0 0 7px rgba(255, 255, 255, .05);
+  }
+  .mv-mic[disabled] { opacity: .4; cursor: default; box-shadow: none; }
+  .mv-ghost:focus-visible, .mv-mic:focus-visible {
+    outline: 2px solid #c9b4ff; outline-offset: 3px;
+  }
+
+  /* Short phones: the orb is the first thing that can afford to give up room,
+     and it keeps its meaning at any size. */
+  @media (max-height: 700px) {
+    .mv { min-height: 88dvh; }
+    .mv-orb { width: 132px; height: 132px; }
+    .mv-say { font-size: 16.5px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .mv, .mv-orb > span { animation: none !important; }
   }
 
   .chat-empty { margin: auto 0; text-align: center; }

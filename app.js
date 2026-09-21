@@ -1062,7 +1062,7 @@ const state = {
   /* The voice conversation, while there is one. Session state in every sense:
      the transcript is not stored, not synced and not sent anywhere but the
      screen it is on, and closing the sheet is the end of it. */
-  voice: { open: false, status: 'idle', mode: '', error: '', said: [], draft: null, session: null, ctx: null, done: 0 },
+  voice: { open: false, status: 'idle', mode: '', error: '', said: [], draft: null, session: null, ctx: null, done: 0, muted: false },
   aiConsent: readJson(AI_CONSENT_KEY, false) === true,
   aiCache: readJson(AI_CACHE_KEY, {}),
   aiAsking: null,   // scope awaiting consent
@@ -18084,7 +18084,7 @@ async function voiceAdapter() {
 async function voiceOpen() {
   const v = state.voice;
   if (v.status === 'starting' || v.status === 'live') return;
-  v.open = true; v.status = 'starting'; v.error = ''; v.said = []; v.draft = null; v.done = 0;
+  v.open = true; v.status = 'starting'; v.error = ''; v.said = []; v.draft = null; v.done = 0; v.muted = false;
   v.ctx = voiceBeep();
   render();
 
@@ -18133,6 +18133,7 @@ function voiceStop() {
   const s = v.session;
   v.session = null;
   v.mode = '';
+  v.muted = false;
   if (s && typeof s.endSession === 'function') { try { s.endSession(); } catch (e) { /* already gone */ } }
   if (v.ctx && typeof v.ctx.close === 'function') { try { v.ctx.close(); } catch (e) { /* already gone */ } }
   v.ctx = null;
@@ -18167,36 +18168,72 @@ function voicePaint() {
    other way" — which is a different thing and deserves to say so. */
 function mVoiceSheet() {
   if (!state.voice.open) return '';
-  /* The frame is painted once and the body alone thereafter. mSheet animates
-     itself in, so rebuilding this node replays that slide on every repaint —
-     which, behind a five-second heartbeat and a line of transcript per breath,
-     is the sheet flickering rather than sitting still. */
-  return mSheet(`<div class="mv" data-voice-body>${mVoiceBody()}</div>`, '20px 20px 26px');
+  /* Its own frame rather than mSheet's. This is the one panel nobody is
+     reading — it is looked at while talking — so it goes dark and gets out of
+     the way of the thing that matters, which is whether it is listening.
+
+     The frame is painted once and only its body thereafter: rebuilding this
+     node replays the slide it animates in with, which behind a heartbeat is
+     the sheet flickering rather than sitting still. */
+  return `
+<div class="mvw" data-backdrop="m-voice-close">
+  <div class="mv" data-voice-body>${mVoiceBody()}</div>
+</div>`;
 }
+
+/* What the orb is doing, which is the whole of what this screen says.
+
+   One word per state, because somebody talking at their phone can read one
+   word and nothing longer. */
+const VOICE_PHASE = {
+  starting: { phase: 'wake', line: 'Connecting' },
+  ended: { phase: 'done', line: 'Conversation ended' },
+  error: { phase: 'error', line: 'That did not work' }
+};
 
 function mVoiceBody() {
   const v = state.voice;
   const d = v.draft;
-  const live = v.status === 'live';
-  const heard = v.said.length;
+  const known = VOICE_PHASE[v.status];
+  const phase = known ? known.phase
+    : v.muted ? 'muted'
+      : v.mode === 'speaking' ? 'speaking' : 'listening';
+  /* "Say something" is wrong once there is a draft: the question on the table
+     is a yes, not an opening. The card below says what it is; this says what
+     is being waited for. */
+  const line = known ? known.line
+    : v.muted ? 'Microphone off'
+      : v.mode === 'speaking' ? 'Zimpan is speaking'
+        : d ? 'Log it?' : 'Say something';
 
-  const line = v.status === 'starting' ? 'Connecting…'
-    : v.status === 'error' ? ''
-      : v.status === 'ended' ? 'The conversation has ended.'
-        : v.mode === 'speaking' ? 'Zimpan is speaking…'
-          : 'Listening — say what you did.';
+  /* Only before the first thing is said, and only while there is a point in
+     saying it. Three because there are three things this can do, and a hint
+     that outlives its usefulness is furniture. */
+  const hints = (v.status === 'live' && !v.said.length && !d)
+    ? `<div class="mv-hints">${['Log an activity', 'Money in or out', 'Make a plan']
+      .map((h) => `<span class="mv-hint">${esc(h)}</span>`).join('')}</div>`
+    : '';
 
   return `
-    <div class="mv-head">
-      <span class="mv-dot${live ? ` is-${v.mode || 'listening'}` : ''}" aria-hidden="true"></span>
-      <strong>Log by voice</strong>
-      <button class="mv-x" data-act="m-voice-close" aria-label="Close">✕</button>
+    <div class="mv-top">
+      <span class="mv-kick">Zimpan</span>
+      ${v.done ? `<span class="mv-count">${v.done} logged</span>` : ''}
     </div>
 
-    ${v.error ? `<p class="mv-err">${esc(v.error)}</p>` : `<p class="mv-status" aria-live="polite">${esc(line)}</p>`}
+    <div class="mv-stage">
+      <div class="mv-orb is-${phase}" aria-hidden="true">
+        <span class="mv-halo"></span>
+        <span class="mv-petal"></span>
+        <span class="mv-petal"></span>
+        <span class="mv-petal"></span>
+        <span class="mv-core"></span>
+      </div>
+      <p class="mv-say" aria-live="polite">${esc(line)}</p>
+      ${v.error ? `<p class="mv-err">${esc(v.error)}</p>` : hints}
+    </div>
 
-    ${heard ? `<div class="mv-said">${v.said.map((s) => `
-      <p class="mv-line is-${esc(s.who)}"><span>${esc(s.text)}</span></p>`).join('')}</div>` : ''}
+    ${v.said.length ? `<div class="mv-said">${v.said.map((t) => `
+      <p class="mv-line is-${esc(t.who)}"><span>${esc(t.text)}</span></p>`).join('')}</div>` : ''}
 
     ${d ? `
     <div class="mv-draft">
@@ -18209,13 +18246,32 @@ function mVoiceBody() {
       </div>
     </div>` : ''}
 
-    ${v.done ? `<p class="mv-done">${v.done} logged in this conversation.</p>` : ''}
-
-    <button class="mv-manual" data-act="m-voice-manual">Log manually</button>`;
+    <div class="mv-bar">
+      <button class="mv-ghost" data-act="m-voice-manual">Log manually</button>
+      <button class="mv-mic${v.muted ? ' is-off' : ''}" data-act="m-voice-mute"
+        ${v.status === 'live' ? '' : 'disabled'}
+        aria-pressed="${v.muted ? 'true' : 'false'}"
+        aria-label="${v.muted ? 'Turn the microphone back on' : 'Turn the microphone off'}">
+        ${v.muted ? VOICE_MIC_OFF : VOICE_MIC_ON}
+      </button>
+      <button class="mv-ghost mv-round" data-act="m-voice-close" aria-label="Close">✕</button>
+    </div>`;
 }
 
-// What the draft card says under the name, which is the spoken sentence with
-// the question taken off the end.
+/* Drawn rather than typed: a glyph font would put the one thing on this screen
+   that has to be unmistakable at the mercy of whatever the phone substitutes. */
+const VOICE_MIC_ON = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true"
+  stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="9" y="2.5" width="6" height="11" rx="3"></rect>
+  <path d="M5.5 11a6.5 6.5 0 0 0 13 0"></path><path d="M12 17.5V21"></path></svg>`;
+
+const VOICE_MIC_OFF = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true"
+  stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M9 5.5A3 3 0 0 1 15 5.5V10"></path>
+  <path d="M15 13.6a3 3 0 0 1-6-2.1V8.6"></path>
+  <path d="M5.5 11a6.5 6.5 0 0 0 10.2 5.3"></path><path d="M18.5 11a6.5 6.5 0 0 1-.3 2"></path>
+  <path d="M12 17.5V21"></path><path d="M4 3l16 18"></path></svg>`;
+
 function voiceDraftMeta(d) {
   if (d.kind === 'activity') {
     return `${voiceWhen(d.date)} · ${mDur(d.minutes)} · ${d.category || 'No category yet'}`;
@@ -19152,6 +19208,20 @@ const M_ACTIONS = {
      a hands-free feature that cannot be finished by hand is a trap. */
   'm-voice-log': () => { voiceConfirm(); },
   'm-voice-drop': () => { voiceCancelDraft(); },
+  /* A real switch, not an ornament: the library can mute the input, so the
+     button in the middle of the sheet does the thing its icon claims. Held
+     locally as well as told to the session, because the icon has to be right
+     even if the session has gone. */
+  'm-voice-mute': () => {
+    const v = state.voice;
+    if (v.status !== 'live') return;
+    v.muted = !v.muted;
+    const s = v.session;
+    if (s && typeof s.setMicMuted === 'function') {
+      try { s.setMicMuted(v.muted); } catch (e) { /* session already gone */ }
+    }
+    voicePaint();
+  },
   'm-log-time': () => { mResetDraft(); mSet({ screen: 'flow', kind: 'time', step: 2, skip: [1], day: mDraftDayFromRange() }); },
   'm-log-money': () => { mResetDraft(); mSet({ screen: 'flow', kind: 'money', step: 2, skip: [1], day: mDraftDayFromRange() }); },
   /* Both ways out of the flow ask first when there is something to lose, and
