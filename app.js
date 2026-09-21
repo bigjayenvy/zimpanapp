@@ -17818,7 +17818,7 @@ const voiceFiledAs = (name, money) => (name
 function voiceDraft(draft) {
   state.voice.draft = draft;
   state.voice.error = '';
-  render();
+  voicePaint();
   return { ok: true, spoken: draft.spoken };
 }
 
@@ -17964,14 +17964,18 @@ function voiceConfirm() {
   state.voice.done = (state.voice.done || 0) + 1;
   save();
   queueSync(0);
-  render();
+  /* The log behind the sheet is now a row out of date, and it is also behind
+     the sheet. Marked rather than painted: whoever closes this gets the new
+     row, and nobody watches a document rebuild itself mid-sentence. */
+  pendingPaint = true;
+  voicePaint();
   const what = d.kind === 'plan' ? 'planner' : 'log';
   return { ok: true, spoken: `Done, it is on your ${what}. Anything else?` };
 }
 
 function voiceCancelDraft() {
   state.voice.draft = null;
-  render();
+  voicePaint();
   return { ok: true, spoken: 'Dropped. Anything else?' };
 }
 
@@ -18093,16 +18097,16 @@ async function voiceOpen() {
       conversationToken: ticket.conversationToken,
       variables: voiceVariables(),
       tools: VOICE_TOOLS,
-      onOpen: () => { state.voice.status = 'live'; render(); },
-      onClose: () => { if (state.voice.status !== 'error') state.voice.status = 'ended'; render(); },
+      onOpen: () => { state.voice.status = 'live'; voicePaint(); },
+      onClose: () => { if (state.voice.status !== 'error') state.voice.status = 'ended'; voicePaint(); },
       onError: (msg) => voiceFail(msg),
-      onMode: (mode) => { state.voice.mode = mode === 'speaking' ? 'speaking' : 'listening'; render(); },
+      onMode: (mode) => { state.voice.mode = mode === 'speaking' ? 'speaking' : 'listening'; voicePaint(); },
       onSaid: (who, text) => {
         if (!text) return;
         // Capped: a long conversation is a long transcript, and the sheet is a
         // phone screen rather than a log of what was said.
         state.voice.said = state.voice.said.concat([{ who, text: String(text).slice(0, 300) }]).slice(-12);
-        render();
+        voicePaint();
       }
     });
   } catch (err) {
@@ -18120,7 +18124,7 @@ function voiceFail(msg) {
     ? 'This needs the microphone, and the browser said no. You can still log it by hand.'
     : String(msg || 'Could not start the conversation.');
   voiceStop();
-  render();
+  voicePaint();
 }
 
 // Ends the session without touching the sheet, so an error can still be read.
@@ -18143,6 +18147,18 @@ function voiceClose() {
   render();
 }
 
+/* A repaint of the conversation and nothing else.
+
+   Everything the agent does while the sheet is up — a line of transcript, the
+   dot changing colour, a draft arriving — changes only what is inside it, and
+   render() replaces the whole document. Falls back to a full paint when the
+   sheet is not mounted, which is the first open and every close. */
+function voicePaint() {
+  const body = root.querySelector('[data-voice-body]');
+  if (!body || !state.voice.open) { render(); return; }
+  body.innerHTML = mVoiceBody();
+}
+
 /* ── the sheet ──
 
    A transcript, what it is about to write, and the way out. Written as a sheet
@@ -18150,8 +18166,16 @@ function voiceClose() {
    a corner cross because the way out here is not "close this", it is "do it the
    other way" — which is a different thing and deserves to say so. */
 function mVoiceSheet() {
+  if (!state.voice.open) return '';
+  /* The frame is painted once and the body alone thereafter. mSheet animates
+     itself in, so rebuilding this node replays that slide on every repaint —
+     which, behind a five-second heartbeat and a line of transcript per breath,
+     is the sheet flickering rather than sitting still. */
+  return mSheet(`<div class="mv" data-voice-body>${mVoiceBody()}</div>`, '20px 20px 26px');
+}
+
+function mVoiceBody() {
   const v = state.voice;
-  if (!v.open) return '';
   const d = v.draft;
   const live = v.status === 'live';
   const heard = v.said.length;
@@ -18162,8 +18186,7 @@ function mVoiceSheet() {
         : v.mode === 'speaking' ? 'Zimpan is speaking…'
           : 'Listening — say what you did.';
 
-  return mSheet(`
-  <div class="mv">
+  return `
     <div class="mv-head">
       <span class="mv-dot${live ? ` is-${v.mode || 'listening'}` : ''}" aria-hidden="true"></span>
       <strong>Log by voice</strong>
@@ -18188,8 +18211,7 @@ function mVoiceSheet() {
 
     ${v.done ? `<p class="mv-done">${v.done} logged in this conversation.</p>` : ''}
 
-    <button class="mv-manual" data-act="m-voice-manual">Log manually</button>
-  </div>`, '20px 20px 26px');
+    <button class="mv-manual" data-act="m-voice-manual">Log manually</button>`;
 }
 
 // What the draft card says under the name, which is the spoken sentence with
@@ -18871,9 +18893,22 @@ function busyEditing() {
   return takes && Date.now() - lastEditAt < EDIT_QUIET_MS;
 }
 
+/* Up, rather than live.
+
+   A repaint underneath the sheet replaces the sheet's own node, which replays
+   the slide mSheet animates in with — so an untouched conversation flickered
+   once a heartbeat. It is a modal: nothing behind it is being read, and a
+   conversation that has ended is still being read at the moment it ends. The
+   same deferral a field with a caret in it already gets. */
+const voiceBusy = () => !!state.voice && state.voice.open;
+
+// A repaint nobody asked for can wait: for a field with a caret in it, and for
+// a conversation somebody is in the middle of having.
+const holdPaint = () => busyEditing() || voiceBusy();
+
 /* What every timer, poll and arriving sync calls instead of render(). */
 function renderLater() {
-  if (busyEditing()) { pendingPaint = true; return; }
+  if (holdPaint()) { pendingPaint = true; return; }
   pendingPaint = false;
   render();
 }
@@ -18911,12 +18946,12 @@ root.addEventListener('click', (ev) => selectTimePart(ev.target));
 root.addEventListener('focusout', () => {
   if (!pendingPaint) return;
   setTimeout(() => {
-    if (pendingPaint && !busyEditing()) { pendingPaint = false; render(); }
+    if (pendingPaint && !holdPaint()) { pendingPaint = false; render(); }
   }, 0);
 });
 
 /* And once the quiet spell is up, whether or not the field was ever left. */
-setInterval(() => { if (pendingPaint && !busyEditing()) { pendingPaint = false; render(); } }, 2000);
+setInterval(() => { if (pendingPaint && !holdPaint()) { pendingPaint = false; render(); } }, 2000);
 
 /* The pill row scrolls inside itself once there are more windows than fit, so
    the one you are on can be off the end of it — which on a narrow screen meant
