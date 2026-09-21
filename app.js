@@ -1041,6 +1041,7 @@ const state = {
   pickNew: null, pickNewName: '',
   // {kind, name} while the delete confirmation is up.
   pickDelete: null,
+  rowDelete: null,
 
   /* Persisted, and that is the whole trick: a stopwatch needs a start time, not
      a running process. Phones freeze and reload background tabs freely, so
@@ -4621,6 +4622,41 @@ function pickDeleteDialog() {
       <button class="btn btn-secondary" data-act="pick-del-cancel">Cancel</button>
       <button class="btn" data-act="pick-del-confirm"
         style="background:#8a2f4a;color:#fff;border-color:#8a2f4a;">${rows.length ? `Delete ${esc(noun)} and ${rows.length}` : `Delete ${esc(noun)}`}</button>`
+  });
+}
+
+/* Taking a row back out.
+
+   Soft in the store and permanent to the person: the id is tombstoned so the
+   deletion travels rather than the row coming back on the next pull, which is
+   exactly why there is no undo to offer. A tap that cannot be taken back is
+   worth a sentence first, and the sentence names the row rather than asking
+   about "this item" - reading your own dinner back is how you find out you
+   are about to delete the wrong one. */
+function rowDeleteDialog() {
+  const t = state.rowDelete;
+  if (!t) return '';
+  const money = t.kind === 'money';
+  const row = findRow(money ? 'money' : 'entries', t.id);
+  // The row can be gone already: two taps, or another device got there first.
+  if (!row) return '';
+  const what = voiceText(row.activity, 80) || (money ? 'this entry' : 'this activity');
+  const when = `${dayLabel(row.date)}`;
+  const sub = money
+    ? `${row.in ? '+' : '−'}${amount(money2(row.in || row.out))} · ${when}`
+    : `${mDur(span(row))} · ${when}`;
+  return lightbox({
+    icon: 'trash',
+    tone: 'var(--zg-alert)',
+    kicker: 'This cannot be undone',
+    title: `Delete “${esc(what)}”?`,
+    closeAct: 'row-del-cancel',
+    body: `<p>${esc(sub)}</p>
+      <p>It goes from every device you are signed in on, and it cannot be brought back.</p>`,
+    actions: `
+      <button class="btn btn-secondary" data-act="row-del-cancel">Keep it</button>
+      <button class="btn" data-act="row-del-confirm"
+        style="background:#8a2f4a;color:#fff;border-color:#8a2f4a;">Delete</button>`
   });
 }
 
@@ -11989,6 +12025,7 @@ function render() {
   ${stepsSheet()}
   ${state.reportOpen ? reportSheet() : ''}
   ${pickDeleteDialog()}
+  ${rowDeleteDialog()}
   ${notePromptDialog()}
   ${rowNewDialog()}
   ${mealNoteDialog()}
@@ -14552,16 +14589,26 @@ const ACTIONS = {
   },
   'cancel-purpose': () => { state.newPurposeOpen = false; state.newPurposeName = ''; render(); },
 
-  // Deletes are soft: the row leaves the list but its id is remembered, or the
-  // next pull from another device would restore it.
-  'entry-remove': (el) => {
-    state.entries = state.entries.filter((e) => e.id !== el.dataset.id);
-    bury('entries', el.dataset.id);
-    save(); queueSync(0); render();
-  },
-  'money-remove': (el) => {
-    state.money = state.money.filter((e) => e.id !== el.dataset.id);
-    bury('money', el.dataset.id);
+  /* Deletes are soft in the store and final to the person: the row leaves the
+     list and its id is remembered, or the next pull from another device would
+     put it back. Nothing here can undo that, so all three ways in ask first. */
+  'entry-remove': (el) => { state.rowDelete = { kind: 'entries', id: el.dataset.id }; render(); },
+  'money-remove': (el) => { state.rowDelete = { kind: 'money', id: el.dataset.id }; render(); },
+  'row-del-cancel': () => { state.rowDelete = null; render(); },
+  'row-del-confirm': () => {
+    const t = state.rowDelete;
+    state.rowDelete = null;
+    if (!t) { render(); return; }
+    if (t.kind === 'money') {
+      state.money = state.money.filter((e) => e.id !== t.id);
+      bury('money', t.id);
+    } else {
+      state.entries = state.entries.filter((e) => e.id !== t.id);
+      bury('entries', t.id);
+    }
+    // The phone was looking at the row it just deleted, so it needs somewhere
+    // to be. The desktop list was never anywhere else.
+    if (t.back) { state.m.selected = null; state.m.screen = 'home'; }
     save(); queueSync(0); render();
   },
 
@@ -18787,6 +18834,7 @@ function mobileApp() {
   ${mQuitDialog()}
   ${state.reportOpen ? reportSheet() : ''}
   ${pickDeleteDialog()}
+  ${rowDeleteDialog()}
 </div>`;
 }
 
@@ -19584,16 +19632,11 @@ const M_ACTIONS = {
   },
   'm-detail-delete': () => {
     const s = state.m;
-    if (s.selectedKind === 'money') {
-      state.money = state.money.filter((e) => e.id !== s.selected);
-      bury('money', s.selected);
-    } else {
-      state.entries = state.entries.filter((e) => e.id !== s.selected);
-      bury('entries', s.selected);
-    }
-    state.m.selected = null;
-    state.m.screen = 'home';
-    save(); queueSync(0); render();
+    // `back` because this one is standing on the row it is deleting.
+    state.rowDelete = {
+      kind: s.selectedKind === 'money' ? 'money' : 'entries', id: s.selected, back: true
+    };
+    render();
   },
 
   /* the report deck */
@@ -20220,6 +20263,7 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && state.moneyMade) { ACTIONS['money-made-close'](); return; }
   if (ev.key === 'Escape' && state.calOpen) { ACTIONS['cal-close'](); return; }
   if (ev.key === 'Escape' && state.pickDelete) { ACTIONS['pick-del-cancel'](); return; }
+  if (ev.key === 'Escape' && state.rowDelete) { ACTIONS['row-del-cancel'](); return; }
   if (ev.key === 'Escape' && String(state.searchQuery || '').trim()) { ACTIONS['search-clear'](); return; }
   if (ev.key === 'Escape' && state.notePrompt) { closeFollowUp(false); return; }
   if (ev.key === 'Escape' && state.donateOpen) { state.donateOpen = false; render(); return; }
