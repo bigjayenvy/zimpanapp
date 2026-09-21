@@ -18023,10 +18023,16 @@ async function voiceAdapter() {
   const Conversation = mod.Conversation || (mod.default && mod.default.Conversation);
   if (!Conversation) throw new Error('The voice library loaded but is not the shape we expect.');
   return {
+    /* The ticket decides how we connect. A conversation token is WebRTC's; a
+       signed URL is the older WebSocket path's; with neither we are dialling a
+       public agent by id, which WebRTC takes on its own. Passing a signed URL
+       as a WebRTC ticket fails, so this is read from what the server sent
+       rather than fixed here. */
     start: (o) => Conversation.startSession({
       agentId: o.agentId,
       signedUrl: o.signedUrl,
-      connectionType: o.signedUrl ? 'webrtc' : 'webrtc',
+      conversationToken: o.conversationToken,
+      connectionType: o.signedUrl ? 'websocket' : 'webrtc',
       dynamicVariables: o.variables,
       clientTools: o.tools,
       onConnect: o.onOpen,
@@ -18054,6 +18060,7 @@ async function voiceOpen() {
     v.session = await adapter.start({
       agentId: ticket.agentId,
       signedUrl: ticket.signedUrl,
+      conversationToken: ticket.conversationToken,
       variables: voiceVariables(),
       tools: VOICE_TOOLS,
       onOpen: () => { state.voice.status = 'live'; render(); },

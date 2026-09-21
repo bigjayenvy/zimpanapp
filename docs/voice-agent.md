@@ -16,11 +16,27 @@ Two environment variables in cPanel, then restart:
 | `ELEVENLABS_AGENT_ID` | yes | The agent's id. Without it the feature is off and + opens the form. |
 | `ELEVENLABS_API_KEY` | only for a private agent | Used server-side to mint a short-lived signed URL. Never reaches the browser. |
 
-With a key set, a signed URL is minted for every session, which works for a
-public or a private agent. With no key the id is handed to the browser as-is,
-which only works if the agent is public.
+With a key set, a ticket is minted for every session, which works for a public
+or a private agent. With no key the id is handed to the browser as-is, which
+only works if the agent is public.
 
 `/api/config` then reports `voiceAgent: true` and the phone starts offering it.
+
+The key must carry the **Conversational AI** permission, and it must belong to
+the same workspace as the agent. A key that is valid but unscoped is refused
+exactly like a wrong one — the difference is in the body of the refusal, which
+is why it is logged. See below.
+
+## When it will not start
+
+The server log names the wall:
+
+| Log line | What it is |
+|---|---|
+| `voice session refused (401)` | The key. Nearly always a missing Conversational AI permission, sometimes the wrong workspace. The body is on the same line. |
+| `voice token unavailable (404)` | This account's API has no WebRTC token endpoint. Harmless — the signed URL is tried next. |
+| `voice session could not reach ElevenLabs` | Network, DNS or the 10s timeout. |
+| `came back without a signed url` | Their response shape moved. |
 
 ## The six tools
 
