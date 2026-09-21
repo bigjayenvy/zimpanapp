@@ -229,11 +229,37 @@ confirm_entry — writes it. No parameters.
 cancel_entry — drops the draft. No parameters.
 ```
 
+## The library
+
+Pinned to an exact version in `app.js`:
+
+```
+https://cdn.jsdelivr.net/npm/@elevenlabs/client@1.25.0/+esm
+```
+
+Exact, not a range. The 0.x line has no WebRTC at all — no `conversationToken`,
+no `connectionType` — and when handed a WebRTC ticket it fell back to building
+`?agent_id=undefined` and dialling that. The socket closed without an error
+message, which looked identical to a dead network. A floating major could do
+the same thing again in the other direction.
+
+The contract this app relies on, read out of the published package rather than
+assumed:
+
+| What | Shape |
+|---|---|
+| Route keys | `conversationToken`, `signedUrl` and `agentId` are **exclusive**. Pass one. |
+| Tool results | An object is `JSON.stringify`d before it goes to the agent, so `{ok, spoken}` arrives whole. |
+| `onError` | Called with a **string** and a context object, never an `Error`. |
+| `onMessage` | `role` is `"user"` or `"agent"`; `source` is the deprecated name for the same thing. |
+| `onModeChange` | `{ mode: "speaking" | "listening" }` |
+
 ## What is not covered here
 
-`voiceAdapter()` in `app.js` is the only function that knows about ElevenLabs —
-the SDK import, the option names, the callbacks. It was written against their
-documented shape and **has not been run against a live agent**. If the session
-does not open, that function is the place to look, and setting
-`window.ZIMPAN_VOICE = { start(o) {…} }` replaces it wholesale without touching
-anything else.
+`voiceAdapter()` in `app.js` is the only function that knows about ElevenLabs.
+Its option names and the routing above are checked against version 1.25.0 of
+the published package, but **no live conversation has been run from this
+repository** — the tests exercise the library's own routing, not a real
+session. If a session does not open, that function is the place to look, and
+setting `window.ZIMPAN_VOICE = { start(o) {…} }` replaces it wholesale without
+touching anything else.

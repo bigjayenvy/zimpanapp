@@ -18015,7 +18015,43 @@ function voiceVariables() {
    an adapter set before the sheet opens is used instead of the shipped one, so
    the whole conversation — tools, drafts, confirmations, the sheet — runs with
    nothing on the other end of it. */
-const VOICE_SDK = 'https://cdn.jsdelivr.net/npm/@elevenlabs/client@0.1/+esm';
+/* Pinned to an exact version rather than a range. The 0.x line this was first
+   written against is WebSocket-only — it has no conversationToken, no
+   connectionType, no WebRTC at all — so a ticket minted for WebRTC arrived at a
+   library with nowhere to put it. A floating major would let that happen again
+   in the other direction. */
+const VOICE_SDK = 'https://cdn.jsdelivr.net/npm/@elevenlabs/client@1.25.0/+esm';
+
+/* The three ways in are exclusive rather than optional.
+
+   The library picks its route by which of these keys is present, so passing all
+   three with two of them undefined is a config that answers the question twice.
+   One variant is built at a time for that reason: a token is WebRTC's, a signed
+   URL is WebSocket's, and an id alone is a public agent. */
+const voiceTicket = (o) => (o.conversationToken
+  ? { conversationToken: o.conversationToken, connectionType: 'webrtc' }
+  : o.signedUrl
+    ? { signedUrl: o.signedUrl, connectionType: 'websocket' }
+    : { agentId: o.agentId, connectionType: 'webrtc' });
+
+/* What went wrong, in words, whatever shape it arrived in.
+
+   A failed session is not reliably an Error. The library reports a string and a
+   context object, a failed import throws an Error, and a refused connection can
+   be neither. Reading only .message collapsed all of it into one sentence that
+   named nothing, which is how a library too old to understand the ticket looked
+   exactly like a dead network. */
+function voiceErr(err, ctx) {
+  const part = (v) => {
+    if (!v) return '';
+    if (typeof v === 'string') return v;
+    if (v.message) return String(v.message);
+    if (v.reason) return String(v.reason);
+    try { const s = JSON.stringify(v); return s === '{}' ? '' : s; } catch (e) { return ''; }
+  };
+  return [part(err), part(ctx)].filter(Boolean).join(' - ').slice(0, 200)
+    || 'Could not start the conversation.';
+}
 
 async function voiceAdapter() {
   if (window.ZIMPAN_VOICE) return window.ZIMPAN_VOICE;
@@ -18023,24 +18059,18 @@ async function voiceAdapter() {
   const Conversation = mod.Conversation || (mod.default && mod.default.Conversation);
   if (!Conversation) throw new Error('The voice library loaded but is not the shape we expect.');
   return {
-    /* The ticket decides how we connect. A conversation token is WebRTC's; a
-       signed URL is the older WebSocket path's; with neither we are dialling a
-       public agent by id, which WebRTC takes on its own. Passing a signed URL
-       as a WebRTC ticket fails, so this is read from what the server sent
-       rather than fixed here. */
-    start: (o) => Conversation.startSession({
-      agentId: o.agentId,
-      signedUrl: o.signedUrl,
-      conversationToken: o.conversationToken,
-      connectionType: o.signedUrl ? 'websocket' : 'webrtc',
+    start: (o) => Conversation.startSession(Object.assign(voiceTicket(o), {
       dynamicVariables: o.variables,
       clientTools: o.tools,
       onConnect: o.onOpen,
       onDisconnect: o.onClose,
-      onError: (e) => o.onError(e && e.message ? e.message : String(e)),
+      // Theirs reports a string and a context object, never an Error.
+      onError: (msg, ctx) => o.onError(voiceErr(msg, ctx)),
       onModeChange: (m) => o.onMode(m && m.mode),
-      onMessage: (m) => o.onSaid(m && m.source === 'user' ? 'you' : 'zimpan', m && m.message)
-    })
+      // role is the current name for it; source is the same thing, deprecated.
+      onMessage: (m) => o.onSaid((m && (m.role || m.source)) === 'user' ? 'you' : 'zimpan',
+        m && m.message)
+    }))
   };
 }
 
@@ -18076,7 +18106,7 @@ async function voiceOpen() {
       }
     });
   } catch (err) {
-    voiceFail(err && err.message ? err.message : 'Could not start the conversation.');
+    voiceFail(voiceErr(err));
   }
 }
 
