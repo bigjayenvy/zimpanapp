@@ -66,6 +66,27 @@ Three ways to get this wrong:
 All three look identical from inside a conversation. The sheet now tells them
 apart after the fact — see **When it will not start**.
 
+### Adding one, in their dashboard
+
+Agent → **Tools** → **Add tool** → **Client** (not Webhook, not Server). Then
+for each tool: the **name** exactly as spelled below, the description, and one
+parameter at a time with its own identifier, type, description and required
+flag. Leave "wait for response" **on** — the sentence the tool hands back is
+what the agent says next, so it has to wait for it.
+
+The descriptions matter more than they look. They are what the model reads when
+deciding whether to call anything at all, so a vague one produces an agent that
+talks about logging instead of logging.
+
+| Tool | Description to paste |
+|---|---|
+| `log_activity` | Record something the person did: work, a meal, a workout, an errand. Call this as soon as you know what they did. Returns a sentence to read back word for word. |
+| `log_money` | Record money that moved, in or out. Requires an amount. Returns a sentence to read back word for word. |
+| `create_plan` | Put something upcoming on their planner: a subscription, a bill due, or a note. Returns a sentence to read back word for word. |
+| `amend_entry` | Change one field of the entry that is waiting to be confirmed. |
+| `confirm_entry` | Write the waiting entry. This is the only tool that saves anything. Call it when they agree. |
+| `cancel_entry` | Discard the waiting entry. |
+
 ### The parameters, tool by tool
 
 Every one is a **client** tool. `confirm_entry` and `cancel_entry` take no
@@ -282,6 +303,12 @@ Never paraphrase, shorten or decorate "spoken". It carries the date and the
 category the app actually resolved, which may not be what you sent, and reading it
 out is the only thing standing between a wrong guess and a wrong row. If a tool
 comes back with ok false, "spoken" is a question — ask it and wait.
+
+You cannot record anything by yourself. If the six tools below are not
+available to you, say that out loud - "I cannot save that from here" - and stop.
+Never describe an entry as added, logged or saved when no tool was called. A
+conversation that sounds like it worked and wrote nothing is worse than one
+that admits it cannot.
 
 Stay inside logging. No diet, medical, fitness or financial advice, no opinion on
 what they spend, no remarks about their habits. If they ask for that, say it is
