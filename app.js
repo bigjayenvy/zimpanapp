@@ -1062,7 +1062,7 @@ const state = {
   /* The voice conversation, while there is one. Session state in every sense:
      the transcript is not stored, not synced and not sent anywhere but the
      screen it is on, and closing the sheet is the end of it. */
-  voice: { open: false, status: 'idle', mode: '', error: '', said: [], draft: null, session: null, ctx: null, done: 0, muted: false, calls: 0, unknown: '' },
+  voice: { open: false, status: 'idle', mode: '', error: '', said: [], draft: null, session: null, ctx: null, done: 0, muted: false, calls: 0, unknown: '', bye: 0 },
   aiConsent: readJson(AI_CONSENT_KEY, false) === true,
   aiCache: readJson(AI_CACHE_KEY, {}),
   aiAsking: null,   // scope awaiting consent
@@ -18007,6 +18007,28 @@ function voiceConfirm() {
   return { ok: true, spoken: `Done, it is on your ${what}. Anything else?` };
 }
 
+/* Closing itself once the goodbye has been said.
+
+   Left up, it is a dark panel sitting over the log somebody just added to,
+   waiting for a tap nobody thinks to give it. So it goes on its own - but only
+   when there is nothing on it worth reading. An error, a tool this app has not
+   got, and the note saying nothing was written are all things somebody needs
+   to see, and a panel that clears itself before it has been read is worse than
+   one that overstays. */
+const VOICE_BYE_MS = 1800;
+
+function voiceByeSoon() {
+  const v = state.voice;
+  if (v.bye) { clearTimeout(v.bye); v.bye = 0; }
+  if (v.error || v.unknown || mVoiceNote()) return;
+  v.bye = setTimeout(() => {
+    state.voice.bye = 0;
+    // Only if nothing has happened since: a draft that arrived late, or a
+    // conversation started again, both mean somebody is still here.
+    if (state.voice.open && state.voice.status === 'ended' && !state.voice.draft) voiceClose();
+  }, VOICE_BYE_MS);
+}
+
 function voiceCancelDraft() {
   state.voice.draft = null;
   voicePaint();
@@ -18136,7 +18158,7 @@ async function voiceOpen() {
   const v = state.voice;
   if (v.status === 'starting' || v.status === 'live') return;
   v.open = true; v.status = 'starting'; v.error = ''; v.said = []; v.draft = null; v.done = 0;
-  v.muted = false; v.calls = 0; v.unknown = '';
+  v.muted = false; v.calls = 0; v.unknown = ''; v.bye = 0;
   v.ctx = voiceBeep();
   render();
 
@@ -18150,7 +18172,11 @@ async function voiceOpen() {
       variables: voiceVariables(),
       tools: VOICE_TOOLS,
       onOpen: () => { state.voice.status = 'live'; voicePaint(); },
-      onClose: () => { if (state.voice.status !== 'error') state.voice.status = 'ended'; voicePaint(); },
+      onClose: () => {
+        if (state.voice.status !== 'error') state.voice.status = 'ended';
+        voicePaint();
+        voiceByeSoon();
+      },
       onError: (msg) => voiceFail(msg),
       onMode: (mode) => { state.voice.mode = mode === 'speaking' ? 'speaking' : 'listening'; voicePaint(); },
       onUnknownTool: (name) => {
@@ -18190,6 +18216,7 @@ function voiceStop() {
   v.session = null;
   v.mode = '';
   v.muted = false;
+  if (v.bye) { clearTimeout(v.bye); v.bye = 0; }
   if (s && typeof s.endSession === 'function') { try { s.endSession(); } catch (e) { /* already gone */ } }
   if (v.ctx && typeof v.ctx.close === 'function') { try { v.ctx.close(); } catch (e) { /* already gone */ } }
   v.ctx = null;
@@ -18328,9 +18355,16 @@ function mVoiceNote() {
     return `<p class="mv-note">Zimpan was asked for <strong>${esc(v.unknown)}</strong>, which is not
       something this app can do. The agent and the app disagree about the tools.</p>`;
   }
-  if ((v.status === 'ended' || v.status === 'error') && !v.done && !v.calls) {
-    return `<p class="mv-note">Nothing was logged. The agent never asked this app to write
-      anything &mdash; check that its six client tools are set up.</p>`;
+  if ((v.status === 'ended' || v.status === 'error') && !v.done) {
+    /* Two different faults wearing the same face. Nothing asked of this app at
+       all is an agent with no client tools on it. Asked and then not finished
+       is a conversation that drafted something and never confirmed it, which
+       is a thing somebody might have meant to do. Worth telling apart: only
+       one of them is broken. */
+    return v.calls
+      ? `<p class="mv-note">Nothing was kept from that conversation. The draft was never confirmed.</p>`
+      : `<p class="mv-note">Nothing was logged. The agent never asked this app to write
+        anything &mdash; check that its six client tools are set up.</p>`;
   }
   return '';
 }

@@ -42,8 +42,57 @@ And in the sheet itself, after a conversation:
 
 | What it says | What it means |
 |---|---|
-| Nothing was logged | The agent never called a tool. Its client tools are missing, or are on a branch that was never published. |
+| Nothing was logged | The agent never called a tool. Its client tools are missing, are webhooks rather than client tools, or are on a branch that was never published. |
+| Nothing was kept | The tools were called, so the wiring is good — but nothing was ever confirmed. |
 | Zimpan was asked for *name* | The agent has a tool by a name this app does not answer to. Check the spelling against the six above. |
+
+## Setting them up on ElevenLabs
+
+This is the step that is easy to miss, and it fails silently. Registering the
+tools in the browser only says what this app is *able* to run. The agent still
+needs each one declared on its side, or the model has nothing to call — and an
+agent with no tools holds a perfectly normal conversation, agrees with
+everything, and says the entry is logged, because the prompt told it to say
+that. Nothing is written and nothing looks wrong.
+
+Three ways to get this wrong:
+
+1. **Not added at all.** The agent talks; nothing is ever asked of the app.
+2. **Added as a server tool (webhook).** ElevenLabs calls a URL instead of the
+   browser. This app never sees it. They must be **client** tools.
+3. **Added on a draft branch and never published.** The live agent has none of
+   them. If your agent URL carries a `branch_id`, this is the likely one.
+
+All three look identical from inside a conversation. The sheet now tells them
+apart after the fact — see **When it will not start**.
+
+### The parameters, tool by tool
+
+Every one is a **client** tool. `confirm_entry` and `cancel_entry` take no
+parameters at all.
+
+| Tool | Parameter | Type | Required |
+|---|---|---|---|
+| `log_activity` | `activity` | string | yes |
+| | `date` | string | no |
+| | `start` | string | no |
+| | `minutes` | number | no |
+| | `category` | string | no |
+| | `note` | string | no |
+| `log_money` | `what` | string | yes |
+| | `amount` | number | yes |
+| | `direction` | string | no |
+| | `date` | string | no |
+| | `purpose` | string | no |
+| `create_plan` | `what` | string | yes |
+| | `amount` | number | no |
+| | `date` | string | no |
+| | `dayOfMonth` | number | no |
+| | `purpose` | string | no |
+| `amend_entry` | `field` | string | yes |
+| | `value` | string | yes |
+| `confirm_entry` | — | — | — |
+| `cancel_entry` | — | — | — |
 
 ## The six tools
 
