@@ -1062,7 +1062,7 @@ const state = {
   /* The voice conversation, while there is one. Session state in every sense:
      the transcript is not stored, not synced and not sent anywhere but the
      screen it is on, and closing the sheet is the end of it. */
-  voice: { open: false, status: 'idle', mode: '', error: '', said: [], draft: null, session: null, ctx: null, done: 0, muted: false },
+  voice: { open: false, status: 'idle', mode: '', error: '', said: [], draft: null, session: null, ctx: null, done: 0, muted: false, calls: 0, unknown: '' },
   aiConsent: readJson(AI_CONSENT_KEY, false) === true,
   aiCache: readJson(AI_CACHE_KEY, {}),
   aiAsking: null,   // scope awaiting consent
@@ -17983,14 +17983,27 @@ function voiceCancelDraft() {
    object because it is a contract with something configured elsewhere: the
    names here and the tool names on ElevenLabs have to match exactly, and a
    contract spread across a file is a contract nobody can check. */
-const VOICE_TOOLS = {
+/* Counted, every one of them.
+
+   An agent with no tools registered against it still holds a perfectly good
+   conversation: it asks what you did, it agrees, and because the prompt tells
+   it to say the entry is logged, it says so. Nothing is written and nothing
+   looks wrong. The count is what lets the sheet tell that apart from a
+   conversation that worked, and it is the only way this failure is visible
+   from inside the app. */
+const voiceCounted = (fn) => (a) => {
+  state.voice.calls = (state.voice.calls || 0) + 1;
+  return fn(a);
+};
+
+const VOICE_TOOLS = Object.fromEntries(Object.entries({
   log_activity: voiceLogActivity,
   log_money: voiceLogMoney,
   create_plan: voiceCreatePlan,
   confirm_entry: voiceConfirm,
   amend_entry: voiceAmend,
   cancel_entry: voiceCancelDraft
-};
+}).map(([name, fn]) => [name, voiceCounted(fn)]));
 
 /* What the agent is told before it opens its mouth. Their name so it can use
    it, today's date so it can work out "last Thursday", and the lists it is
@@ -18071,6 +18084,10 @@ async function voiceAdapter() {
       // Theirs reports a string and a context object, never an Error.
       onError: (msg, ctx) => o.onError(voiceErr(msg, ctx)),
       onModeChange: (m) => o.onMode(m && m.mode),
+      /* Without this the library reports an unknown tool through onError,
+         which ends the conversation. A name that does not match is worth
+         saying and not worth hanging up over. */
+      onUnhandledClientToolCall: (c) => o.onUnknownTool(c && c.tool_name),
       // role is the current name for it; source is the same thing, deprecated.
       onMessage: (m) => o.onSaid((m && (m.role || m.source)) === 'user' ? 'you' : 'zimpan',
         m && m.message)
@@ -18084,7 +18101,8 @@ async function voiceAdapter() {
 async function voiceOpen() {
   const v = state.voice;
   if (v.status === 'starting' || v.status === 'live') return;
-  v.open = true; v.status = 'starting'; v.error = ''; v.said = []; v.draft = null; v.done = 0; v.muted = false;
+  v.open = true; v.status = 'starting'; v.error = ''; v.said = []; v.draft = null; v.done = 0;
+  v.muted = false; v.calls = 0; v.unknown = '';
   v.ctx = voiceBeep();
   render();
 
@@ -18101,6 +18119,10 @@ async function voiceOpen() {
       onClose: () => { if (state.voice.status !== 'error') state.voice.status = 'ended'; voicePaint(); },
       onError: (msg) => voiceFail(msg),
       onMode: (mode) => { state.voice.mode = mode === 'speaking' ? 'speaking' : 'listening'; voicePaint(); },
+      onUnknownTool: (name) => {
+        state.voice.unknown = voiceText(name) || 'something';
+        voicePaint();
+      },
       onSaid: (who, text) => {
         if (!text) return;
         // Capped: a long conversation is a long transcript, and the sheet is a
@@ -18229,7 +18251,7 @@ function mVoiceBody() {
         <span class="mv-core"></span>
       </div>
       <p class="mv-say" aria-live="polite">${esc(line)}</p>
-      ${v.error ? `<p class="mv-err">${esc(v.error)}</p>` : hints}
+      ${v.error ? `<p class="mv-err">${esc(v.error)}</p>` : (mVoiceNote() || hints)}
     </div>
 
     ${v.said.length ? `<div class="mv-said">${v.said.map((t) => `
@@ -18256,6 +18278,27 @@ function mVoiceBody() {
       </button>
       <button class="mv-ghost mv-round" data-act="m-voice-close" aria-label="Close">✕</button>
     </div>`;
+}
+
+/* The two ways this can fail quietly.
+
+   A tool called by a name this app has not got is the agent and the app
+   disagreeing about what the tools are called. A conversation that ends having
+   called nothing at all is an agent with no tools registered against it: it
+   talks, it agrees, it says the entry is logged, and nothing was ever asked of
+   this app. Both used to look exactly like success, which for a thing whose
+   whole job is to write a row is the worst way to fail. */
+function mVoiceNote() {
+  const v = state.voice;
+  if (v.unknown) {
+    return `<p class="mv-note">Zimpan was asked for <strong>${esc(v.unknown)}</strong>, which is not
+      something this app can do. The agent and the app disagree about the tools.</p>`;
+  }
+  if ((v.status === 'ended' || v.status === 'error') && !v.done && !v.calls) {
+    return `<p class="mv-note">Nothing was logged. The agent never asked this app to write
+      anything &mdash; check that its six client tools are set up.</p>`;
+  }
+  return '';
 }
 
 /* Drawn rather than typed: a glyph font would put the one thing on this screen

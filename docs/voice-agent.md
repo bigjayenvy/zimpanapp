@@ -38,6 +38,13 @@ The server log names the wall:
 | `voice session could not reach ElevenLabs` | Network, DNS or the 10s timeout. |
 | `came back without a signed url` | Their response shape moved. |
 
+And in the sheet itself, after a conversation:
+
+| What it says | What it means |
+|---|---|
+| Nothing was logged | The agent never called a tool. Its client tools are missing, or are on a branch that was never published. |
+| Zimpan was asked for *name* | The agent has a tool by a name this app does not answer to. Check the spelling against the six above. |
+
 ## The six tools
 
 Add these on ElevenLabs as **client tools**, with these exact names. Every one
@@ -77,6 +84,15 @@ the sentence you get back says so out loud.
 
 ### `confirm_entry`, `cancel_entry`
 No parameters. `confirm_entry` is the only one that writes.
+
+> **All six have to exist on the agent, not only in the app.** The browser
+> registers what it can run; the agent still needs each tool declared on its
+> side, or the model has nothing to call. An agent with none of them holds a
+> perfectly normal conversation and writes nothing — it will even say the entry
+> is logged, because the prompt told it to. The sheet now says so when a
+> conversation ends having called nothing, but the fix is on ElevenLabs.
+>
+> Tools set on a **draft branch** are not on the live agent. Publish them.
 
 ### `amend_entry`
 | Parameter | Type | Notes |
