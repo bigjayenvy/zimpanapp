@@ -609,6 +609,8 @@ const API = {
   // be able to hear.
   pull: (since) => api(`/api/sync?since=${encodeURIComponent(since || 0)}`),
   estimate: (text) => api('/api/estimate', { method: 'POST', body: { text } }),
+  // A ticket to one voice conversation. POST because it mints something.
+  voiceSession: () => api('/api/voice/session', { method: 'POST' }),
   deckSummary: (facts) => api('/api/deck-summary', { method: 'POST', body: { facts } }),
   chat: (history, facts, mode) => api('/api/chat', { method: 'POST', body: { history, facts, mode } }),
   estimateBurn: (text, weightKg, minutes) => api('/api/estimate-burn', { method: 'POST', body: { text, weightKg, minutes } }),
@@ -1055,6 +1057,12 @@ const state = {
 
   // Whether the server has a key at all; the button is not drawn without one.
   aiEstimates: false,
+  // Whether this server has a voice agent behind it. See /api/config.
+  voiceAgent: false,
+  /* The voice conversation, while there is one. Session state in every sense:
+     the transcript is not stored, not synced and not sent anywhere but the
+     screen it is on, and closing the sheet is the end of it. */
+  voice: { open: false, status: 'idle', mode: '', error: '', said: [], draft: null, session: null, ctx: null, done: 0 },
   aiConsent: readJson(AI_CONSENT_KEY, false) === true,
   aiCache: readJson(AI_CACHE_KEY, {}),
   aiAsking: null,   // scope awaiting consent
@@ -2216,6 +2224,7 @@ async function boot() {
     state.googleClientId = cfg.googleClientId || null;
     state.paypalClientId = cfg.paypalClientId || null;
     state.aiEstimates = !!cfg.aiEstimates;
+    state.voiceAgent = !!cfg.voiceAgent;
     if (state.googleClientId) loadGoogle();
   } catch (e) { /* offline, or not configured — email sign-in is unaffected */ }
 
@@ -17671,6 +17680,496 @@ function mFlowBody() {
   return mFlowReview();
 }
 
+/* ── logging out loud ──
+
+   The + button opens a conversation instead of a form. You say what you did,
+   the agent says back what it is about to write, and you say yes. The form is
+   still one tap away and is still what runs when any of this is unavailable —
+   a microphone refused, a server with no agent configured, a flight with no
+   signal. Nothing here is the only way to log anything.
+
+   ElevenLabs runs the conversation: the listening, the model, and the voice.
+   What it cannot do is write to this log, so the parts that matter are here —
+   it calls back into the app through the tools below, the app resolves what it
+   was told into a real entry, and hands back a sentence for the agent to read.
+   The category in that sentence is the app's answer, not the agent's: the agent
+   has never seen this person's categories and the log has.
+
+   Nothing is written until confirm_entry. Every tool before it fills in a draft
+   and returns words; the draft is the only thing the conversation can touch,
+   and it goes through the same shapes mCommit uses when it lands, so an entry
+   made by speaking is an entry in every other respect. */
+
+/* Only where it was asked for, and only where it can work. Phone-shaped and
+   signed in — the session is minted per user and metered on our bill — and a
+   server with no agent behind it says so in /api/config rather than letting the
+   button open a sheet that cannot connect. */
+const voiceReady = () => !!state.voiceAgent && !!state.auth && mobileOn() && !workMode();
+
+/* A short tone before the first word.
+
+   Drawn rather than fetched: a file is a request that can be slow on the one
+   occasion this has to be quick. It doubles as the thing that unlocks audio —
+   a browser will not play sound that no gesture asked for, and the tap that
+   opened this is that gesture, so the tone has to happen inside it. */
+function voiceBeep() {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  let ctx;
+  try { ctx = new Ctx(); } catch (e) { return null; }
+  try {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 880;
+    // In and out on a ramp: a square-edged tone clicks on most phone speakers.
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.16);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.18);
+  } catch (e) { /* no tone, and the conversation is the point rather than it */ }
+  return ctx;
+}
+
+/* How a date is said out loud. dayNear is the planner's and talks about being
+   late, which is a thing a bill is and a breakfast is not. */
+function voiceWhen(date) {
+  if (date === todayIso) return 'today';
+  if (date === mShiftIso(todayIso, -1)) return 'yesterday';
+  if (date === mShiftIso(todayIso, 1)) return 'tomorrow';
+  return `on ${dayLabel(date)}`;
+}
+
+// The minute of the day it is now. Every other reader of this works it out
+// inside its own compute; this one is not in one.
+const voiceNowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
+
+const voiceText = (v, cap) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, cap || 200);
+
+/* A date the agent offered, or today. The agent is told what today is and does
+   the arithmetic on "last Tuesday" itself, which is the one part of this it is
+   better at than any parser worth writing here. What arrives is checked all the
+   same: a model that answers "yesterday" in the date field must not be able to
+   file an entry under a day that does not exist. */
+function voiceDay(v) {
+  const s = String(v || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return todayIso;
+  const [y, m, d] = dParts(s);
+  if (m < 1 || m > 12 || d < 1 || d > monthLen(y, m)) return todayIso;
+  return s;
+}
+
+// "9:30", "09:30", "21:05" → minutes since midnight. Anything else, nothing.
+function voiceClock(v) {
+  const hit = /^(\d{1,2}):(\d{2})$/.exec(String(v || '').trim());
+  if (!hit) return null;
+  const h = Number(hit[1]), m = Number(hit[2]);
+  if (h > 23 || m > 59) return null;
+  return h * 60 + m;
+}
+
+/* Which category an activity belongs under, answered from the log first.
+
+   The strongest evidence is what this person did last time they logged these
+   words, and it costs one pass over entries they already have. After that, a
+   category whose name they actually said. Only then the agent's own guess, and
+   only if it names a category they have — a conversation cannot mint one, which
+   is the same rule the pad follows and for the same reason: a taxonomy made by
+   accident is a taxonomy nobody can read a month later.
+
+   Nothing, if none of that lands. "No category yet" is a true answer and the
+   card can be changed in a tap; a wrong one is a lie that has to be found. */
+function voiceFiled(kind, text, suggested) {
+  const money = kind === 'money';
+  const names = (money ? pickPurposes() : pickCategories()).map((c) => c.name).filter(Boolean);
+  if (!names.length) return '';
+  const said = voiceText(text).toLowerCase();
+  const rows = money ? state.money : state.entries;
+  const field = money ? 'purpose' : 'category';
+
+  // What this was filed under last time it was logged by this name.
+  const seen = rows.filter((r) => voiceText(r.activity).toLowerCase() === said && r[field]);
+  if (seen.length) {
+    const last = seen.reduce((a, b) => ((b.updatedAt || 0) > (a.updatedAt || 0) ? b : a));
+    if (names.indexOf(last[field]) >= 0) return last[field];
+  }
+  // A category they named while saying it.
+  const named = names.find((n) => said.indexOf(n.toLowerCase()) >= 0);
+  if (named) return named;
+  // The agent's guess, if it is one of theirs.
+  const guess = names.find((n) => n.toLowerCase() === voiceText(suggested).toLowerCase());
+  return guess || '';
+}
+
+const voiceFiledAs = (name, money) => (name
+  ? `under ${money ? '' : 'the category '}${name}`
+  : `with ${money ? 'no purpose' : 'no category'} on it yet`);
+
+/* ── what the agent can ask the app to do ──
+
+   One drafting tool per thing that can be logged, then confirm, change or drop.
+   Every one of them answers with a sentence, because the agent's job after
+   calling it is to say that sentence: the wording, the date and the category
+   are all the app's, so what is read out is what will be written rather than
+   what the model remembers being told. */
+
+function voiceDraft(draft) {
+  state.voice.draft = draft;
+  state.voice.error = '';
+  render();
+  return { ok: true, spoken: draft.spoken };
+}
+
+function voiceLogActivity(a) {
+  const text = voiceText(a && a.activity);
+  if (!text) return { ok: false, spoken: 'I did not catch what the activity was. What was it?' };
+  const date = voiceDay(a && a.date);
+  const minutes = Math.max(1, Math.min(1439, Math.round(Number(a && a.minutes) || 30)));
+  /* Where no time was said: now on today, and the middle of the day on any
+     other, which is the least wrong place to put something somebody remembers
+     doing but not when. */
+  const start = voiceClock(a && a.start);
+  const from = start != null ? start
+    : (date === todayIso ? Math.max(0, voiceNowMin() - minutes) : 720);
+  const category = voiceFiled('activity', text, a && a.category);
+  return voiceDraft({
+    kind: 'activity', text, date, from, minutes, category,
+    spoken: `Your ${text} will be logged ${voiceWhen(date)} ${voiceFiledAs(category, false)}. Log it, or change it?`
+  });
+}
+
+function voiceLogMoney(a) {
+  const text = voiceText(a && a.what);
+  if (!text) return { ok: false, spoken: 'I did not catch what that was for. What was it?' };
+  const value = money2(a && a.amount);
+  if (!value) return { ok: false, spoken: 'I did not catch the amount. How much was it?' };
+  const dir = String(a && a.direction || '').toLowerCase() === 'in' ? 'in' : 'out';
+  const date = voiceDay(a && a.date);
+  /* The ledger will not hold an unfiled row — planLogAnswer settles the same
+     question the same way — so the fallback happens here rather than on the
+     way in. Said out loud it becomes something to correct: "under Bills" is a
+     sentence somebody answers, and a row that reads "no purpose" and lands
+     under Bills anyway is the app saying one thing and writing another. */
+  const purpose = voiceFiled('money', text, a && a.purpose)
+    || (state.purposes[0] || {}).name || '';
+  return voiceDraft({
+    kind: 'money', text, date, dir, amount: value, purpose,
+    spoken: `${amount(value)} ${dir === 'in' ? 'coming in' : 'going out'} for ${text}`
+      + ` will be logged ${voiceWhen(date)} ${voiceFiledAs(purpose, true)}. Log it, or change it?`
+  });
+}
+
+/* A plan, or a note, and the difference is whether it has a day on it.
+
+   A day of the month makes it a subscription, one date makes it a due, and
+   neither makes it a note — which is what the money planner's own three lists
+   already mean, so a line made by speaking lands where a line made by tapping
+   would. Said out loud when it lands in notes, because "no date" is the whole
+   difference and somebody who expected a reminder should hear that there is
+   not one. */
+function voiceCreatePlan(a) {
+  const text = voiceText(a && a.what);
+  if (!text) return { ok: false, spoken: 'I did not catch what to plan. What is it?' };
+  const value = money2(a && a.amount);
+  const day = Math.max(0, Math.min(31, Math.round(Number(a && a.dayOfMonth) || 0)));
+  const dated = a && a.date ? voiceDay(a.date) : '';
+  const kind = day ? 'sub' : (dated ? 'due' : 'note');
+  const purpose = voiceFiled('money', text, a && a.purpose);
+  const money = value ? `${amount(value)} for ` : '';
+  const spoken = kind === 'sub'
+    ? `${money}${text} will go on your money planner as a subscription charged on the ${ordinal(day)}. Add it, or change it?`
+    : kind === 'due'
+      ? `${money}${text} will go on your money planner as a due ${voiceWhen(dated)}. Add it, or change it?`
+      : `${money}${text} has no date on it, so it will go in your planner notes rather than as a reminder. Add it, or change it?`;
+  return voiceDraft({ kind: 'plan', planKind: kind, text, date: dated, day, amount: value, purpose, spoken });
+}
+
+/* One field at a time, which is how somebody corrects a thing out loud: not by
+   saying all of it again but by saying the part that was wrong. */
+function voiceAmend(a) {
+  const d = state.voice.draft;
+  if (!d) return { ok: false, spoken: 'There is nothing waiting to be changed.' };
+  const field = String(a && a.field || '').toLowerCase();
+  const value = a && a.value;
+  const redo = { activity: voiceLogActivity, money: voiceLogMoney, plan: voiceCreatePlan }[d.kind];
+
+  if (field === 'date' || field === 'when') {
+    return redo(Object.assign(voiceArgs(d), { date: value, start: null }));
+  }
+  if (field === 'category' || field === 'purpose') {
+    /* Set outright rather than re-resolved. This is somebody saying which one
+       they meant, and answering it with the log's guess again would be the app
+       insisting. Still only one of theirs. */
+    const names = ((d.kind === 'activity') ? pickCategories() : pickPurposes()).map((c) => c.name);
+    const want = names.find((n) => n.toLowerCase() === voiceText(value).toLowerCase()) || '';
+    const next = Object.assign({}, d, d.kind === 'activity' ? { category: want } : { purpose: want });
+    return voiceDraft(Object.assign(next, { spoken: voiceSpeak(next) }));
+  }
+  if (field === 'amount') return redo(Object.assign(voiceArgs(d), { amount: value }));
+  if (field === 'activity' || field === 'what') return redo(Object.assign(voiceArgs(d), { activity: value, what: value }));
+  return { ok: false, spoken: 'I can change the activity, the date, the category or the amount. Which one?' };
+}
+
+// A draft, back in the shape the tool that made it takes.
+const voiceArgs = (d) => ({
+  activity: d.text, what: d.text, date: d.date, start: null,
+  minutes: d.minutes, category: d.category, purpose: d.purpose,
+  amount: d.amount, direction: d.dir, dayOfMonth: d.day
+});
+
+// The sentence for a draft that was changed rather than made.
+const voiceSpeak = (d) => (d.kind === 'activity'
+  ? `Your ${d.text} will be logged ${voiceWhen(d.date)} ${voiceFiledAs(d.category, false)}. Log it, or change it?`
+  : d.kind === 'money'
+    ? `${amount(d.amount)} ${d.dir === 'in' ? 'coming in' : 'going out'} for ${d.text}`
+      + ` will be logged ${voiceWhen(d.date)} ${voiceFiledAs(d.purpose, true)}. Log it, or change it?`
+    : d.spoken);
+
+/* The only thing here that writes.
+
+   Through the same shapes mCommit builds, so an entry made by speaking is
+   indistinguishable from one made by tapping — same id minting, same touch for
+   the sync stamp, same queueSync. The draft is cleared whatever happens: a
+   confirm that has landed must not be able to land twice on a "yes" the agent
+   hears in the next sentence. */
+function voiceConfirm() {
+  const d = state.voice.draft;
+  if (!d) return { ok: false, spoken: 'There is nothing waiting to be logged.' };
+  state.voice.draft = null;
+
+  if (d.kind === 'activity') {
+    const to = (d.from + d.minutes) % 1440;
+    state.entries = state.entries.concat([touch('entries', withProject({
+      id: 'v' + Date.now(), date: to < d.from ? nextDay(d.date) : d.date,
+      activity: d.text, category: d.category, from: d.from, to, note: ''
+    }))]);
+  } else if (d.kind === 'money') {
+    state.money = state.money.concat([touch('money', {
+      id: 'vn' + Date.now(), date: d.date, activity: d.text,
+      purpose: d.purpose || (state.purposes[0] || {}).name || '',
+      in: d.dir === 'in' ? d.amount : 0, out: d.dir === 'in' ? 0 : d.amount, note: ''
+    })]);
+  } else {
+    state.plans = state.plans.concat([touch('plans', {
+      id: newPlanId(), text: d.text, amount: d.amount || 0, dir: 'out',
+      status: 'planned', kind: d.planKind, purpose: d.purpose || undefined,
+      due: d.planKind === 'due' ? d.date : (d.day ? firstMonthly(d.day) : undefined),
+      day: d.day || undefined, createdAt: Date.now()
+    })]);
+  }
+
+  state.selectedDate = d.kind === 'plan' ? state.selectedDate : d.date;
+  state.voice.done = (state.voice.done || 0) + 1;
+  save();
+  queueSync(0);
+  render();
+  const what = d.kind === 'plan' ? 'planner' : 'log';
+  return { ok: true, spoken: `Done, it is on your ${what}. Anything else?` };
+}
+
+function voiceCancelDraft() {
+  state.voice.draft = null;
+  render();
+  return { ok: true, spoken: 'Dropped. Anything else?' };
+}
+
+/* The whole of what the agent may do, by the names it calls them. Kept as one
+   object because it is a contract with something configured elsewhere: the
+   names here and the tool names on ElevenLabs have to match exactly, and a
+   contract spread across a file is a contract nobody can check. */
+const VOICE_TOOLS = {
+  log_activity: voiceLogActivity,
+  log_money: voiceLogMoney,
+  create_plan: voiceCreatePlan,
+  confirm_entry: voiceConfirm,
+  amend_entry: voiceAmend,
+  cancel_entry: voiceCancelDraft
+};
+
+/* What the agent is told before it opens its mouth. Their name so it can use
+   it, today's date so it can work out "last Thursday", and the lists it is
+   allowed to suggest from. Nothing else about the account goes over. */
+function voiceVariables() {
+  const named = (list) => list.map((c) => c.name).filter(Boolean).join(', ');
+  return {
+    user_name: voiceText(state.displayName || '').split(' ')[0] || 'there',
+    today: todayIso,
+    today_words: new Date(`${todayIso}T00:00:00`).toLocaleDateString(undefined,
+      { weekday: 'long', day: 'numeric', month: 'long' }),
+    currency: currency().name || state.currency || '',
+    categories: named(pickCategories()),
+    purposes: named(pickPurposes())
+  };
+}
+
+/* ── the one part that knows about ElevenLabs ──
+
+   Deliberately the whole of it. Everything above is this app's own arithmetic
+   and can be exercised without a microphone or a network; this is the seam, and
+   a seam that is one function is a seam that can be replaced when their SDK
+   moves or when this is pointed somewhere else entirely.
+
+   window.ZIMPAN_VOICE is that replacement, and it is also how this is tested:
+   an adapter set before the sheet opens is used instead of the shipped one, so
+   the whole conversation — tools, drafts, confirmations, the sheet — runs with
+   nothing on the other end of it. */
+const VOICE_SDK = 'https://cdn.jsdelivr.net/npm/@elevenlabs/client@0.1/+esm';
+
+async function voiceAdapter() {
+  if (window.ZIMPAN_VOICE) return window.ZIMPAN_VOICE;
+  const mod = await import(VOICE_SDK);
+  const Conversation = mod.Conversation || (mod.default && mod.default.Conversation);
+  if (!Conversation) throw new Error('The voice library loaded but is not the shape we expect.');
+  return {
+    start: (o) => Conversation.startSession({
+      agentId: o.agentId,
+      signedUrl: o.signedUrl,
+      connectionType: o.signedUrl ? 'webrtc' : 'webrtc',
+      dynamicVariables: o.variables,
+      clientTools: o.tools,
+      onConnect: o.onOpen,
+      onDisconnect: o.onClose,
+      onError: (e) => o.onError(e && e.message ? e.message : String(e)),
+      onModeChange: (m) => o.onMode(m && m.mode),
+      onMessage: (m) => o.onSaid(m && m.source === 'user' ? 'you' : 'zimpan', m && m.message)
+    })
+  };
+}
+
+/* Opening one. Every failure lands in the same place, because to somebody
+   holding a phone a refused microphone and a refused key are the same event:
+   this did not work, and the form is right there. */
+async function voiceOpen() {
+  const v = state.voice;
+  if (v.status === 'starting' || v.status === 'live') return;
+  v.open = true; v.status = 'starting'; v.error = ''; v.said = []; v.draft = null; v.done = 0;
+  v.ctx = voiceBeep();
+  render();
+
+  try {
+    const ticket = await API.voiceSession();
+    const adapter = await voiceAdapter();
+    v.session = await adapter.start({
+      agentId: ticket.agentId,
+      signedUrl: ticket.signedUrl,
+      variables: voiceVariables(),
+      tools: VOICE_TOOLS,
+      onOpen: () => { state.voice.status = 'live'; render(); },
+      onClose: () => { if (state.voice.status !== 'error') state.voice.status = 'ended'; render(); },
+      onError: (msg) => voiceFail(msg),
+      onMode: (mode) => { state.voice.mode = mode === 'speaking' ? 'speaking' : 'listening'; render(); },
+      onSaid: (who, text) => {
+        if (!text) return;
+        // Capped: a long conversation is a long transcript, and the sheet is a
+        // phone screen rather than a log of what was said.
+        state.voice.said = state.voice.said.concat([{ who, text: String(text).slice(0, 300) }]).slice(-12);
+        render();
+      }
+    });
+  } catch (err) {
+    voiceFail(err && err.message ? err.message : 'Could not start the conversation.');
+  }
+}
+
+function voiceFail(msg) {
+  const v = state.voice;
+  v.status = 'error';
+  /* A browser says "Permission denied" about a microphone, which is true and
+     unhelpful. The rest is passed through: an expired key and an unreachable
+     host deserve different sentences, and the server already wrote them. */
+  v.error = /permission|denied|notallowed/i.test(String(msg))
+    ? 'This needs the microphone, and the browser said no. You can still log it by hand.'
+    : String(msg || 'Could not start the conversation.');
+  voiceStop();
+  render();
+}
+
+// Ends the session without touching the sheet, so an error can still be read.
+function voiceStop() {
+  const v = state.voice;
+  const s = v.session;
+  v.session = null;
+  v.mode = '';
+  if (s && typeof s.endSession === 'function') { try { s.endSession(); } catch (e) { /* already gone */ } }
+  if (v.ctx && typeof v.ctx.close === 'function') { try { v.ctx.close(); } catch (e) { /* already gone */ } }
+  v.ctx = null;
+}
+
+function voiceClose() {
+  voiceStop();
+  state.voice.open = false;
+  state.voice.status = 'idle';
+  state.voice.draft = null;
+  state.voice.said = [];
+  render();
+}
+
+/* ── the sheet ──
+
+   A transcript, what it is about to write, and the way out. Written as a sheet
+   like every other panel on this layout, and the way out is a link rather than
+   a corner cross because the way out here is not "close this", it is "do it the
+   other way" — which is a different thing and deserves to say so. */
+function mVoiceSheet() {
+  const v = state.voice;
+  if (!v.open) return '';
+  const d = v.draft;
+  const live = v.status === 'live';
+  const heard = v.said.length;
+
+  const line = v.status === 'starting' ? 'Connecting…'
+    : v.status === 'error' ? ''
+      : v.status === 'ended' ? 'The conversation has ended.'
+        : v.mode === 'speaking' ? 'Zimpan is speaking…'
+          : 'Listening — say what you did.';
+
+  return mSheet(`
+  <div class="mv">
+    <div class="mv-head">
+      <span class="mv-dot${live ? ` is-${v.mode || 'listening'}` : ''}" aria-hidden="true"></span>
+      <strong>Log by voice</strong>
+      <button class="mv-x" data-act="m-voice-close" aria-label="Close">✕</button>
+    </div>
+
+    ${v.error ? `<p class="mv-err">${esc(v.error)}</p>` : `<p class="mv-status" aria-live="polite">${esc(line)}</p>`}
+
+    ${heard ? `<div class="mv-said">${v.said.map((s) => `
+      <p class="mv-line is-${esc(s.who)}"><span>${esc(s.text)}</span></p>`).join('')}</div>` : ''}
+
+    ${d ? `
+    <div class="mv-draft">
+      <span class="mv-draft-kick">${esc(d.kind === 'plan' ? 'To add to your planner' : 'About to log')}</span>
+      <strong>${esc(d.text)}</strong>
+      <span class="mv-draft-meta">${esc(voiceDraftMeta(d))}</span>
+      <div class="mv-draft-acts">
+        <button class="btn btn-secondary" data-act="m-voice-drop">Drop it</button>
+        <button class="btn btn-primary" data-act="m-voice-log">Log it</button>
+      </div>
+    </div>` : ''}
+
+    ${v.done ? `<p class="mv-done">${v.done} logged in this conversation.</p>` : ''}
+
+    <button class="mv-manual" data-act="m-voice-manual">Log manually</button>
+  </div>`, '20px 20px 26px');
+}
+
+// What the draft card says under the name, which is the spoken sentence with
+// the question taken off the end.
+function voiceDraftMeta(d) {
+  if (d.kind === 'activity') {
+    return `${voiceWhen(d.date)} · ${mDur(d.minutes)} · ${d.category || 'No category yet'}`;
+  }
+  if (d.kind === 'money') {
+    return `${d.dir === 'in' ? '+' : '−'}${amount(d.amount)} · ${voiceWhen(d.date)} · ${d.purpose || 'No purpose yet'}`;
+  }
+  const where = d.planKind === 'sub' ? `subscription, the ${ordinal(d.day)} of each month`
+    : d.planKind === 'due' ? `due ${voiceWhen(d.date)}`
+      : 'no date yet, so it goes to your planner notes';
+  return `${d.amount ? `${amount(d.amount)} · ` : ''}${where}`;
+}
+
 function mFlow() {
   const s = state.m;
   const money = mIsMoney();
@@ -18041,6 +18540,7 @@ function mobileApp() {
        responsive, so there is nothing to rebuild. -->
   ${aiConsentDialog()}
   ${refineAskDialog()}
+  ${mVoiceSheet()}
   ${mChatSheet()}
   ${chatConsentDialog()}
   ${chatSpeakDialog()}
@@ -18559,7 +19059,27 @@ const M_ACTIONS = {
      day — logging into yesterday while looking at yesterday should not need
      the WHEN chip changed as well. A multi-day window has no one day to mean,
      so those fall back to today. */
-  'm-flow-open': () => { mResetDraft(); mSet({ screen: 'flow', day: mDraftDayFromRange() }); },
+  /* The + button. It opens a conversation where one can be had and the form
+     where one cannot — a server with no agent, a laptop, a team account, or
+     somebody signed out. The form is never further away than the link inside
+     the sheet, and every way this can fail lands on it. */
+  'm-flow-open': () => {
+    if (voiceReady()) { voiceOpen(); return; }
+    mResetDraft();
+    mSet({ screen: 'flow', day: mDraftDayFromRange() });
+  },
+  // The way the form is reached deliberately, from inside the sheet.
+  'm-voice-manual': () => {
+    voiceClose();
+    mResetDraft();
+    mSet({ screen: 'flow', day: mDraftDayFromRange() });
+  },
+  'm-voice-close': () => voiceClose(),
+  /* The draft card's two buttons. The same two things the agent can be told
+     out loud, because somebody who has been misheard twice wants a button, and
+     a hands-free feature that cannot be finished by hand is a trap. */
+  'm-voice-log': () => { voiceConfirm(); },
+  'm-voice-drop': () => { voiceCancelDraft(); },
   'm-log-time': () => { mResetDraft(); mSet({ screen: 'flow', kind: 'time', step: 2, skip: [1], day: mDraftDayFromRange() }); },
   'm-log-money': () => { mResetDraft(); mSet({ screen: 'flow', kind: 'money', step: 2, skip: [1], day: mDraftDayFromRange() }); },
   /* Both ways out of the flow ask first when there is something to lose, and

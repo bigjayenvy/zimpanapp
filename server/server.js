@@ -23,6 +23,7 @@ import {
 } from './blog.js';
 import { SupportError, SUPPORT_TO, fileTicket, listTickets, setTicketStatus, TICKET_STATUSES } from './support.js';
 import { estimateNutrition, estimateBurn, summariseDeck, chatReply, aiConfigured, warmAI } from './ai.js';
+import { voiceSession, voiceConfigured } from './voice.js';
 import {
   overview as adminOverview, users as adminUsers, donationsFor,
   setRole, addDonation, removeDonation, deleteAccount, noteDonateClick, touchSeen, isAdminRole, ROLES
@@ -787,7 +788,28 @@ app.post('/api/donate-click', requireUser, wrap(async (req, res) => {
 app.get('/api/config', (req, res) => res.json({
   googleClientId: GOOGLE_CLIENT_ID || null,
   paypalClientId: PAYPAL_CLIENT_ID || null,
-  aiEstimates: aiConfigured()
+  aiEstimates: aiConfigured(),
+  voiceAgent: voiceConfigured()
+}));
+
+/* A ticket to one voice conversation.
+
+   POST rather than GET because it is not a read: with a key set it mints a
+   short-lived signed URL at ElevenLabs, and a URL somebody can mint by visiting
+   a link is a URL a prefetcher can mint.
+
+   Rated tightly. Every session started is metered conversation time on somebody
+   else's bill, so a loop that reconnects on error — which is the shape every
+   connection bug takes — has a ceiling on what it can spend before it stops. */
+app.post('/api/voice/session', requireUser, wrap(async (req, res) => {
+  if (!voiceConfigured()) return res.status(503).json({ error: 'The voice agent is not set up on this server.' });
+  const limited = rateLimit({ key: `voice:${req.user.id}`, limit: 40, windowMs: 60 * 60 * 1000 });
+  if (!limited.ok) return res.status(429).json({ error: `That is a lot of conversations. Try again ${retryLabel(limited.retryAfterMs)}.` });
+  try {
+    res.json(await voiceSession());
+  } catch (err) {
+    res.status(502).json({ error: err.message || 'Could not start a voice session.' });
+  }
 }));
 
 app.get('/api/currencies', (req, res) => res.json({ currencies: CURRENCIES }));
