@@ -74,9 +74,19 @@ parameter at a time with its own identifier, type, description and required
 flag. Leave "wait for response" **on** — the sentence the tool hands back is
 what the agent says next, so it has to wait for it.
 
-The descriptions matter more than they look. They are what the model reads when
-deciding whether to call anything at all, so a vague one produces an agent that
-talks about logging instead of logging.
+The descriptions matter more than they look, and there are **two kinds**. The
+tool's description is what the model reads when deciding whether to call
+anything at all. Each parameter has its **own** description, and that is what
+the model reads when deciding what to put in it.
+
+Copying the tool's description into every parameter is the failure that looks
+most like success: the tool gets called, it reports "Succeeded", and it arrives
+with nothing in it, because nothing ever told the model that `activity` is the
+thing the person did. Give every parameter its own line from the table below.
+
+Mark as **required** only what the table marks required. A parameter the model
+is forced to fill is a parameter it will invent - an optional one it has
+nothing to say about is simply left out, which is what these tools expect.
 
 | Tool | Description to paste |
 |---|---|
@@ -92,28 +102,37 @@ talks about logging instead of logging.
 Every one is a **client** tool. `confirm_entry` and `cancel_entry` take no
 parameters at all.
 
-| Tool | Parameter | Type | Required |
-|---|---|---|---|
-| `log_activity` | `activity` | string | yes |
-| | `date` | string | no |
-| | `start` | string | no |
-| | `minutes` | number | no |
-| | `category` | string | no |
-| | `note` | string | no |
-| `log_money` | `what` | string | yes |
-| | `amount` | number | yes |
-| | `direction` | string | no |
-| | `date` | string | no |
-| | `purpose` | string | no |
-| `create_plan` | `what` | string | yes |
-| | `amount` | number | no |
-| | `date` | string | no |
-| | `dayOfMonth` | number | no |
-| | `purpose` | string | no |
-| `amend_entry` | `field` | string | yes |
-| | `value` | string | yes |
-| `confirm_entry` | — | — | — |
-| `cancel_entry` | — | — | — |
+| Tool | Parameter | Type | Required | Description to paste |
+|---|---|---|---|---|
+| `log_activity` | `activity` | String | **yes** | What the person did, in their own words. "drive going home", "team standup", "lunch". Not a sentence, just the thing. |
+| | `date` | String | no | The day it happened as YYYY-MM-DD. Work out "yesterday" or "Tuesday" yourself. Leave out for today. |
+| | `start` | String | no | What time it started, as HH:MM on a 24-hour clock. "5pm" is 17:00. Leave out if they did not say. |
+| | `minutes` | Number | no | How long it took, in minutes. From 5pm to 5:30pm is 30. Leave out if they did not say. |
+| | `category` | String | no | Your guess at which of their categories it belongs to. Leave out if unsure; the app decides. |
+| | `note` | String | no | What they ate, or what the workout was. Only when they have told you; never invent it. |
+| `log_money` | `what` | String | **yes** | What the money was for, in their words. "lunch", "electricity bill", "client payment". |
+| | `amount` | Number | **yes** | How much, as a number with no currency symbol. Never guess one. |
+| | `direction` | String | no | "in" for money received, "out" for money spent. Leave out for spending. |
+| | `date` | String | no | The day as YYYY-MM-DD. Leave out for today. |
+| | `purpose` | String | no | Your guess at which of their purposes it belongs to. Leave out if unsure. |
+| `create_plan` | `what` | String | **yes** | What is coming up, in their words. "Netflix", "electricity bill", "call the dentist". |
+| | `amount` | Number | no | How much it costs, as a number. Leave out if there is no amount. |
+| | `date` | String | no | A one-off date as YYYY-MM-DD. This makes it a due. Leave out for a subscription or a note. |
+| | `dayOfMonth` | Number | no | The day of the month it is charged, 1 to 31. This makes it a subscription. Leave out otherwise. |
+| | `purpose` | String | no | Your guess at which of their purposes it belongs to. Leave out if unsure. |
+| `amend_entry` | `field` | String | **yes** | Which one thing to change: activity, date, category, purpose, note or amount. |
+| | `value` | String | **yes** | What to change it to. |
+| `confirm_entry` | — | — | — | No parameters. |
+| `cancel_entry` | — | — | — | No parameters. |
+
+### Making it hang up
+
+The panel closes itself when the conversation ends. An ElevenLabs agent does
+not end a call on its own, though: it says goodbye and keeps listening, so
+nothing ever tells this app the conversation is over.
+
+Turn on the built-in **End call** system tool on the agent. Then a goodbye
+actually hangs up, the session closes, and the sheet goes with it.
 
 ## The six tools
 
@@ -304,11 +323,14 @@ category the app actually resolved, which may not be what you sent, and reading 
 out is the only thing standing between a wrong guess and a wrong row. If a tool
 comes back with ok false, "spoken" is a question — ask it and wait.
 
-You cannot record anything by yourself. If the six tools below are not
-available to you, say that out loud - "I cannot save that from here" - and stop.
-Never describe an entry as added, logged or saved when no tool was called. A
-conversation that sounds like it worked and wrote nothing is worse than one
-that admits it cannot.
+You cannot record anything by yourself; only the tools below write anything.
+Never describe an entry as added, logged or saved unless confirm_entry has come
+back ok.
+
+A tool answering with ok false is not a failure and not a reason to give up.
+"spoken" is then a question - ask it, wait, and carry on where you left off.
+Only if the tools are genuinely not available to you should you say "I cannot
+save that from here", and then stop.
 
 Stay inside logging. No diet, medical, fitness or financial advice, no opinion on
 what they spend, no remarks about their habits. If they ask for that, say it is
