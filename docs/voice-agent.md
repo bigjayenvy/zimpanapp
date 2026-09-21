@@ -60,6 +60,7 @@ written.
 | `start` | string | `HH:MM`, 24-hour. Defaults to now, or midday on another day. |
 | `minutes` | number | how long it took. Defaults to 30. |
 | `category` | string | a *suggestion* only — see below. |
+| `note` | string | what was eaten, or what the workout was. See below. |
 
 ### `log_money`
 | Parameter | Type | Notes |
@@ -97,8 +98,24 @@ No parameters. `confirm_entry` is the only one that writes.
 ### `amend_entry`
 | Parameter | Type | Notes |
 |---|---|---|
-| `field` | string | `activity`, `date`, `category`, `purpose` or `amount` |
+| `field` | string | `activity`, `date`, `category`, `purpose`, `note` or `amount` |
 | `value` | string or number | |
+
+## Meals and workouts are asked about
+
+A meal logged as nothing but the word "lunch" is worth no calories at all: the
+estimator strips the meal label and finds nothing left to read. A workout
+nobody described is the same.
+
+So when `log_activity` recognises one, what comes back in `spoken` is a
+**question** rather than a confirmation — *What did you eat?*, *What kind of
+workout was that?* — and the confirmation follows once it is answered. The
+rules are the ones the form already uses, so the voice asks what the form
+asks, in the same words, including the silent rule that stops an hour of
+cooking being asked what it tasted like.
+
+The note is wanted, not required. If they skip it, `confirm_entry` still
+writes the row.
 
 ## Categories are the app's answer
 
@@ -188,6 +205,14 @@ send an exact YYYY-MM-DD. Send clock times as HH:MM on a 24-hour clock. If they
 did not say when, do not ask twice — assume today and let the read-back be their
 chance to correct it.
 
+WHEN THE TOOL ASKS INSTEAD OF CONFIRMS
+Sometimes "spoken" comes back as a question rather than a confirmation. That
+happens on meals and workouts, where the app needs to know what was eaten or
+what the workout was before it can estimate anything. Ask the question exactly
+as given and wait. Send their answer with amend_entry, field "note" — never a
+summary of it, and never one you made up. If they skip it, call confirm_entry
+and the row goes in without one.
+
 WORKING OUT WHERE IT FILES
 Pass a category or a purpose if you have a confident guess, but you do not decide
 it. The app files it by what they filed the same thing under last time, or by a
@@ -201,7 +226,8 @@ Nothing is written until confirm_entry comes back ok. Never say a thing is logge
 saved, added or recorded before then.
 
 Never invent an amount. If you did not hear one, ask for it.
-Never invent a date, a category or a purpose to fill a gap.
+Never invent a date, a category, a purpose or a note to fill a gap. A guessed
+meal becomes a calorie count they did not eat.
 
 Never paraphrase, shorten or decorate "spoken". It carries the date and the
 category the app actually resolved, which may not be what you sent, and reading it
@@ -224,7 +250,8 @@ All six are client tools. Nothing reaches their phone until confirm_entry.
 
 log_activity — something they did.
   activity (required), date (YYYY-MM-DD), start (HH:MM 24-hour),
-  minutes (how long it took, 30 if unsaid), category (suggestion only).
+  minutes (how long it took, 30 if unsaid), category (suggestion only),
+  note (what they ate, or what the workout was).
 
 log_money — money that moved.
   what (required), amount (required, never guess), direction ("in" or "out",
@@ -237,7 +264,7 @@ create_plan — something coming up.
   talk over that line, it is the difference between a reminder and a note.
 
 amend_entry — change one field of the waiting draft.
-  field: activity, date, category, purpose or amount. value: the new value.
+  field: activity, date, category, purpose, note or amount. value: the new value.
   One field per call. It cannot change anything else; a wrong length or start
   time is re-said as a fresh log_activity.
 

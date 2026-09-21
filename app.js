@@ -17822,10 +17822,39 @@ function voiceDraft(draft) {
   return { ok: true, spoken: draft.spoken };
 }
 
+/* The question the form already asks, asked out loud.
+
+   A meal logged as nothing but the word "lunch" is worth no calories at all:
+   describesFood strips the meal label and finds nothing left to read. So the
+   note is not a nicety on these rows, it is the difference between an entry
+   and a reading, and the same is true of a workout nobody described.
+
+   Straight off FOLLOW_UPS rather than a rule of its own, so the voice asks
+   what the form asks, in the form's words — including the silent rule that
+   keeps an hour of cooking from being asked what it tasted like. */
+function voiceAskTitle(d) {
+  if (!d || d.kind !== 'activity' || d.note) return '';
+  const q = followUpFor('entries', { activity: d.text, category: d.category });
+  return q ? q.title : '';
+}
+
+/* One sentence for a drafted activity, wherever it was drafted from. The
+   question comes first and alone when there is one: somebody who has just been
+   asked what they ate should not also be asked to confirm in the same breath. */
+function voiceActivitySay(d) {
+  const ask = voiceAskTitle(d);
+  // Said out loud because a hands-free answer has no field to leave blank.
+  if (ask) return `${ask} You can skip it.`;
+  const noted = d.note ? `, noting ${d.note}` : '';
+  return `Your ${d.text} will be logged ${voiceWhen(d.date)} ${voiceFiledAs(d.category, false)}${noted}.`
+    + ' Log it, or change it?';
+}
+
 function voiceLogActivity(a) {
   const text = voiceText(a && a.activity);
   if (!text) return { ok: false, spoken: 'I did not catch what the activity was. What was it?' };
   const date = voiceDay(a && a.date);
+  const note = voiceText(a && a.note, 300);
   const minutes = Math.max(1, Math.min(1439, Math.round(Number(a && a.minutes) || 30)));
   /* Where no time was said: now on today, and the middle of the day on any
      other, which is the least wrong place to put something somebody remembers
@@ -17834,10 +17863,8 @@ function voiceLogActivity(a) {
   const from = start != null ? start
     : (date === todayIso ? Math.max(0, voiceNowMin() - minutes) : 720);
   const category = voiceFiled('activity', text, a && a.category);
-  return voiceDraft({
-    kind: 'activity', text, date, from, minutes, category,
-    spoken: `Your ${text} will be logged ${voiceWhen(date)} ${voiceFiledAs(category, false)}. Log it, or change it?`
-  });
+  const d = { kind: 'activity', text, date, from, minutes, category, note };
+  return voiceDraft(Object.assign(d, { spoken: voiceActivitySay(d) }));
 }
 
 function voiceLogMoney(a) {
@@ -17907,21 +17934,28 @@ function voiceAmend(a) {
     const next = Object.assign({}, d, d.kind === 'activity' ? { category: want } : { purpose: want });
     return voiceDraft(Object.assign(next, { spoken: voiceSpeak(next) }));
   }
+  /* Answering the question counts as amending the field it asked about, which
+     is how the note arrives when the agent treats "chicken and rice" as a
+     correction rather than as a fresh log. */
+  if (field === 'note' || field === 'details' || field === 'food' || field === 'workout') {
+    if (d.kind !== 'activity') return { ok: false, spoken: 'There is no note on this one.' };
+    return redo(Object.assign(voiceArgs(d), { note: value }));
+  }
   if (field === 'amount') return redo(Object.assign(voiceArgs(d), { amount: value }));
   if (field === 'activity' || field === 'what') return redo(Object.assign(voiceArgs(d), { activity: value, what: value }));
-  return { ok: false, spoken: 'I can change the activity, the date, the category or the amount. Which one?' };
+  return { ok: false, spoken: 'I can change the activity, the date, the category, the note or the amount. Which one?' };
 }
 
 // A draft, back in the shape the tool that made it takes.
 const voiceArgs = (d) => ({
   activity: d.text, what: d.text, date: d.date, start: null,
-  minutes: d.minutes, category: d.category, purpose: d.purpose,
+  minutes: d.minutes, category: d.category, purpose: d.purpose, note: d.note,
   amount: d.amount, direction: d.dir, dayOfMonth: d.day
 });
 
 // The sentence for a draft that was changed rather than made.
 const voiceSpeak = (d) => (d.kind === 'activity'
-  ? `Your ${d.text} will be logged ${voiceWhen(d.date)} ${voiceFiledAs(d.category, false)}. Log it, or change it?`
+  ? voiceActivitySay(d)
   : d.kind === 'money'
     ? `${amount(d.amount)} ${d.dir === 'in' ? 'coming in' : 'going out'} for ${d.text}`
       + ` will be logged ${voiceWhen(d.date)} ${voiceFiledAs(d.purpose, true)}. Log it, or change it?`
@@ -17943,7 +17977,7 @@ function voiceConfirm() {
     const to = (d.from + d.minutes) % 1440;
     state.entries = state.entries.concat([touch('entries', withProject({
       id: 'v' + Date.now(), date: to < d.from ? nextDay(d.date) : d.date,
-      activity: d.text, category: d.category, from: d.from, to, note: ''
+      activity: d.text, category: d.category, from: d.from, to, note: d.note || ''
     }))]);
   } else if (d.kind === 'money') {
     state.money = state.money.concat([touch('money', {
@@ -18226,7 +18260,7 @@ function mVoiceBody() {
   const line = known ? known.line
     : v.muted ? 'Microphone off'
       : v.mode === 'speaking' ? 'Zimpan is speaking'
-        : d ? 'Log it?' : 'Say something';
+        : d ? (voiceAskTitle(d) || 'Log it?') : 'Say something';
 
   /* Only before the first thing is said, and only while there is a point in
      saying it. Three because there are three things this can do, and a hint
@@ -18317,7 +18351,8 @@ const VOICE_MIC_OFF = `<svg viewBox="0 0 24 24" width="24" height="24" fill="non
 
 function voiceDraftMeta(d) {
   if (d.kind === 'activity') {
-    return `${voiceWhen(d.date)} · ${mDur(d.minutes)} · ${d.category || 'No category yet'}`;
+    return `${voiceWhen(d.date)} · ${mDur(d.minutes)} · ${d.category || 'No category yet'}`
+      + (d.note ? ` · ${d.note}` : '');
   }
   if (d.kind === 'money') {
     return `${d.dir === 'in' ? '+' : '−'}${amount(d.amount)} · ${voiceWhen(d.date)} · ${d.purpose || 'No purpose yet'}`;
