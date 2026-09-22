@@ -1,7 +1,7 @@
 # The voice agent
 
 The + button on a phone opens a conversation instead of a form. ElevenLabs runs
-the talking; this app owns the writing. The two meet at six **client tools** —
+the talking; this app owns the writing. The two meet at seven **client tools** —
 the agent calls them, the browser runs them, and what they return is what the
 agent says next.
 
@@ -90,9 +90,10 @@ nothing to say about is simply left out, which is what these tools expect.
 
 | Tool | Description to paste |
 |---|---|
-| `log_activity` | Record something the person did: work, a meal, a workout, an errand. Call this as soon as you know what they did. Returns a sentence to read back word for word. |
+| `log_activity` | Record something the person has already done: work, a meal, a workout, an errand. Not for anything still to come - that is create_plan. Returns a sentence to read back word for word. |
 | `log_money` | Record money that moved, in or out. Requires an amount. Returns a sentence to read back word for word. |
-| `create_plan` | Put something upcoming on their planner: a subscription, a bill due, or a note. Returns a sentence to read back word for word. |
+| `create_plan` | Put something upcoming on one of their two planners: something to do, or something to pay. Returns a sentence to read back word for word. |
+| `log_body` | Record their step count for a day, or their current weight. Returns a sentence to read back word for word. |
 | `amend_entry` | Change one field of the entry that is waiting to be confirmed. |
 | `confirm_entry` | Write the waiting entry. This is the only tool that saves anything. Call it when they agree. |
 | `cancel_entry` | Discard the waiting entry. |
@@ -115,12 +116,17 @@ parameters at all.
 | | `direction` | String | no | "in" for money received, "out" for money spent. Leave out for spending. |
 | | `date` | String | no | The day as YYYY-MM-DD. Leave out for today. |
 | | `purpose` | String | no | Your guess at which of their purposes it belongs to. Leave out if unsure. |
-| `create_plan` | `what` | String | **yes** | What is coming up, in their words. "Netflix", "electricity bill", "call the dentist". |
-| | `amount` | Number | no | How much it costs, as a number. Leave out if there is no amount. |
-| | `date` | String | no | A one-off date as YYYY-MM-DD. This makes it a due. Leave out for a subscription or a note. |
-| | `dayOfMonth` | Number | no | The day of the month it is charged, 1 to 31. This makes it a subscription. Leave out otherwise. |
-| | `purpose` | String | no | Your guess at which of their purposes it belongs to. Leave out if unsure. |
-| `amend_entry` | `field` | String | **yes** | Which one thing to change: activity, date, category, purpose, note or amount. |
+| `create_plan` | `what` | String | **yes** | What is coming up, in their words. "Netflix", "electricity bill", "call the dentist", "podcast for Mr Geo". |
+| | `planner` | String | no | "activity" for something to do, "money" for something to pay. Leave out and it is worked out from the rest. |
+| | `amount` | Number | no | How much it costs, as a number. Only for money. Leave out if there is no amount. |
+| | `date` | String | no | The day as YYYY-MM-DD. On the money planner this makes it a due. |
+| | `dayOfMonth` | Number | no | The day of the month it is charged, 1 to 31. This makes it a subscription. Money only. |
+| | `category` | String | no | For something to do: your guess at which of their categories it belongs to. |
+| | `purpose` | String | no | For something to pay: your guess at which of their purposes it belongs to. |
+| `log_body` | `steps` | Number | no | How many steps they walked, as a whole number. |
+| | `weight` | Number | no | What they weigh, in kilograms. Never guess; an implausible number means you misheard. |
+| | `date` | String | no | Which day the steps are for, as YYYY-MM-DD. Leave out for today. |
+| `amend_entry` | `field` | String | **yes** | Which one thing to change: activity, date, category, purpose, note, amount, steps or weight. |
 | | `value` | String | **yes** | What to change it to. |
 | `confirm_entry` | — | — | — | No parameters. |
 | `cancel_entry` | — | — | — | No parameters. |
@@ -294,6 +300,27 @@ send an exact YYYY-MM-DD. Send clock times as HH:MM on a 24-hour clock. If they
 did not say when, do not ask twice — assume today and let the read-back be their
 chance to correct it.
 
+ONE AT A TIME
+People say a whole morning in one breath. You can only put down one thing per
+entry, so when they give you several, say so plainly - "I can take one at a
+time; let me get the first" - and call the tool for the first one immediately.
+Do not make them repeat it. When it is confirmed, offer the next one back to
+them: "that is in. Next was the school run at 6:45 - shall I put that down?"
+Work through them in the order they said them.
+
+THINGS THEY HAVE NOT DONE YET
+Anything still to come is a plan, never an activity. Something to do goes on
+their activity planner - call create_plan with planner "activity". Something to
+pay goes on their money planner - create_plan with planner "money", which is
+also what an amount, a day of the month or a purpose means. Never tell them a
+future thing cannot be recorded; it can, on the planner.
+
+QUESTIONS YOU DO NOT ANSWER
+Totals, reports, comparisons, "how much did I spend on", "how does this week
+compare", and anything about how the app works are not yours. Point them at the
+Ask Zimpan button - "Ask Zimpan can answer that; it is in the menu" - and offer
+to log something instead. Never guess at a figure.
+
 WHEN THE TOOL ASKS INSTEAD OF CONFIRMS
 Sometimes "spoken" comes back as a question rather than a confirmation. That
 happens on meals and workouts, where the app needs to know what was eaten or
@@ -336,15 +363,15 @@ Stay inside logging. No diet, medical, fitness or financial advice, no opinion o
 what they spend, no remarks about their habits. If they ask for that, say it is
 not something you do, and offer to log something instead.
 
-If they want to change or delete something already logged, or hear totals,
-reports or past entries, say that is done in the app itself. You only add.
+If they want to change or delete something already logged, say that is done in
+the app itself. You only add.
 
-If you still cannot tell what they want after one clarifying question, offer the
-three things you can do and let them pick.
+If you still cannot tell what they want after one clarifying question, offer
+what you can do and let them pick.
 
 # Tools
 
-All six are client tools. Nothing reaches their phone until confirm_entry.
+All seven are client tools. Nothing reaches their phone until confirm_entry.
 
 log_activity — something they did.
   activity (required), date (YYYY-MM-DD), start (HH:MM 24-hour),
@@ -355,14 +382,23 @@ log_money — money that moved.
   what (required), amount (required, never guess), direction ("in" or "out",
   "out" if unsaid), date, purpose (suggestion only).
 
-create_plan — something coming up.
-  what (required), amount, date, dayOfMonth (1-31), purpose.
-  A dayOfMonth makes it a subscription. A date with no dayOfMonth makes it a due.
-  Neither makes it a planner note, and the read-back says so out loud — do not
-  talk over that line, it is the difference between a reminder and a note.
+create_plan — something coming up, on either planner.
+  what (required), planner ("activity" or "money"), amount, date,
+  dayOfMonth (1-31), category, purpose.
+  planner "activity" is something to do; it takes a date and a category.
+  planner "money" is something to pay, and is assumed when there is an amount,
+  a dayOfMonth or a purpose. There, a dayOfMonth makes it a subscription, a
+  date makes it a due, and neither makes it a planner note - the read-back says
+  which out loud, so do not talk over that line.
+
+log_body — their step count or their weight.
+  steps (a whole number), weight (in kilograms), date (for the steps).
+  Either or both. Never guess a weight; if it sounds implausible you have
+  misheard, and the tool will say so.
 
 amend_entry — change one field of the waiting draft.
-  field: activity, date, category, purpose, note or amount. value: the new value.
+  field: activity, date, category, purpose, note, amount, steps or weight.
+  value: the new value.
   One field per call. It cannot change anything else; a wrong length or start
   time is re-said as a fresh log_activity.
 

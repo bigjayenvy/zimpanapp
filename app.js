@@ -17176,16 +17176,6 @@ function mHome() {
     })()}
   </div>
 
-  <div style="display:flex;gap:10px;margin-bottom:22px;">
-    ${[['m-log-time', '#f2eefe', '#5f3ac9', nodeIcon('clock', 17), workMode() ? 'Log work' : 'Log time', '15px']]
-      .concat(workMode() ? [] : [['m-log-money', '#eceefe', '#3f4bc4', esc(mGlyph()), 'Log money', '13px']]).map((q) => `
-      <button class="card" data-act="${q[0]}"
-        style="flex:1;flex-direction:column;gap:6px;align-items:flex-start;padding:14px;border-radius:16px;box-shadow:${M_SHADOW_SM};cursor:pointer;text-align:left;">
-        <span style="width:30px;height:30px;border-radius:10px;background:${q[1]};display:grid;place-items:center;font-size:${q[5]};font-weight:700;color:${q[2]};">${q[3]}</span>
-        <span style="font-family:var(--font-heading);font-weight:700;font-size:15px;color:#16131f;">${esc(q[4])}</span>
-      </button>`).join('')}
-  </div>
-
   ${gaps.length ? `
   <button data-act="m-go-review" data-day="${day}"
     style="display:flex;align-items:center;gap:12px;width:100%;padding:14px 16px;border-radius:16px;cursor:pointer;text-align:left;background:#efedf6;border:1px solid rgba(120,86,245,.22);margin-bottom:22px;">
@@ -17949,15 +17939,66 @@ function voiceCreatePlan(a) {
   const value = money2(a && a.amount);
   const day = Math.max(0, Math.min(31, Math.round(Number(a && a.dayOfMonth) || 0)));
   const dated = a && a.date ? voiceDay(a.date) : '';
-  const kind = day ? 'sub' : (dated ? 'due' : 'note');
   const purpose = voiceFiled('money', text, a && a.purpose);
-  const money = value ? `${amount(value)} for ` : '';
+
+  /* Which of the two planners it belongs on.
+
+     Said outright when the agent knows, and worked out from the shape when it
+     does not: an amount, a purpose or a day of the month can only mean the
+     money planner, and everything else is something to do. Before this, a
+     podcast on the ninth of October went down as a bill. */
+  const asked = String((a && a.planner) || '').toLowerCase();
+  const money = asked === 'money' || asked === 'activity'
+    ? asked === 'money'
+    : !!(value || purpose || day);
+
+  if (!money) {
+    const category = voiceFiled('activity', text, a && a.category);
+    return voiceDraft({
+      kind: 'todo', text, date: dated, category,
+      spoken: `${text} will go on your activity planner${dated ? ` for ${voiceWhen(dated)}` : ''}`
+        + `${category ? ` under ${category}` : ''}.`
+        + `${dated ? '' : ' It has no day on it, so it waits there until you give it one.'}`
+        + ' Add it, or change it?'
+    });
+  }
+
+  const kind = day ? 'sub' : (dated ? 'due' : 'note');
+  const amt = value ? `${amount(value)} for ` : '';
   const spoken = kind === 'sub'
-    ? `${money}${text} will go on your money planner as a subscription charged on the ${ordinal(day)}. Add it, or change it?`
+    ? `${amt}${text} will go on your money planner as a subscription charged on the ${ordinal(day)}. Add it, or change it?`
     : kind === 'due'
-      ? `${money}${text} will go on your money planner as a due ${voiceWhen(dated)}. Add it, or change it?`
-      : `${money}${text} has no date on it, so it will go in your planner notes rather than as a reminder. Add it, or change it?`;
+      ? `${amt}${text} will go on your money planner as a due ${voiceWhen(dated)}. Add it, or change it?`
+      : `${amt}${text} has no date on it, so it will go in your planner notes rather than as a reminder. Add it, or change it?`;
   return voiceDraft({ kind: 'plan', planKind: kind, text, date: dated, day, amount: value, purpose, spoken });
+}
+
+/* Steps and weight, which are corrections of one number rather than new rows.
+
+   Drafted like everything else all the same: confirm_entry stays the only
+   thing that writes, and a misheard "ninety-five kilos" is worth reading back
+   before it lands. The bounds are the form's - the server takes 20 to 400kg
+   and nothing else, so a number outside them is a mishearing rather than a
+   fact about somebody. */
+function voiceLogBody(a) {
+  const stepsIn = Number(a && a.steps);
+  const kgIn = Number(a && a.weight);
+  const steps = Number.isFinite(stepsIn) && stepsIn > 0 ? Math.min(200000, Math.round(stepsIn)) : null;
+  const kg = Number.isFinite(kgIn) && kgIn >= 20 && kgIn <= 400 ? Math.round(kgIn) : null;
+
+  if (steps == null && kg == null) {
+    return Number.isFinite(kgIn) && kgIn
+      ? { ok: false, spoken: 'That weight is outside what I can record. What was it, in kilos?' }
+      : { ok: false, spoken: 'I did not catch a step count or a weight. Which was it?' };
+  }
+  const date = voiceDay(a && a.date);
+  const parts = [];
+  if (steps != null) parts.push(`${steps.toLocaleString()} steps ${voiceWhen(date)}`);
+  if (kg != null) parts.push(`your weight at ${kg} kilos`);
+  return voiceDraft({
+    kind: 'body', steps, weight: kg, date,
+    spoken: `I will put down ${parts.join(' and ')}. Save it, or change it?`
+  });
 }
 
 /* One field at a time, which is how somebody corrects a thing out loud: not by
@@ -17967,19 +18008,33 @@ function voiceAmend(a) {
   if (!d) return { ok: false, spoken: 'There is nothing waiting to be changed.' };
   const field = String(a && a.field || '').toLowerCase();
   const value = a && a.value;
-  const redo = { activity: voiceLogActivity, money: voiceLogMoney, plan: voiceCreatePlan }[d.kind];
+  const redo = {
+    activity: voiceLogActivity, money: voiceLogMoney,
+    plan: voiceCreatePlan, todo: voiceCreatePlan, body: voiceLogBody
+  }[d.kind];
 
   if (field === 'date' || field === 'when') {
     return redo(Object.assign(voiceArgs(d), { date: value, start: null }));
   }
   if (field === 'category' || field === 'purpose') {
+    if (d.kind === 'body') return { ok: false, spoken: 'Steps and weight do not go under anything.' };
     /* Set outright rather than re-resolved. This is somebody saying which one
        they meant, and answering it with the log's guess again would be the app
-       insisting. Still only one of theirs. */
-    const names = ((d.kind === 'activity') ? pickCategories() : pickPurposes()).map((c) => c.name);
+       insisting. Still only one of theirs.
+
+       A thing to do takes a category like an activity does, not a purpose:
+       it is on the activity planner. */
+    const cats = d.kind === 'activity' || d.kind === 'todo';
+    const names = (cats ? pickCategories() : pickPurposes()).map((c) => c.name);
     const want = names.find((n) => n.toLowerCase() === voiceText(value).toLowerCase()) || '';
-    const next = Object.assign({}, d, d.kind === 'activity' ? { category: want } : { purpose: want });
+    // Rebuilt rather than patched, because its sentence is made where it is made.
+    if (d.kind === 'todo') return redo(Object.assign(voiceArgs(d), { category: want }));
+    const next = Object.assign({}, d, cats ? { category: want } : { purpose: want });
     return voiceDraft(Object.assign(next, { spoken: voiceSpeak(next) }));
+  }
+  if (field === 'steps' || field === 'weight') {
+    if (d.kind !== 'body') return { ok: false, spoken: 'There are no steps or weight on this one.' };
+    return redo(Object.assign(voiceArgs(d), { [field]: value }));
   }
   /* Answering the question counts as amending the field it asked about, which
      is how the note arrives when the agent treats "chicken and rice" as a
@@ -17988,7 +18043,10 @@ function voiceAmend(a) {
     if (d.kind !== 'activity') return { ok: false, spoken: 'There is no note on this one.' };
     return redo(Object.assign(voiceArgs(d), { note: value }));
   }
-  if (field === 'amount') return redo(Object.assign(voiceArgs(d), { amount: value }));
+  if (field === 'amount') {
+    if (d.kind === 'body') return { ok: false, spoken: 'There is no amount on this one.' };
+    return redo(Object.assign(voiceArgs(d), { amount: value }));
+  }
   if (field === 'activity' || field === 'what') return redo(Object.assign(voiceArgs(d), { activity: value, what: value }));
   return { ok: false, spoken: 'I can change the activity, the date, the category, the note or the amount. Which one?' };
 }
@@ -17997,7 +18055,11 @@ function voiceAmend(a) {
 const voiceArgs = (d) => ({
   activity: d.text, what: d.text, date: d.date, start: null,
   minutes: d.minutes, category: d.category, purpose: d.purpose, note: d.note,
-  amount: d.amount, direction: d.dir, dayOfMonth: d.day
+  amount: d.amount, direction: d.dir, dayOfMonth: d.day,
+  // Which planner it was on has to survive an amend, or changing the date of
+  // something to do would quietly move it onto the money planner.
+  planner: d.kind === 'todo' ? 'activity' : (d.kind === 'plan' ? 'money' : undefined),
+  steps: d.steps, weight: d.weight
 });
 
 // The sentence for a draft that was changed rather than made.
@@ -18032,6 +18094,24 @@ function voiceConfirm() {
       purpose: d.purpose || (state.purposes[0] || {}).name || '',
       in: d.dir === 'in' ? d.amount : 0, out: d.dir === 'in' ? 0 : d.amount, note: ''
     })]);
+  } else if (d.kind === 'todo') {
+    state.todos = state.todos.concat([touch('todos', {
+      id: newTodoId(), text: d.text, status: 'pending',
+      category: d.category || undefined, date: d.date || undefined, createdAt: Date.now()
+    })]);
+  } else if (d.kind === 'body') {
+    /* Straight onto the same fields the two panels write, stamped the same
+       way: steps are per day and the weight is one current figure. */
+    if (d.steps != null) {
+      state.steps[d.date] = d.steps;
+      state.stepsAt[d.date] = Date.now();
+      state.dirty.steps = true;
+    }
+    if (d.weight != null) {
+      state.weightKg = d.weight;
+      state.weightUpdatedAt = Date.now();
+      state.dirty.weight = true;
+    }
   } else {
     state.plans = state.plans.concat([touch('plans', {
       id: newPlanId(), text: d.text, amount: d.amount || 0, dir: 'out',
@@ -18041,7 +18121,7 @@ function voiceConfirm() {
     })]);
   }
 
-  state.selectedDate = d.kind === 'plan' ? state.selectedDate : d.date;
+  state.selectedDate = (d.kind === 'plan' || d.kind === 'todo') ? state.selectedDate : d.date;
   state.voice.done = (state.voice.done || 0) + 1;
   save();
   queueSync(0);
@@ -18050,7 +18130,9 @@ function voiceConfirm() {
      row, and nobody watches a document rebuild itself mid-sentence. */
   pendingPaint = true;
   voicePaint();
-  const what = d.kind === 'plan' ? 'planner' : 'log';
+  const what = d.kind === 'plan' ? 'money planner'
+    : d.kind === 'todo' ? 'activity planner'
+      : d.kind === 'body' ? 'day' : 'log';
   return { ok: true, spoken: `Done, it is on your ${what}. Anything else?` };
 }
 
@@ -18103,6 +18185,7 @@ const VOICE_TOOLS = Object.fromEntries(Object.entries({
   log_activity: voiceLogActivity,
   log_money: voiceLogMoney,
   create_plan: voiceCreatePlan,
+  log_body: voiceLogBody,
   confirm_entry: voiceConfirm,
   amend_entry: voiceAmend,
   cancel_entry: voiceCancelDraft
@@ -18367,8 +18450,8 @@ function mVoiceBody() {
 
     ${d ? `
     <div class="mv-draft">
-      <span class="mv-draft-kick">${esc(d.kind === 'plan' ? 'To add to your planner' : 'About to log')}</span>
-      <strong>${esc(d.text)}</strong>
+      <span class="mv-draft-kick">${esc(VOICE_KICK[d.kind] || 'About to log')}</span>
+      <strong>${esc(d.text || voiceBodyTitle(d))}</strong>
       <span class="mv-draft-meta">${esc(voiceDraftMeta(d))}</span>
       <div class="mv-draft-acts">
         <button class="btn btn-secondary" data-act="m-voice-drop">Drop it</button>
@@ -18387,6 +18470,20 @@ function mVoiceBody() {
       <button class="mv-ghost mv-round" data-act="m-voice-close" aria-label="Close">✕</button>
     </div>`;
 }
+
+const VOICE_KICK = {
+  plan: 'To add to your money planner',
+  todo: 'To add to your activity planner',
+  body: 'To put on your day',
+  activity: 'About to log',
+  money: 'About to log'
+};
+
+// A body draft has no text of its own - the numbers are the thing.
+const voiceBodyTitle = (d) => (d && d.kind === 'body'
+  ? [d.steps != null ? `${d.steps.toLocaleString()} steps` : '',
+    d.weight != null ? `${d.weight} kg` : ''].filter(Boolean).join(', ')
+  : '');
 
 /* The two ways this can fail quietly.
 
@@ -18431,6 +18528,13 @@ const VOICE_MIC_OFF = `<svg viewBox="0 0 24 24" width="24" height="24" fill="non
   <path d="M12 17.5V21"></path><path d="M4 3l16 18"></path></svg>`;
 
 function voiceDraftMeta(d) {
+  if (d.kind === 'todo') {
+    return `${d.date ? voiceWhen(d.date) : 'No day yet'}${d.category ? ` · ${d.category}` : ''}`;
+  }
+  if (d.kind === 'body') {
+    return [d.steps != null ? `${d.steps.toLocaleString()} steps` : '',
+      d.weight != null ? `${d.weight} kg` : '', voiceWhen(d.date)].filter(Boolean).join(' · ');
+  }
   if (d.kind === 'activity') {
     return `${voiceWhen(d.date)} · ${mDur(d.minutes)} · ${d.category || 'No category yet'}`
       + (d.note ? ` · ${d.note}` : '');
@@ -19382,8 +19486,6 @@ const M_ACTIONS = {
     }
     voicePaint();
   },
-  'm-log-time': () => { mResetDraft(); mSet({ screen: 'flow', kind: 'time', step: 2, skip: [1], day: mDraftDayFromRange() }); },
-  'm-log-money': () => { mResetDraft(); mSet({ screen: 'flow', kind: 'money', step: 2, skip: [1], day: mDraftDayFromRange() }); },
   /* Both ways out of the flow ask first when there is something to lose, and
      go straight out when there is not. See mFlowDirty(). */
   'm-flow-close': () => {
