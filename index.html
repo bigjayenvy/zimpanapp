@@ -1522,6 +1522,23 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     background: #fdf1de; border-bottom: 1px solid #f0d9ac; color: #7a5410;
   }
   .m-syncnote.is-hard { background: #fdecf1; border-bottom-color: #f3c9d6; color: #8a2f4a; }
+  /* One line, and coloured like information rather than like a wound. */
+  .m-syncnote.is-soft {
+    display: flex; align-items: center; gap: 8px; padding: 8px 16px;
+    background: #f2eefe; border-bottom-color: #ddd2fb; color: #3c2f63;
+    font-size: 12.5px; line-height: 1.4;
+  }
+  .m-syncnote.is-soft strong { flex: none; font-size: 12.5px; }
+  .m-syncnote.is-soft span:last-child {
+    flex: 1; min-width: 0; opacity: .8;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .m-syncnote-dot {
+    width: 7px; height: 7px; flex: none; border-radius: 50%; background: #7856f5;
+    animation: mSyncPulse 1.6s ease-in-out infinite;
+  }
+  @keyframes mSyncPulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .m-syncnote-dot { animation: none; } }
   .m-syncnote-head { display: flex; align-items: center; gap: 12px; }
   .m-syncnote-head strong { flex: 1; min-width: 0; font-size: 14px; }
   .m-syncnote-head button {

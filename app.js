@@ -1931,6 +1931,22 @@ async function syncNow() {
        healthy. The changes are still good and will go up unaltered, so this is
        a pause rather than a failure: the queue is kept, the loud banner stays
        down, and it tries again shortly without being asked. */
+    /* 502 and 504 are not the app answering badly — they are the app not
+       answering at all, because the host was putting it back up. On shared
+       hosting that happens whenever the process is recycled, which is often
+       and is nobody's fault. It clears by itself in seconds, so it belongs
+       with 503 rather than with a real fault: a pause, a quiet line, and a
+       retry shortly. Sooner than 503's, because a restart is over quickly
+       where an absent database is not. */
+    if (err.status === 502 || err.status === 504) {
+      state.netErrorKind = 'paused';
+      state.netError = 'The server was restarting. Your changes go up as soon as it is back.';
+      state.netErrorRow = null;
+      setNet('paused', '');
+      queueSync(15000);
+      renderLater();
+      return;
+    }
     if (err.status === 503) {
       state.netErrorKind = 'paused';
       state.netError = err.message || 'Sync is paused while the server’s database is unavailable.';
@@ -6810,20 +6826,35 @@ function mSyncNote() {
   const waiting = pendingCount();
   const bad = state.netState === 'error' || state.netState === 'paused';
   if (!bad && !(state.netState === 'offline' && waiting)) return '';
-  const hard = state.netState === 'error';
-  const title = hard ? (state.netErrorKind === 'server' ? 'The server had a problem' : 'The server refused these changes')
-    : state.netState === 'paused' ? 'Syncing is paused' : 'You are offline';
-  const detail = bad && state.netError ? state.netError
-    : `${waiting} ${waiting === 1 ? 'change is' : 'changes are'} waiting to go up.`;
+  const queued = waiting ? `${waiting} ${waiting === 1 ? 'change' : 'changes'} waiting` : '';
+
+  /* The ones that clear themselves get one line.
+
+     A restarting server and a phone in a lift are the same news: nothing is
+     lost, nothing is needed, it will go up shortly. Said in three paragraphs
+     and dressed in alarm red it read as a fault somebody had to act on, and
+     took a third of the screen to say so above the day it was covering. */
+  if (state.netState !== 'error') {
+    const head = state.netState === 'paused' ? 'Syncing shortly' : 'Offline for now';
+    return `
+<div class="m-syncnote is-soft">
+  <span class="m-syncnote-dot" aria-hidden="true"></span>
+  <strong>${esc(head)}</strong>
+  <span>${esc(queued ? `${queued}, saved here` : 'Everything here is saved')}</span>
+</div>`;
+  }
+
+  /* A real fault keeps its room. Something is wrong that will not clear on its
+     own, and the sentence the server sent is the one worth reading. */
   return `
-<div class="m-syncnote${hard ? ' is-hard' : ''}">
+<div class="m-syncnote is-hard">
   <div class="m-syncnote-head">
-    <strong>${esc(title)}</strong>
+    <strong>${esc(state.netErrorKind === 'server' ? 'The server had a problem' : 'The server refused these changes')}</strong>
     <button data-act="sync-now">Try again</button>
   </div>
-  <p>${esc(detail)}</p>
+  <p>${esc(state.netError || 'Sync could not finish.')}</p>
   <p class="m-syncnote-safe">Everything you have logged is safe on this phone${
-  waiting ? ` — ${waiting} ${waiting === 1 ? 'change' : 'changes'} waiting` : ''}, and goes up by itself once this clears.</p>
+  queued ? ` — ${queued}` : ''}, and goes up by itself once this clears.</p>
 </div>`;
 }
 
