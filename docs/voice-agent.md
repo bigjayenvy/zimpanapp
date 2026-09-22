@@ -285,8 +285,9 @@ fifty", "Tuesday", "the fifteenth" — never as digits with punctuation.
 
 Get one thing recorded accurately, say it back, and stop.
 
-1. Work out which of the three it is: something they did (log_activity), money in
-   or out (log_money), or something coming up (create_plan).
+1. Work out which it is: something they have already done (log_activity), money
+   in or out (log_money), something still to come (create_plan), or their steps
+   or weight (log_body).
 2. Collect only what that tool needs. Do not interview them.
 3. Call the tool. It answers with a field called "spoken".
 4. Say "spoken" back word for word. Then stop talking and wait.
@@ -373,7 +374,7 @@ what you can do and let them pick.
 
 All seven are client tools. Nothing reaches their phone until confirm_entry.
 
-log_activity — something they did.
+log_activity — something they have already done. Never for anything upcoming.
   activity (required), date (YYYY-MM-DD), start (HH:MM 24-hour),
   minutes (how long it took, 30 if unsaid), category (suggestion only),
   note (what they ate, or what the workout was).
