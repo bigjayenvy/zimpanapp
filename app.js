@@ -8329,18 +8329,22 @@ function exFigure(view) {
 function exBodyMap() {
   const picked = state.exPick.picked || {};
   const chosen = EX_PARTS.filter((p) => (picked[p[0]] || []).length);
+  const owed = chosen.reduce((n, [key]) => n + (picked[key] || []).filter((m) => !exDone(m)).length, 0);
   return `
   <p class="ex-lead">Choose the Body Part for this Workout</p>
   <div class="ex-figs">${exFigure('front')}${exFigure('back')}</div>
   <div class="ex-chips">
     ${EX_PARTS.map(([key, label]) => {
     const n = (picked[key] || []).length;
-    return `<button type="button" class="ex-chip${n ? ' is-on' : ''}" data-act="ex-part" data-part="${key}">
-      ${esc(label)}${n ? `<b>${n}</b>` : ''}</button>`;
+    const due = (picked[key] || []).filter((m) => !exDone(m)).length;
+    return `<button type="button" class="ex-chip${n ? ' is-on' : ''}${due ? ' is-due' : ''}"
+      data-act="ex-part" data-part="${key}">
+      ${esc(label)}${n ? `<b>${due ? '!' : n}</b>` : ''}</button>`;
   }).join('')}
   </div>
   ${chosen.length ? `<p class="ex-sum">${chosen.map(([key, label]) =>
-    `${esc(label)}: ${esc((picked[key] || []).map(exSay).join(', '))}`).join(' · ')}</p>` : ''}`;
+    `${esc(label)}: ${esc((picked[key] || []).map((m) => (exDone(m) ? exSay(m) : `${exName(m)} ⚠`)).join(', '))}`).join(' · ')}</p>
+    ${owed ? `<p class="ex-owed">${owed} ${owed === 1 ? 'move needs' : 'moves need'} its sets, reps and weight.</p>` : ''}` : ''}`;
 }
 
 /* What somebody added themselves, read back out of what they have logged.
@@ -8375,16 +8379,21 @@ function exList(part) {
        front it would be fifty pairs of empty boxes; asked of what was actually
        done it is two numbers somebody already has in their head. Left empty it
        stays empty - this is a record, not a form to complete. */
+    const num = (field, label, max, value, hint) => `
+      <label class="ex-num-wrap">${label}
+        <input class="ex-num${value === '' ? ' is-empty' : ''}" type="number" inputmode="decimal"
+          min="0" max="${max}" value="${value}" data-change="ex-count" data-part="${part}"
+          data-name="${esc(name)}" data-field="${field}" placeholder="${hint}"
+          aria-label="${esc(`${label} for ${name}`)}"></label>`;
     const count = on ? `
       <div class="ex-count-row">
-        <label>Sets<input class="ex-num" type="number" inputmode="numeric" min="0" max="99"
-          value="${held.sets || ''}" data-change="ex-count" data-part="${part}"
-          data-name="${esc(name)}" data-field="sets" placeholder="–"></label>
+        ${num('sets', 'Sets', 99, held.sets || '', '–')}
         <span aria-hidden="true">×</span>
-        <label>Reps<input class="ex-num" type="number" inputmode="numeric" min="0" max="999"
-          value="${held.reps || ''}" data-change="ex-count" data-part="${part}"
-          data-name="${esc(name)}" data-field="reps" placeholder="–"></label>
-      </div>` : '';
+        ${num('reps', 'Reps', 999, held.reps || '', '–')}
+        <span aria-hidden="true">@</span>
+        ${num('kg', 'Weight kg', 999, exKg(held) === null ? '' : String(exKg(held)), '0')}
+      </div>
+      ${exDone(held) ? '' : '<p class="ex-need">Sets, reps and weight — put 0 for bodyweight</p>'}` : '';
     return `<div class="ex-item${on ? ' is-on' : ''}">
       <button type="button" class="ex-move${on ? ' is-on' : ''}"
         data-act="ex-toggle" data-part="${part}" data-name="${esc(name)}" aria-pressed="${on}">
@@ -8455,11 +8464,28 @@ function exNote() {
    so the note still reads as a sentence and the parser has one shape to find.
    Two digits of sets and three of reps is more than anybody does and less than
    a mistyped phone number. */
-const EX_COUNT = /\s+(\d{1,2})\s*[x×]\s*(\d{1,3})$/i;
+/* The load is optional to READ and required to WRITE: rows logged before there
+   was a weight field say "Shoulder press 3x10" and have to keep parsing, or
+   the count becomes part of the name and turns up in somebody's own list as an
+   exercise called "Shoulder press 3x10". They come back with no weight on
+   them, which is what it is - unanswered - so reopening one asks. */
+const EX_COUNT = /\s+(\d{1,2})\s*[x×]\s*(\d{1,3})(?:\s*@\s*(bodyweight|[\d.]{1,6}\s*kg))?$/i;
 
 const exName = (v) => (typeof v === 'string' ? v : (v && v.name) || '');
 const exSame = (a, b) => exName(a).toLowerCase() === exName(b).toLowerCase();
-const exSay = (v) => `${exName(v)}${v && v.sets && v.reps ? ` ${v.sets}x${v.reps}` : ''}`;
+
+/* Zero is an answer, not a blank.
+
+   Half these moves have no weight on them - a pull-up is your own body - so
+   demanding a number would be demanding a lie. Zero says bodyweight and counts
+   as answered; null is the field nobody has touched yet, and that is what the
+   save waits for. */
+const exKg = (v) => (v && v.kg != null && Number.isFinite(Number(v.kg)) ? Number(v.kg) : null);
+const exLoad = (v) => { const kg = exKg(v); return kg === null ? '' : (kg ? `${kg}kg` : 'bodyweight'); };
+const exDone = (v) => !!(v && v.sets > 0 && v.reps > 0 && exKg(v) !== null);
+const exSay = (v) => `${exName(v)}`
+  + (v && v.sets > 0 && v.reps > 0 ? ` ${v.sets}x${v.reps}` : '')
+  + (exLoad(v) ? ` @ ${exLoad(v)}` : '');
 
 function exParse(note) {
   const out = { type: '', picked: {}, said: '' };
@@ -8480,9 +8506,15 @@ function exParse(note) {
     const names = bit.slice(at + 1).split(',').map((n) => n.trim()).filter(Boolean)
       .map((n) => {
         const count = EX_COUNT.exec(n);
-        return count
-          ? { name: n.replace(EX_COUNT, '').trim(), sets: Number(count[1]), reps: Number(count[2]) }
-          : { name: n, sets: 0, reps: 0 };
+        if (!count) return { name: n, sets: 0, reps: 0, kg: null };
+        const load = count[3] ? String(count[3]).toLowerCase() : '';
+        return {
+          name: n.replace(EX_COUNT, '').trim(),
+          sets: Number(count[1]),
+          reps: Number(count[2]),
+          kg: !load ? null
+            : (load === 'bodyweight' ? 0 : Math.max(0, Number(parseFloat(load)) || 0))
+        };
       })
       .filter((m) => m.name);
     if (names.length) out.picked[found[0]] = names;
@@ -8579,8 +8611,10 @@ function exAskDialog() {
 
 function exPickDialog(p) {
   const chosen = state.exPick.type;
+  const ticked = EX_PARTS.reduce((all, [k]) => all.concat(state.exPick.picked[k] || []), []);
+  const short = ticked.filter((m) => !exDone(m)).length;
   const anything = chosen === 'weights'
-    ? EX_PARTS.some(([k]) => (state.exPick.picked[k] || []).length)
+    ? ticked.length > 0 && !short
     : !!String(state.noteDraft || '').trim();
   return lightbox({
     icon: 'pulse',
@@ -8593,7 +8627,8 @@ function exPickDialog(p) {
     actions: `
       ${noteOnRow(p) ? `<button class="btn btn-ghost" data-act="note-remove" style="color:#8a2f4a;">Remove</button>` : ''}
       <button class="btn btn-ghost" data-act="note-skip">Skip</button>
-      <button class="btn btn-primary" data-act="ex-save"${anything ? '' : ' disabled'}>Save workout</button>`
+      <button class="btn btn-primary" data-act="ex-save"${anything ? '' : ' disabled'}>${
+  short ? `${short} still to fill in` : 'Save workout'}</button>`
   });
 }
 
@@ -14501,7 +14536,7 @@ const ACTIONS = {
     const held = state.exPick.picked[part] || [];
     const at = held.findIndex((m) => exSame(m, name));
     const next = at >= 0 ? held.filter((_, i) => i !== at)
-      : held.concat([{ name, sets: 0, reps: 0 }]);
+      : held.concat([{ name, sets: 0, reps: 0, kg: null }]);
     if (next.length) state.exPick.picked[part] = next;
     else delete state.exPick.picked[part];
     render();
@@ -14526,7 +14561,7 @@ const ACTIONS = {
     if (!clean || !part) { state.exPick.adding = false; state.exDraft = ''; render(); return; }
     const held = state.exPick.picked[part] || [];
     if (!held.some((m) => exSame(m, clean))) {
-      state.exPick.picked[part] = held.concat([{ name: clean, sets: 0, reps: 0 }]);
+      state.exPick.picked[part] = held.concat([{ name: clean, sets: 0, reps: 0, kg: null }]);
     }
     state.exPick.adding = false;
     state.exDraft = '';
@@ -15815,12 +15850,19 @@ const CHANGES = {
      on a stepper, and the keypad is already what a number field opens. */
   'ex-count': (el) => {
     const part = String(el.dataset.part || '');
-    const field = el.dataset.field === 'sets' ? 'sets' : 'reps';
-    const cap = field === 'sets' ? 99 : 999;
-    const n = Math.max(0, Math.min(cap, Math.round(Number(el.value) || 0)));
+    const field = ({ sets: 'sets', reps: 'reps', kg: 'kg' })[el.dataset.field];
     const held = (state.exPick.picked[part] || []).find((m) => exSame(m, el.dataset.name));
-    if (!held) return;
-    held[field] = n;
+    if (!field || !held) return;
+    const said = String(el.value).trim();
+    if (field === 'kg') {
+      /* Cleared is unanswered, zero is bodyweight, and the two have to stay
+         apart or the save cannot tell a field nobody filled in from a move
+         with nothing on the bar. Halves are kept - plates come in them. */
+      held.kg = said === '' ? null : Math.max(0, Math.min(999, Math.round(Number(said) * 2) / 2 || 0));
+    } else {
+      const cap = field === 'sets' ? 99 : 999;
+      held[field] = Math.max(0, Math.min(cap, Math.round(Number(said) || 0)));
+    }
     render();
   },
 

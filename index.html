@@ -2751,16 +2751,28 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .ex-item.is-on .ex-move { border-color: transparent; background: transparent; }
   .ex-count-row {
-    display: flex; align-items: flex-end; gap: 9px; padding: 0 12px 10px 57px;
+    display: flex; align-items: flex-end; gap: 6px; padding: 0 12px 4px 12px;
     font-size: 11px; color: var(--color-neutral-600);
   }
-  .ex-count-row span { padding-bottom: 9px; color: var(--color-neutral-500); }
-  .ex-count-row label { display: flex; flex-direction: column; gap: 2px; font-weight: 600; }
+  .ex-count-row > span { padding-bottom: 9px; color: var(--color-neutral-500); }
+  .ex-num-wrap { display: flex; flex-direction: column; gap: 2px; font-weight: 600; flex: 1 1 0; min-width: 0; }
   .ex-num {
-    width: 62px; padding: 7px 9px; border-radius: 10px; font: inherit; font-size: 14px;
+    width: 100%; padding: 7px 6px; border-radius: 10px; font: inherit; font-size: 14px;
     text-align: center; background: #fff; border: 1px solid var(--color-accent-200); color: #16131f;
   }
+  /* Nothing in it yet, and all three are wanted. Marked rather than left to be
+     discovered at the save button. */
+  .ex-num.is-empty { border-color: #e3b7c6; background: #fff8fa; }
   .ex-num:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+  .ex-need {
+    margin: 0; padding: 0 12px 10px; font-size: 11px; line-height: 1.4; color: #8a2f4a;
+  }
+  .ex-owed {
+    margin: 6px 0 0; padding: 9px 12px; border-radius: 11px; font-size: 12px; line-height: 1.5;
+    background: #fdecf1; border: 1px solid #f3c9d6; color: #8a2f4a;
+  }
+  .ex-chip.is-due { border-color: #e3b7c6; background: #fff8fa; color: #8a2f4a; }
+  .ex-chip.is-due b { background: #f3c9d6; color: #8a2f4a; }
 
   .ex-mine {
     margin: 8px 0 2px; font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase;
