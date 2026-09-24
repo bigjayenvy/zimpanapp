@@ -23,9 +23,13 @@ const PURPOSES = ['Shopping', 'Projects', 'Movies', 'Petrol', 'Groceries', 'Eat 
    written inside seedState, because the same list is what stockVocab reads to
    decide which entries are the app's own. */
 const SEED_CATEGORIES = [
-  'Chores', 'Workout', 'Potato Couching', 'Family Time', 'Focus Work',
+  'Chores', 'Workout/Exercise', 'Potato Couching', 'Family Time', 'Focus Work',
   'Eat / Drink', 'Sleep', 'Prayers and Reflections', 'Meetings', 'Cooking'
 ];
+/* What it used to be called. Kept so an account that still holds the old name
+   is renamed rather than left behind, and so the old one goes on counting as
+   one of Zimpan's own while it is on its way out. */
+const RENAMED_CATEGORIES = [['Workout', 'Workout/Exercise']];
 const STORE_KEY = 'zimpan.v1';
 
 /* ─────────────────────────── brand ───────────────────────────
@@ -433,7 +437,7 @@ function seedState() {
 
   const seed = [
     ['Watch Eala vs Nally WTA match', 'Potato Couching', 390, 420],
-    ['Treadmill', 'Workout', 435, 470],
+    ['Treadmill', 'Workout/Exercise', 435, 470],
     ['Wash car', 'Chores', 490, 525],
     ['Grocery run', 'Chores', 540, 570],
     ['Breakfast with the family', 'Family Time', 570, 630],
@@ -442,7 +446,7 @@ function seedState() {
   ].map(([a, c, f, to], i) => ({ id: 'e' + i, date: t, activity: a, category: c, from: f, to: to }));
 
   // Deterministic history so week and month views have something honest to show.
-  const kinds = [['Deep work', 'Focus Work', 540, 240], ['Emails', 'Focus Work', 900, 45], ['Treadmill', 'Workout', 420, 40],
+  const kinds = [['Deep work', 'Focus Work', 540, 240], ['Emails', 'Focus Work', 900, 45], ['Treadmill', 'Workout/Exercise', 420, 40],
     ['Dinner with the family', 'Family Time', 1110, 75], ['Laundry', 'Chores', 990, 50], ['Netflix', 'Potato Couching', 1230, 90],
     ['Grocery run', 'Chores', 630, 45], ['Reading', 'Focus Work', 1290, 35]];
   const hist = [];
@@ -2065,6 +2069,10 @@ async function afterSignIn(user) {
   if (!state.dirty.currency && user.currency) state.currency = user.currency;
   render();
   await syncNow();
+  /* After the pull rather than before it, so the rename is applied to the
+     merged vocabulary instead of to whatever this device woke up holding -
+     otherwise the server hands the old name straight back. */
+  if (migrateCategoryNames()) render();
   /* After the sync, so the summary is written from the log this device has just
      finished pulling rather than the one it woke up with. */
   warmDeckSummary();
@@ -4758,7 +4766,9 @@ function stockVocab() {
   if (!stockNames) {
     const low = (v) => String(v || '').trim().toLowerCase();
     stockNames = {
-      categories: new Set(SEED_CATEGORIES.map(low).concat(M_CATS.map((c) => low(c.name)))),
+      categories: new Set(SEED_CATEGORIES.map(low)
+        .concat(RENAMED_CATEGORIES.map((r) => low(r[0])))
+        .concat(M_CATS.map((c) => low(c.name)))),
       purposes: new Set(PURPOSES.map(low).concat(M_PURPOSES.map((p) => low(p.name))))
     };
   }
@@ -8539,13 +8549,14 @@ function exNeedsPick(p) {
   return true;
 }
 
-function exAskDialog() {
-  const a = state.exAsk;
-  if (!a) return '';
+/* Written once and asked from both sides, because it is one question. The full
+   layout asks after the row lands; the phone's flow carries the note as its own
+   step, so there it is asked in front of the save. */
+function exAskBox(activity, kicker, actions) {
   return lightbox({
     icon: 'pulse',
     tone: 'var(--color-accent)',
-    kicker: a.activity ? `Logged against “${esc(a.activity)}”` : 'Workout logged',
+    kicker: activity ? `${kicker} “${String(activity).slice(0, 60)}”` : 'Workout logged',
     title: 'Nothing to count it from',
     closeAct: 'ex-ask-skip',
     body: `
@@ -8554,10 +8565,16 @@ function exAskDialog() {
       priced as an average session.</p>
       <p style="margin:10px 0 0;">It takes two taps — the kind, and what you
       worked. Left as it is, the figure stands as a rough guess.</p>`,
-    actions: `
-      <button class="btn btn-secondary" data-act="ex-ask-skip">Leave it</button>
-      <button class="btn btn-primary" data-act="ex-ask-add">Add the workout</button>`
+    actions
   });
+}
+
+function exAskDialog() {
+  const a = state.exAsk;
+  if (!a) return '';
+  return exAskBox(a.activity, 'Logged against', `
+      <button class="btn btn-secondary" data-act="ex-ask-skip">Leave it</button>
+      <button class="btn btn-primary" data-act="ex-ask-add">Add the workout</button>`);
 }
 
 function exPickDialog(p) {
@@ -14570,6 +14587,14 @@ const ACTIONS = {
     if (a) editNote('entries', a.id);
     else render();
   },
+  /* Add the workout goes back to the step the question was asked in front of,
+     rather than forward to a second one. Leave it saves as it would have. */
+  'm-ex-add': () => { mSet({ exAsk: false }); ACTIONS['m-note-workout'](); },
+  'm-ex-skip': () => {
+    state.m.exAsk = false;
+    state.noteSkipped.workout = true;
+    mCommit();
+  },
   'ex-ask-skip': () => {
     state.exAsk = null;
     // Answered, so the question does not come back at the next session either.
@@ -16590,6 +16615,7 @@ state.m = {
   cat: null, activity: null, typing: false, activityText: '',
   dir: 'out', amount: '', startMin: mDefaultStart(), durMin: 60,
   note: '', noteOpen: false, mealAsk: false, mealAsked: false,
+  exAsk: false, exAsked: false,
   // the row being re-edited, if this is an edit rather than a new entry
   editId: null, editKind: null,
   // detail
@@ -16614,6 +16640,52 @@ state.m = {
    with nothing set up and nothing logged is setup; everything else is Today.
    An account that already has rows has plainly been through setup, whatever
    this particular device remembers. */
+/* ── a name this app changed its mind about ──
+
+   "Workout" became "Workout/Exercise", and a category that Zimpan seeded is
+   locked - so nobody holding the old one could put it right themselves. It is
+   done for them, once, on the way in.
+
+   Through the same mechanics a rename by hand uses, because the name IS the
+   reference: every entry carries it as a string, so the rows have to be
+   rewritten too, the old name has to be tombstoned rather than edited in place
+   (the vocabulary syncs keyed on its name), and the position has to be kept
+   because the colour is derived from it.
+
+   Idempotent by construction: afterwards the old name is not there to find, so
+   it cannot run twice. Two devices running it before either syncs both produce
+   the same rename, which converges rather than collides. */
+function migrateCategoryNames() {
+  let moved = false;
+  RENAMED_CATEGORIES.forEach(([from, to]) => {
+    const at = state.categories.findIndex((c) => c.name === from);
+    if (at < 0) return;
+    // Somebody already has the new name: the old one is then a duplicate on its
+    // way out, and its rows are re-filed onto the name that is staying.
+    const taken = state.categories.some((c) => c.name === to);
+    const held = state.categories[at];
+    state.categories = taken
+      ? state.categories.filter((_, i) => i !== at)
+      : state.categories.map((c, i) => (i === at
+        ? touch('categories', { name: to, color: held.color, position: held.position })
+        : c));
+    bury('categories', from);
+    state.entries = state.entries.map((r) => (r.category === from
+      ? touch('entries', Object.assign({}, r, { category: to }))
+      : r));
+    // Anything else still pointing at the name it just lost.
+    if (state.timerCategory === from) state.timerCategory = to;
+    if (state.form && state.form.category === from) {
+      state.form = Object.assign({}, state.form, { category: to });
+    }
+    if (state.logFilter === from) state.logFilter = to;
+    if (state.m && state.m.cat === from) state.m.cat = to;
+    moved = true;
+  });
+  if (moved) { save(); queueSync(0); }
+  return moved;
+}
+
 function mBoot() {
   if (state.setupDone || hasLocalData()) { state.setupDone = true; state.m.screen = 'home'; return; }
   /* Setup asks a personal account what it wants to watch and which categories
@@ -19630,6 +19702,7 @@ function mobileApp() {
   ${mealNoteDialog()}
   ${exAskDialog()}
   ${mMealDialog()}
+  ${mExDialog()}
   ${mQuitDialog()}
   ${state.reportOpen ? reportSheet() : ''}
   ${pickDeleteDialog()}
@@ -19684,8 +19757,10 @@ function mResetDraft() {
     dir: 'out', amount: '', startMin: mDefaultStart(), durMin: 60,
     note: '', noteOpen: false, editId: null, editKind: null,
     /* Whether the meal question is open over this draft, and whether it has
-       already been put once. See mMealNeedsFoods. */
+       already been put once. See mMealNeedsFoods. The workout question keeps
+       its own pair beside it, for the same reason and read the same way. */
     mealAsk: false, mealAsked: false,
+    exAsk: false, exAsked: false,
     // Retaken at the first paint of the next flow. See mFlowDirty().
     mark: '', quitAsk: false
   });
@@ -19695,11 +19770,32 @@ function mResetDraft() {
    The one place the draft becomes a row. Ids are minted here rather than
    asked for, so this works with no network at all; `touch` stamps updated_at
    and drops the row in the outbox, which is what makes the sync resolve. */
+/* The workout half of the question above, asked in the same place and for the
+   same reason: the burn is read from what the workout was, so saving one with
+   nothing on it is not a field left empty, it is an hour priced as an average.
+
+   Once per draft and once per session, like the meal - having been told, being
+   told again after the next session is nagging. */
+function mWorkoutNeedsPick() {
+  if (state.noteSkipped.workout || state.m.exAsked) return false;
+  if (state.m.note.trim()) return false;
+  if (!mFlowIsWorkout()) return false;
+  mSet({ exAsk: true, exAsked: true });
+  return true;
+}
+
+const mExDialog = () => (state.m.exAsk
+  ? exAskBox(mDraftLabel(), 'About to log', `
+      <button class="btn btn-secondary" data-act="m-ex-skip">Leave it</button>
+      <button class="btn btn-primary" data-act="m-ex-add">Add the workout</button>`)
+  : '');
+
 function mCommit() {
   /* A meal with nothing written on it is charged a placeholder rather than
      read, and that is worth saying before it happens rather than after. Takes
      the turn when it asks; the save is what the answer leads back to. */
   if (mMealNeedsFoods()) return;
+  if (mWorkoutNeedsPick()) return;
   const s = state.m;
   const date = mDraftIso();
   const label = (mDraftLabel() || (mIsMoney() ? 'Money' : 'Activity')).slice(0, 200);
