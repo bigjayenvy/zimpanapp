@@ -1045,6 +1045,8 @@ const state = {
   // Session state: what the workout picker is showing and what has been ticked.
   exPick: { type: '', part: '', picked: {}, adding: false },
   exDraft: '',
+  // Asked once per row, like the meal question beside it.
+  exAsk: null, exAsked: {},
 
   /* Persisted, and that is the whole trick: a stopwatch needs a start time, not
      a running process. Phones freeze and reload background tabs freely, so
@@ -8239,7 +8241,7 @@ function exBodyMap() {
   }).join('')}
   </div>
   ${chosen.length ? `<p class="ex-sum">${chosen.map(([key, label]) =>
-    `${esc(label)}: ${esc((picked[key] || []).join(', '))}`).join(' · ')}</p>` : ''}`;
+    `${esc(label)}: ${esc((picked[key] || []).map(exSay).join(', '))}`).join(' · ')}</p>` : ''}`;
 }
 
 /* What somebody added themselves, read back out of what they have logged.
@@ -8254,9 +8256,10 @@ function exLearned(part) {
   const seen = new Map();
   state.entries.forEach((r) => {
     const found = exParse(r.note);
-    (found.picked[part] || []).forEach((name) => {
+    (found.picked[part] || []).forEach((m) => {
+      const name = exName(m);
       const key = name.toLowerCase();
-      if (known.indexOf(key) >= 0 || seen.has(key)) return;
+      if (!name || known.indexOf(key) >= 0 || seen.has(key)) return;
       seen.set(key, name);
     });
   });
@@ -8267,13 +8270,29 @@ function exList(part) {
   const picked = state.exPick.picked[part] || [];
   const mine = exLearned(part);
   const row = (name, move) => {
-    const on = picked.some((p) => p.toLowerCase() === name.toLowerCase());
-    return `<button type="button" class="ex-move${on ? ' is-on' : ''}"
-      data-act="ex-toggle" data-part="${part}" data-name="${esc(name)}" aria-pressed="${on}">
-      <span class="ex-move-ico">${exIcon(move)}</span>
-      <span class="ex-move-name">${esc(name)}</span>
-      <span class="ex-move-tick" aria-hidden="true">${on ? '✓' : ''}</span>
-    </button>`;
+    const held = picked.find((m) => exSame(m, name));
+    const on = !!held;
+    /* The count appears only once the move is ticked. Asked of everything up
+       front it would be fifty pairs of empty boxes; asked of what was actually
+       done it is two numbers somebody already has in their head. Left empty it
+       stays empty - this is a record, not a form to complete. */
+    const count = on ? `
+      <div class="ex-count-row">
+        <label>Sets<input class="ex-num" type="number" inputmode="numeric" min="0" max="99"
+          value="${held.sets || ''}" data-change="ex-count" data-part="${part}"
+          data-name="${esc(name)}" data-field="sets" placeholder="–"></label>
+        <span aria-hidden="true">×</span>
+        <label>Reps<input class="ex-num" type="number" inputmode="numeric" min="0" max="999"
+          value="${held.reps || ''}" data-change="ex-count" data-part="${part}"
+          data-name="${esc(name)}" data-field="reps" placeholder="–"></label>
+      </div>` : '';
+    return `<div class="ex-item${on ? ' is-on' : ''}">
+      <button type="button" class="ex-move${on ? ' is-on' : ''}"
+        data-act="ex-toggle" data-part="${part}" data-name="${esc(name)}" aria-pressed="${on}">
+        <span class="ex-move-ico">${exIcon(move)}</span>
+        <span class="ex-move-name">${esc(name)}</span>
+        <span class="ex-move-tick" aria-hidden="true">${on ? '✓' : ''}</span>
+      </button>${count}</div>`;
   };
   return `
   <div class="ex-head">
@@ -8310,12 +8329,22 @@ function exNote() {
   if (p.type === 'weights') {
     const parts = EX_PARTS
       .filter(([key]) => (p.picked[key] || []).length)
-      .map(([key, label]) => `${label}: ${(p.picked[key] || []).join(', ')}`);
+      .map(([key, label]) => `${label}: ${(p.picked[key] || []).map(exSay).join(', ')}`);
     return parts.length ? `${word} · ${parts.join(' · ')}` : word;
   }
   const said = String(state.noteDraft || '').trim();
   return said ? `${word} · ${said}` : word;
 }
+
+/* "Shoulder press 3x10" - the count written where somebody would write it,
+   so the note still reads as a sentence and the parser has one shape to find.
+   Two digits of sets and three of reps is more than anybody does and less than
+   a mistyped phone number. */
+const EX_COUNT = /\s+(\d{1,2})\s*[x×]\s*(\d{1,3})$/i;
+
+const exName = (v) => (typeof v === 'string' ? v : (v && v.name) || '');
+const exSame = (a, b) => exName(a).toLowerCase() === exName(b).toLowerCase();
+const exSay = (v) => `${exName(v)}${v && v.sets && v.reps ? ` ${v.sets}x${v.reps}` : ''}`;
 
 function exParse(note) {
   const out = { type: '', picked: {}, said: '' };
@@ -8333,7 +8362,14 @@ function exParse(note) {
     const label = bit.slice(0, at).trim().toLowerCase();
     const found = EX_PARTS.find((p) => p[1].toLowerCase() === label);
     if (!found) return;
-    const names = bit.slice(at + 1).split(',').map((n) => n.trim()).filter(Boolean);
+    const names = bit.slice(at + 1).split(',').map((n) => n.trim()).filter(Boolean)
+      .map((n) => {
+        const count = EX_COUNT.exec(n);
+        return count
+          ? { name: n.replace(EX_COUNT, '').trim(), sets: Number(count[1]), reps: Number(count[2]) }
+          : { name: n, sets: 0, reps: 0 };
+      })
+      .filter((m) => m.name);
     if (names.length) out.picked[found[0]] = names;
   });
   return out;
@@ -8376,6 +8412,46 @@ function exPickBody() {
       style="width:100%;resize:vertical;min-height:76px;font:inherit;font-size:14px;line-height:1.5;padding:10px 12px;">${esc(state.noteDraft)}</textarea>`;
   }
   return p.part ? exList(p.part) : exBodyMap();
+}
+
+/* ── closing it having answered nothing ──
+
+   The same shape the meal question already uses, for the same reason: the burn
+   is read out of what is written here, so a workout left blank is not a row
+   with a field missing, it is an hour priced at a flat average. That happened
+   silently - the dialog closed and a number nobody chose went onto the card.
+
+   Said once, and the skip is then honoured for the session: having been told,
+   being told again after the next session is nagging. */
+function exNeedsPick(p) {
+  if (!p || !p.ex || state.exAsked[p.id]) return false;
+  const row = findRow('entries', p.id);
+  if (!row || (row.note || '').trim()) return false;
+  state.exAsked[p.id] = true;
+  state.exAsk = { id: p.id, activity: row.activity };
+  render();
+  return true;
+}
+
+function exAskDialog() {
+  const a = state.exAsk;
+  if (!a) return '';
+  return lightbox({
+    icon: 'pulse',
+    tone: 'var(--color-accent)',
+    kicker: a.activity ? `Logged against “${esc(a.activity)}”` : 'Workout logged',
+    title: 'Nothing to count it from',
+    closeAct: 'ex-ask-skip',
+    body: `
+      <p>The calories burned are read from what the workout was. Bench press and
+      burpees are not the same hour, and with nothing written down this one is
+      priced as an average session.</p>
+      <p style="margin:10px 0 0;">It takes two taps — the kind, and what you
+      worked. Left as it is, the figure stands as a rough guess.</p>`,
+    actions: `
+      <button class="btn btn-secondary" data-act="ex-ask-skip">Leave it</button>
+      <button class="btn btn-primary" data-act="ex-ask-add">Add the workout</button>`
+  });
 }
 
 function exPickDialog(p) {
@@ -12406,6 +12482,7 @@ function render() {
   ${notePromptDialog()}
   ${rowNewDialog()}
   ${mealNoteDialog()}
+  ${exAskDialog()}
   ${refineAskDialog()}
   ${chatDialog()}
   ${chatConsentDialog()}
@@ -14131,6 +14208,7 @@ function closeFollowUp(saveIt) {
      no-op — it is the difference between a day read off the plate and a day of
      placeholders — so it gets said out loud before the dialog goes away. */
   if (mealNeedsFoods(p)) return;
+  if (exNeedsPick(p)) return;
   askDeductAfterNote(p);
   render();
 }
@@ -14288,8 +14366,9 @@ const ACTIONS = {
     const part = String(el.dataset.part || '');
     const name = String(el.dataset.name || '');
     const held = state.exPick.picked[part] || [];
-    const at = held.findIndex((n) => n.toLowerCase() === name.toLowerCase());
-    const next = at >= 0 ? held.filter((_, i) => i !== at) : held.concat([name]);
+    const at = held.findIndex((m) => exSame(m, name));
+    const next = at >= 0 ? held.filter((_, i) => i !== at)
+      : held.concat([{ name, sets: 0, reps: 0 }]);
     if (next.length) state.exPick.picked[part] = next;
     else delete state.exPick.picked[part];
     render();
@@ -14304,8 +14383,8 @@ const ACTIONS = {
       .replace(/[,·]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
     if (!clean || !part) { state.exPick.adding = false; state.exDraft = ''; render(); return; }
     const held = state.exPick.picked[part] || [];
-    if (!held.some((n) => n.toLowerCase() === clean.toLowerCase())) {
-      state.exPick.picked[part] = held.concat([clean]);
+    if (!held.some((m) => exSame(m, clean))) {
+      state.exPick.picked[part] = held.concat([{ name: clean, sets: 0, reps: 0 }]);
     }
     state.exPick.adding = false;
     state.exDraft = '';
@@ -14351,6 +14430,19 @@ const ACTIONS = {
     delete state.noteSkipped.food;
     editNote('entries', a.id);
   },
+  'ex-ask-add': () => {
+    const a = state.exAsk;
+    state.exAsk = null;
+    if (a) editNote('entries', a.id);
+    else render();
+  },
+  'ex-ask-skip': () => {
+    state.exAsk = null;
+    // Answered, so the question does not come back at the next session either.
+    state.noteSkipped.workout = true;
+    render();
+  },
+
   'meal-skip': () => {
     const a = state.mealAsk;
     state.mealAsk = null;
@@ -15560,6 +15652,19 @@ const ACTIONS = {
 };
 
 const CHANGES = {
+  /* Typed rather than stepped: twelve reps is two taps on a keypad and twelve
+     on a stepper, and the keypad is already what a number field opens. */
+  'ex-count': (el) => {
+    const part = String(el.dataset.part || '');
+    const field = el.dataset.field === 'sets' ? 'sets' : 'reps';
+    const cap = field === 'sets' ? 99 : 999;
+    const n = Math.max(0, Math.min(cap, Math.round(Number(el.value) || 0)));
+    const held = (state.exPick.picked[part] || []).find((m) => exSame(m, el.dataset.name));
+    if (!held) return;
+    held[field] = n;
+    render();
+  },
+
   /* A select rather than a row of chips: four statuses is more than a toggle
      and less than a menu, it costs one tap, and it opens no keyboard. */
   /* The money pad's two selects. Status moves the line up or down the pad;
@@ -19371,6 +19476,7 @@ function mobileApp() {
   ${notePromptDialog()}
   ${rowNewDialog()}
   ${mealNoteDialog()}
+  ${exAskDialog()}
   ${mMealDialog()}
   ${mQuitDialog()}
   ${state.reportOpen ? reportSheet() : ''}
