@@ -2662,6 +2662,93 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     .mv, .mv-orb > span { animation: none !important; }
   }
 
+  /* ── the workout picker ──
+     A body to point at, then a list to tick. Sized for a thumb throughout:
+     this is answered standing up in a gym more often than sitting down. */
+  .ex-pick { display: flex; flex-direction: column; gap: 14px; }
+  .ex-lead {
+    margin: 0; text-align: center; font-family: var(--font-heading);
+    font-size: 16px; font-weight: 700; color: #16131f;
+  }
+  .ex-lead2 { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--color-neutral-600); }
+
+  .ex-types { display: flex; flex-direction: column; gap: 9px; }
+  .ex-type {
+    display: flex; flex-direction: column; gap: 2px; align-items: flex-start;
+    padding: 13px 15px; border-radius: 15px; cursor: pointer; text-align: left; font: inherit;
+    background: #fff; border: 1.5px solid var(--color-accent-200); transition: border-color .16s, background .16s;
+  }
+  .ex-type:hover { border-color: var(--color-accent); background: var(--color-accent-100); }
+  .ex-type strong { font-family: var(--font-heading); font-size: 15.5px; color: #16131f; }
+  .ex-type span { font-size: 12.5px; color: var(--color-neutral-600); }
+
+  .ex-head { display: flex; align-items: center; gap: 10px; }
+  .ex-head strong { flex: 1; font-family: var(--font-heading); font-size: 16px; color: #16131f; }
+  .ex-count { font-size: 12px; font-weight: 600; color: var(--color-accent-700); }
+  .ex-back {
+    width: 32px; height: 32px; flex: none; border-radius: 50%; cursor: pointer; font: inherit;
+    font-size: 15px; line-height: 1; border: 1px solid var(--color-accent-200);
+    background: #fff; color: var(--color-accent-700);
+  }
+  .ex-back:hover { background: var(--color-accent-100); }
+
+  /* Two figures, because half of these muscles are not on the front. */
+  .ex-figs { display: flex; gap: 10px; justify-content: center; }
+  .ex-fig { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1 1 0; min-width: 0; }
+  .ex-body { width: 100%; max-width: 150px; height: auto; }
+  .ex-fig-cap {
+    font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+    font-weight: 700; color: var(--color-neutral-500);
+  }
+  .ex-rg > * { fill: #ece8fb; stroke: #c9bcf4; stroke-width: 1.2; transition: fill .16s, stroke .16s; }
+  .ex-rg.is-live { cursor: pointer; }
+  .ex-rg.is-live:hover > * { fill: var(--color-accent-300); stroke: var(--color-accent-700); }
+  .ex-rg.is-on > * { fill: var(--color-accent); stroke: var(--color-accent-800); }
+  .ex-rg:focus { outline: none; }
+  .ex-rg:focus-visible > * { stroke: #16131f; stroke-width: 2.2; }
+
+  .ex-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+  .ex-chip {
+    display: inline-flex; align-items: center; gap: 5px; cursor: pointer; font: inherit;
+    font-size: 12.5px; font-weight: 600; padding: 7px 12px; border-radius: 999px;
+    background: #fff; border: 1px solid var(--color-accent-200); color: #3c2f63;
+  }
+  .ex-chip:hover { background: var(--color-accent-100); }
+  .ex-chip.is-on { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+  .ex-chip b {
+    display: grid; place-items: center; min-width: 17px; height: 17px; padding: 0 4px;
+    border-radius: 999px; background: rgba(255, 255, 255, .28); font-size: 10.5px;
+  }
+  .ex-sum {
+    margin: 0; padding: 10px 12px; border-radius: 12px; font-size: 12.5px; line-height: 1.55;
+    background: var(--color-accent-100); color: #3c2f63;
+  }
+
+  .ex-moves { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
+  .ex-move {
+    display: flex; align-items: center; gap: 11px; width: 100%; cursor: pointer; font: inherit;
+    padding: 9px 12px; border-radius: 13px; text-align: left;
+    background: #fff; border: 1.5px solid var(--color-neutral-200); transition: border-color .16s, background .16s;
+  }
+  .ex-move:hover { border-color: var(--color-accent-300); background: var(--color-accent-100); }
+  .ex-move.is-on { border-color: var(--color-accent); background: var(--color-accent-100); }
+  .ex-move-ico { flex: none; display: grid; place-items: center; width: 34px; height: 34px;
+    border-radius: 10px; background: var(--color-accent-100); color: var(--color-accent-700); }
+  .ex-move.is-on .ex-move-ico { background: var(--color-accent); color: #fff; }
+  .ex-move-name { flex: 1; min-width: 0; font-size: 14px; color: #16131f; }
+  .ex-move-tick { flex: none; width: 18px; font-weight: 700; color: var(--color-accent-700); }
+  .ex-mine {
+    margin: 8px 0 2px; font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase;
+    font-weight: 700; color: var(--color-neutral-500);
+  }
+  .ex-add { display: flex; gap: 8px; }
+  .ex-add .input { flex: 1; min-width: 0; }
+  .ex-add-open {
+    border: 0; background: transparent; padding: 8px 0; cursor: pointer; font: inherit;
+    font-size: 13px; font-weight: 600; color: var(--color-accent-700);
+    text-decoration: underline; text-underline-offset: 3px; text-align: left;
+  }
+
   .chat-empty { margin: auto 0; text-align: center; }
   .chat-empty p { margin: 0 0 12px; font-size: 13px; line-height: 1.5; color: var(--color-neutral-700); }
   .chat-seeds { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; }

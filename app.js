@@ -1042,6 +1042,9 @@ const state = {
   // {kind, name} while the delete confirmation is up.
   pickDelete: null,
   rowDelete: null,
+  // Session state: what the workout picker is showing and what has been ticked.
+  exPick: { type: '', part: '', picked: {}, adding: false },
+  exDraft: '',
 
   /* Persisted, and that is the whole trick: a stopwatch needs a start time, not
      a running process. Phones freeze and reload background tabs freely, so
@@ -3171,6 +3174,10 @@ const METS = [
   { re: /\bdanc\w*|\baerobics\b/, met: 5.5 },
   { re: /\belliptical\b|\bcross ?trainer\b|\b(?:up|down)?stairs?\b|\bcalisthenics?\b|\bpush-?ups?\b|\bsit-?ups?\b|\bplanks?\b|\bplanking\b/, met: 5.0 },
   { re: /\bgym\b|\bweights\b|\blift\w*|\bstrength\b/, met: 5.0 },
+  /* Said on its own by the workout picker, and only reached when nothing more
+     specific in the list above has matched — "Cardio · 5 km treadmill" is
+     priced as the treadmill, not as this. */
+  { re: /\bcardio\b/, met: 7.0 },
   { re: /\bpilates\b|\bstretch\w*/, met: 3.0 },
   { re: /\byoga\b/, met: 2.5 },
   { re: /\bwalk\w*|\blakad\b|\bstroll\w*/, met: 3.5 },
@@ -3234,8 +3241,33 @@ const WATCHED = /\breels?\b|\bvideos?\b|\bvlogs?\b|\byoutube\b|\btiktok\b|\bnetf
    choice rather than a sentence. */
 const EXERCISE_CAT = /\bworkouts?\b|\bexercis\w*|\bfitness\b|\bgym\b|\btraining\b|\bsports?\b|\bcardio\b/;
 
+/* What the picker was told, when it was used.
+
+   The type is a choice rather than a sentence - the same standing the category
+   already has here - so "gym" sitting in the activity is not a reason to price
+   an hour of HIIT as an hour of bench press. What they named inside it is more
+   specific still, so that is read first and the type is the floor beneath it.
+
+   Only the detail is searched, never the whole row, or the activity would win
+   again through the back door. */
+const EX_TYPE_MET = { cardio: 7.0, weights: 5.0, hiit: 8.0 };
+
+function exMet(note) {
+  const found = exParse(note);
+  if (!found.type) return null;
+  const detail = (found.type === 'weights'
+    ? Object.keys(found.picked).map((k) => (found.picked[k] || []).join(' ')).join(' ')
+    : found.said).toLowerCase();
+  const hit = detail ? METS.find((m) => m.re.test(detail)) : null;
+  return hit || { re: null, met: EX_TYPE_MET[found.type] };
+}
+
 const metHit = (e) => {
   if (isEatenRow(e)) return null;
+  /* Ahead of everything below: somebody who answered the picker has said what
+     this was outright, and nothing read off the words should overrule it. */
+  const picked = exMet(e.note);
+  if (picked) return picked;
   const act = String(e.activity || '').toLowerCase();
   const cat = String(e.category || '').toLowerCase();
   const note = String(e.note || '').toLowerCase();
@@ -8054,9 +8086,323 @@ function migrateScreen() {
    offering "Remove note" on a blank one is offering to do nothing. */
 const noteOnRow = (p) => !!(p && ((findRow(p.kind, p.id) || {}).note || '').trim());
 
+/* ── logging a workout ──
+
+   "Gym, 45 minutes" says when you were there and nothing about what you did,
+   which is the same hole a meal logged as "lunch" leaves: the burn is read out
+   of the words, so with no words it is read as a flat average. This is the
+   question that fills it, and it is the workout half of what FOLLOW_UPS asks
+   in words — the same dialog, the same note field, picked rather than typed.
+
+   Three types because they burn differently and the estimate cares: an hour of
+   HIIT is not an hour of bench press. Cardio and HIIT are said in a sentence,
+   because what matters there is the thing itself. Lifting is picked off a
+   body, because that is how anybody who lifts already thinks about it. */
+
+const EX_TYPES = [
+  ['cardio', 'Cardio', 'Running, cycling, swimming, rowing'],
+  ['weights', 'Weight Lifting', 'Picked off the body you worked'],
+  ['hiit', 'HIIT', 'Circuits, intervals, bootcamp']
+];
+
+/* Front and back, because half of these are not visible from the front and a
+   body map that hides the back is a body map that cannot offer deadlifts. */
+const EX_PARTS = [
+  ['neck', 'Neck', 'front'],
+  ['shoulders', 'Shoulders', 'both'],
+  ['chest', 'Chest', 'front'],
+  ['arms', 'Arms & Forearms', 'both'],
+  ['abs', 'Abdomen', 'front'],
+  ['back', 'Back', 'back'],
+  ['legs', 'Legs', 'both'],
+  ['calves', 'Calves', 'back']
+];
+
+const EX_PART_LABEL = Object.fromEntries(EX_PARTS.map((p) => [p[0], p[1]]));
+
+/* Every one tagged with the shape of the movement rather than given a drawing
+   of its own. A lateral raise and a front raise are the same picture with the
+   arms in a different place, and fifty near-identical figures would be fifty
+   things to get subtly wrong. The tag is what the icon is drawn from. */
+const EX_MOVES = {
+  neck: [['Neck flexion', 'hold'], ['Neck extension', 'hold'], ['Shrugs', 'raise']],
+  shoulders: [['Shoulder press', 'press'], ['Arnold press', 'press'], ['Lateral raises', 'raise'],
+    ['Front raises', 'raise'], ['Rear delt fly', 'fly'], ['Upright row', 'pull'], ['Face pull', 'pull']],
+  chest: [['Bench press', 'press'], ['Incline press', 'press'], ['Dumbbell fly', 'fly'],
+    ['Cable crossover', 'fly'], ['Push-ups', 'press'], ['Chest dips', 'press'], ['Pec deck', 'fly']],
+  arms: [['Bicep curl', 'curl'], ['Hammer curl', 'curl'], ['Preacher curl', 'curl'],
+    ['Reverse curl', 'curl'], ['Tricep pushdown', 'extend'], ['Overhead extension', 'extend'],
+    ['Skull crushers', 'extend'], ['Tricep dips', 'press'], ['Wrist curl', 'curl']],
+  abs: [['Crunches', 'twist'], ['Sit-ups', 'twist'], ['Plank', 'hold'], ['Leg raises', 'raise'],
+    ['Russian twists', 'twist'], ['Cable crunch', 'pull'], ['Hanging knee raise', 'raise'],
+    ['Mountain climbers', 'twist']],
+  back: [['Deadlift', 'hinge'], ['Pull-ups', 'pull'], ['Lat pulldown', 'pull'],
+    ['Bent-over row', 'pull'], ['Seated row', 'pull'], ['T-bar row', 'pull'],
+    ['Back extension', 'hinge'], ['Shrugs', 'raise']],
+  legs: [['Squats', 'squat'], ['Front squat', 'squat'], ['Leg press', 'press'], ['Lunges', 'squat'],
+    ['Romanian deadlift', 'hinge'], ['Leg extension', 'extend'], ['Leg curl', 'curl'],
+    ['Hip thrust', 'hinge'], ['Bulgarian split squat', 'squat']],
+  calves: [['Standing calf raise', 'raise'], ['Seated calf raise', 'raise'], ['Calf press', 'press']]
+};
+
+/* One drawing per movement, shared by everything that moves that way. Line
+   work rather than filled shapes, so they sit at any size and take the ink
+   colour they are given. */
+const EX_ICON = {
+  press: '<path d="M4 15h16"/><path d="M6 12.5v5M18 12.5v5"/><path d="M12 11V4"/><path d="M9 6.5 12 3.5l3 3"/>',
+  pull: '<path d="M4 6h16"/><path d="M6 3.5v5M18 3.5v5"/><path d="M12 10v7"/><path d="M9 14.5 12 17.5l3-3"/>',
+  raise: '<path d="M12 4v13"/><circle cx="12" cy="19" r="1.6"/><path d="M8 10 4.5 6.5M16 10l3.5-3.5"/><path d="M4.5 10v-3.5H8M19.5 10v-3.5H16"/>',
+  curl: '<path d="M6 19h4"/><path d="M8 19V9"/><path d="M8 9a5 5 0 0 1 9 3"/><path d="M14.5 10.5 17 12l1.5-2.5"/>',
+  extend: '<path d="M5 6v10"/><path d="M5 11h9"/><path d="M14 11a4 4 0 0 0 4-4"/><path d="M16 8.5 18 6.5l2 2"/>',
+  fly: '<path d="M12 5v14"/><path d="M12 9a6 6 0 0 0-6-4M12 9a6 6 0 0 1 6-4"/><circle cx="5" cy="5" r="1.6"/><circle cx="19" cy="5" r="1.6"/>',
+  squat: '<path d="M4 7h16"/><path d="M6 4.5v5M18 4.5v5"/><path d="M12 11v4l-3 5M12 15l3 5"/>',
+  hinge: '<path d="M4 19h16"/><path d="M6 16.5v5M18 16.5v5"/><path d="M8 5v6"/><path d="M8 11a7 7 0 0 0 7 5"/>',
+  twist: '<path d="M6 8a8 8 0 0 1 12 0"/><path d="M18 16a8 8 0 0 1-12 0"/><path d="M16.5 4.5 18.5 8l-3.5 1"/><path d="M7.5 19.5 5.5 16l3.5-1"/>',
+  hold: '<path d="M3 15h18"/><circle cx="6.5" cy="11.5" r="2"/><path d="M8.5 13.5 13 15"/><path d="M13 15l5-3.5"/>'
+};
+
+const exIcon = (move, size) => `<svg class="ex-ico" viewBox="0 0 24 24" width="${size || 22}" height="${size || 22}"
+  fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
+  aria-hidden="true">${EX_ICON[move] || EX_ICON.hold}</svg>`;
+
+/* The figure, twice.
+
+   Drawn rather than fetched: there is no stock illustration here that is ours
+   to ship, and a body map is simple enough to be worth owning — it takes the
+   accent colour, scales to any phone, and weighs nothing.
+
+   Each region is a shape with the part on it, so the whole figure is one
+   picture and the hit areas are the anatomy rather than boxes drawn over it. */
+const EX_SHAPES = {
+  front: {
+    head: '<circle cx="60" cy="20" r="13"/>',
+    neck: '<rect x="54" y="33" width="12" height="10" rx="4"/>',
+    shoulders: '<ellipse cx="33" cy="54" rx="12" ry="9"/><ellipse cx="87" cy="54" rx="12" ry="9"/>',
+    chest: '<rect x="46" y="45" width="28" height="29" rx="9"/>',
+    arms: '<rect x="20" y="66" width="12" height="30" rx="6"/><rect x="20" y="98" width="11" height="27" rx="5"/>'
+      + '<rect x="88" y="66" width="12" height="30" rx="6"/><rect x="89" y="98" width="11" height="27" rx="5"/>',
+    abs: '<rect x="48" y="77" width="24" height="32" rx="8"/>',
+    legs: '<rect x="47" y="112" width="12" height="60" rx="6"/><rect x="61" y="112" width="12" height="60" rx="6"/>'
+  },
+  back: {
+    head: '<circle cx="60" cy="20" r="13"/>',
+    neck: '<rect x="54" y="33" width="12" height="10" rx="4"/>',
+    shoulders: '<ellipse cx="33" cy="54" rx="12" ry="9"/><ellipse cx="87" cy="54" rx="12" ry="9"/>',
+    back: '<rect x="46" y="45" width="28" height="64" rx="10"/>',
+    arms: '<rect x="20" y="66" width="12" height="30" rx="6"/><rect x="20" y="98" width="11" height="27" rx="5"/>'
+      + '<rect x="88" y="66" width="12" height="30" rx="6"/><rect x="89" y="98" width="11" height="27" rx="5"/>',
+    legs: '<rect x="47" y="112" width="12" height="45" rx="6"/><rect x="61" y="112" width="12" height="45" rx="6"/>',
+    calves: '<rect x="47" y="160" width="12" height="30" rx="6"/><rect x="61" y="160" width="12" height="30" rx="6"/>'
+  }
+};
+
+/* Which regions a view is allowed to offer. The head is scenery — there is
+   nothing to train there, so it is drawn and never clickable. */
+const EX_VIEW_PARTS = {
+  front: ['neck', 'shoulders', 'chest', 'arms', 'abs', 'legs'],
+  back: ['neck', 'shoulders', 'back', 'arms', 'legs', 'calves']
+};
+
+function exFigure(view) {
+  const shapes = EX_SHAPES[view];
+  const live = EX_VIEW_PARTS[view];
+  const picked = state.exPick.picked || {};
+  const body = Object.keys(shapes).map((key) => {
+    const on = live.indexOf(key) >= 0;
+    const chosen = on && (picked[key] || []).length;
+    // The head and anything this view cannot offer is scenery: drawn, not offered.
+    return `<g class="ex-rg${on ? ' is-live' : ''}${chosen ? ' is-on' : ''}"
+      ${on ? `data-act="ex-part" data-part="${key}" role="button" tabindex="0"
+      aria-label="${esc(EX_PART_LABEL[key])}${chosen ? `, ${chosen} chosen` : ''}"` : ''}
+      >${shapes[key]}</g>`;
+  }).join('');
+  return `
+  <div class="ex-fig">
+    <svg viewBox="0 0 120 210" class="ex-body" role="group" aria-label="${view === 'front' ? 'Front' : 'Back'} of the body">
+      ${body}
+    </svg>
+    <span class="ex-fig-cap">${view === 'front' ? 'Front' : 'Back'}</span>
+  </div>`;
+}
+
+function exBodyMap() {
+  const picked = state.exPick.picked || {};
+  const chosen = EX_PARTS.filter((p) => (picked[p[0]] || []).length);
+  return `
+  <p class="ex-lead">Choose the Body Part for this Workout</p>
+  <div class="ex-figs">${exFigure('front')}${exFigure('back')}</div>
+  <div class="ex-chips">
+    ${EX_PARTS.map(([key, label]) => {
+    const n = (picked[key] || []).length;
+    return `<button type="button" class="ex-chip${n ? ' is-on' : ''}" data-act="ex-part" data-part="${key}">
+      ${esc(label)}${n ? `<b>${n}</b>` : ''}</button>`;
+  }).join('')}
+  </div>
+  ${chosen.length ? `<p class="ex-sum">${chosen.map(([key, label]) =>
+    `${esc(label)}: ${esc((picked[key] || []).join(', '))}`).join(' · ')}</p>` : ''}`;
+}
+
+/* What somebody added themselves, read back out of what they have logged.
+
+   No second store and nothing new to sync: their own workout notes already
+   travel between devices, so reading the names back out of them gives a list
+   that is per-person, survives a new phone, and cannot drift from the entries
+   it came from. It is the rule voiceFiled already follows — what did they call
+   this last time — pointed at exercises instead of categories. */
+function exLearned(part) {
+  const known = (EX_MOVES[part] || []).map((m) => m[0].toLowerCase());
+  const seen = new Map();
+  state.entries.forEach((r) => {
+    const found = exParse(r.note);
+    (found.picked[part] || []).forEach((name) => {
+      const key = name.toLowerCase();
+      if (known.indexOf(key) >= 0 || seen.has(key)) return;
+      seen.set(key, name);
+    });
+  });
+  return [...seen.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+function exList(part) {
+  const picked = state.exPick.picked[part] || [];
+  const mine = exLearned(part);
+  const row = (name, move) => {
+    const on = picked.some((p) => p.toLowerCase() === name.toLowerCase());
+    return `<button type="button" class="ex-move${on ? ' is-on' : ''}"
+      data-act="ex-toggle" data-part="${part}" data-name="${esc(name)}" aria-pressed="${on}">
+      <span class="ex-move-ico">${exIcon(move)}</span>
+      <span class="ex-move-name">${esc(name)}</span>
+      <span class="ex-move-tick" aria-hidden="true">${on ? '✓' : ''}</span>
+    </button>`;
+  };
+  return `
+  <div class="ex-head">
+    <button type="button" class="ex-back" data-act="ex-back" aria-label="Back to the body">←</button>
+    <strong>${esc(EX_PART_LABEL[part] || part)}</strong>
+    <span class="ex-count">${picked.length ? `${picked.length} chosen` : ''}</span>
+  </div>
+  <div class="ex-moves">
+    ${(EX_MOVES[part] || []).map(([name, move]) => row(name, move)).join('')}
+    ${mine.length ? `<p class="ex-mine">Yours</p>${mine.map((name) => row(name, 'hold')).join('')}` : ''}
+  </div>
+  ${state.exPick.adding
+    ? `<div class="ex-add">
+        <input class="input" data-k="ex-add-input" data-sync="exDraft" maxlength="60"
+          placeholder="e.g. Cable pullover" value="${esc(state.exDraft)}"
+          data-enter="ex-add-save" aria-label="Name the exercise">
+        <button class="btn btn-primary" data-act="ex-add-save">Add</button>
+      </div>`
+    : `<button type="button" class="ex-add-open" data-act="ex-add-open">Not listed? Add it +</button>`}`;
+}
+
+/* ── the note, written and read back ──
+
+   Composed into the note field rather than into columns of its own, so it
+   travels on the sync already built, prices through the same METS table the
+   typed version does, and still reads as a sentence to anybody looking at the
+   row or the CSV. Read back by the same rules, so reopening a workout finds
+   its own choices rather than an empty picker. */
+const EX_TYPE_WORD = { cardio: 'Cardio', weights: 'Weights', hiit: 'HIIT' };
+
+function exNote() {
+  const p = state.exPick;
+  const word = EX_TYPE_WORD[p.type] || '';
+  if (p.type === 'weights') {
+    const parts = EX_PARTS
+      .filter(([key]) => (p.picked[key] || []).length)
+      .map(([key, label]) => `${label}: ${(p.picked[key] || []).join(', ')}`);
+    return parts.length ? `${word} · ${parts.join(' · ')}` : word;
+  }
+  const said = String(state.noteDraft || '').trim();
+  return said ? `${word} · ${said}` : word;
+}
+
+function exParse(note) {
+  const out = { type: '', picked: {}, said: '' };
+  const bits = String(note || '').split('·').map((b) => b.trim()).filter(Boolean);
+  if (!bits.length) return out;
+  const head = bits[0].toLowerCase();
+  const type = Object.keys(EX_TYPE_WORD).find((k) => EX_TYPE_WORD[k].toLowerCase() === head);
+  if (!type) return out;
+  out.type = type;
+  const rest = bits.slice(1);
+  if (type !== 'weights') { out.said = rest.join(' · '); return out; }
+  rest.forEach((bit) => {
+    const at = bit.indexOf(':');
+    if (at < 0) return;
+    const label = bit.slice(0, at).trim().toLowerCase();
+    const found = EX_PARTS.find((p) => p[1].toLowerCase() === label);
+    if (!found) return;
+    const names = bit.slice(at + 1).split(',').map((n) => n.trim()).filter(Boolean);
+    if (names.length) out.picked[found[0]] = names;
+  });
+  return out;
+}
+
+// Open on what is already written, so editing is editing rather than redoing.
+function exOpen(note) {
+  const found = exParse(note);
+  state.exPick = { type: found.type, part: '', picked: found.picked, adding: false };
+  state.exDraft = '';
+  state.noteDraft = found.type && found.type !== 'weights' ? found.said : (found.type ? '' : String(note || ''));
+}
+
+/* The question itself, in three states: which kind, then either a sentence or
+   a body. One dialog throughout, because it is one question — "what was that
+   workout" — and sending somebody to a different panel halfway through an
+   answer is how an answer gets abandoned. */
+function exPickBody() {
+  const p = state.exPick;
+  if (!p.type) {
+    return `
+    <p class="ex-lead">What kind of workout was it?</p>
+    <div class="ex-types">
+      ${EX_TYPES.map(([key, label, hint]) => `
+        <button type="button" class="ex-type" data-act="ex-type" data-type="${key}">
+          <strong>${esc(label)}</strong><span>${esc(hint)}</span>
+        </button>`).join('')}
+    </div>`;
+  }
+  if (p.type !== 'weights') {
+    const word = EX_TYPE_WORD[p.type];
+    return `
+    <div class="ex-head">
+      <button type="button" class="ex-back" data-act="ex-back" aria-label="Back to the kinds">←</button>
+      <strong>${esc(word)}</strong>
+    </div>
+    <p class="ex-lead2">What did you do? A line is enough — it is what the calorie estimate reads.</p>
+    <textarea class="input" data-k="note-draft" data-sync="noteDraft" rows="3" maxlength="300"
+      placeholder="${p.type === 'hiit' ? 'e.g. 20 min circuit, burpees and kettlebell swings' : 'e.g. 5 km treadmill, steady pace'}"
+      style="width:100%;resize:vertical;min-height:76px;font:inherit;font-size:14px;line-height:1.5;padding:10px 12px;">${esc(state.noteDraft)}</textarea>`;
+  }
+  return p.part ? exList(p.part) : exBodyMap();
+}
+
+function exPickDialog(p) {
+  const chosen = state.exPick.type;
+  const anything = chosen === 'weights'
+    ? EX_PARTS.some(([k]) => (state.exPick.picked[k] || []).length)
+    : !!String(state.noteDraft || '').trim();
+  return lightbox({
+    icon: 'pulse',
+    tone: 'var(--color-accent)',
+    kicker: p.activity ? `Logged against “${esc(p.activity)}”` : 'Your workout',
+    title: 'What was the workout?',
+    closeAct: 'note-skip',
+    wide: chosen === 'weights',
+    body: `<div class="ex-pick">${exPickBody()}</div>`,
+    actions: `
+      ${noteOnRow(p) ? `<button class="btn btn-ghost" data-act="note-remove" style="color:#8a2f4a;">Remove</button>` : ''}
+      <button class="btn btn-ghost" data-act="note-skip">Skip</button>
+      <button class="btn btn-primary" data-act="ex-save"${anything ? '' : ' disabled'}>Save workout</button>`
+  });
+}
+
 function notePromptDialog() {
   const p = state.notePrompt;
   if (!p) return '';
+  // A workout is asked with the picker; everything else is a sentence.
+  if (p.ex) return exPickDialog(p);
   return lightbox({
     icon: 'pencil',
     tone: 'var(--color-accent)',
@@ -12621,10 +12967,15 @@ function askFollowUp(kind, row) {
   state.noteDraft = '';
 }
 
-const promptFor = (kind, row, q) => ({
-  kind, id: row.id, key: q.key, title: q.title, hint: q.hint,
-  placeholder: q.placeholder, activity: row.activity
-});
+const promptFor = (kind, row, q) => {
+  // The workout question is the only one with a shape of its own. Opened on
+  // whatever is already written, so editing one is editing rather than redoing.
+  if (q.key === 'workout') exOpen(row.note);
+  return {
+    kind, id: row.id, key: q.key, title: q.title, hint: q.hint,
+    placeholder: q.placeholder, activity: row.activity, ex: q.key === 'workout'
+  };
+};
 
 /* ── being asked, rather than told ──
 
@@ -13797,14 +14148,16 @@ function editNote(kind, id) {
   const row = findRow(kind, id);
   if (!row) return;
   const q = followUpFor(kind, row);
+  const ex = !!q && q.key === 'workout';
+  if (ex) exOpen(row.note);
   state.notePrompt = {
     kind, id, key: null,
     title: row.note ? 'Edit this note' : (q ? q.title : 'Add a note'),
     hint: q ? q.hint : 'Anything worth remembering about this entry.',
     placeholder: q ? q.placeholder : 'e.g. who you were with, how it went',
-    activity: row.activity
+    activity: row.activity, ex
   };
-  state.noteDraft = row.note || '';
+  if (!ex) state.noteDraft = row.note || '';
   render();
 }
 
@@ -13911,6 +14264,59 @@ const ACTIONS = {
   'forgot-submit': submitForgot,
   'reset-submit': submitReset,
   'note-save': () => closeFollowUp(true),
+  /* ── the workout picker ── */
+  'ex-type': (el) => {
+    state.exPick.type = String(el.dataset.type || '');
+    state.exPick.part = '';
+    render();
+  },
+  /* One button back, and it means the step before rather than the way out:
+     from a list to the body, from the body to the kinds. */
+  'ex-back': () => {
+    const p = state.exPick;
+    if (p.part) p.part = '';
+    else { p.type = ''; state.noteDraft = ''; }
+    p.adding = false;
+    render();
+  },
+  'ex-part': (el) => {
+    state.exPick.part = String(el.dataset.part || '');
+    state.exPick.adding = false;
+    render();
+  },
+  'ex-toggle': (el) => {
+    const part = String(el.dataset.part || '');
+    const name = String(el.dataset.name || '');
+    const held = state.exPick.picked[part] || [];
+    const at = held.findIndex((n) => n.toLowerCase() === name.toLowerCase());
+    const next = at >= 0 ? held.filter((_, i) => i !== at) : held.concat([name]);
+    if (next.length) state.exPick.picked[part] = next;
+    else delete state.exPick.picked[part];
+    render();
+  },
+  'ex-add-open': () => { state.exPick.adding = true; state.exDraft = ''; state.focusField = 'ex-add-input'; render(); },
+  'ex-add-save': () => {
+    const part = state.exPick.part;
+    /* Commas and the separator would both come back as two names on the way
+       in, so they are taken out before the spacing is settled - stripped
+       after, they leave the gaps they were sitting in. */
+    const clean = String(state.exDraft || '')
+      .replace(/[,·]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+    if (!clean || !part) { state.exPick.adding = false; state.exDraft = ''; render(); return; }
+    const held = state.exPick.picked[part] || [];
+    if (!held.some((n) => n.toLowerCase() === clean.toLowerCase())) {
+      state.exPick.picked[part] = held.concat([clean]);
+    }
+    state.exPick.adding = false;
+    state.exDraft = '';
+    render();
+  },
+  'ex-save': () => {
+    const p = state.notePrompt;
+    if (!p) return;
+    state.noteDraft = exNote();
+    ACTIONS['note-save']();
+  },
   'note-skip': () => closeFollowUp(false),
   // Empties the box and saves, so removal goes through the one write path
   // rather than a second one that could drift from it.
