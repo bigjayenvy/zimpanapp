@@ -1044,7 +1044,7 @@ const state = {
   rowDelete: null,
   // Session state: what the workout picker is showing and what has been ticked.
   exPick: { type: '', part: '', picked: {}, adding: false },
-  exDraft: '',
+  exDraft: '', exFind: '',
   // Asked once per row, like the meal question beside it.
   exAsk: null, exAsked: {},
 
@@ -8150,22 +8150,111 @@ const EX_MOVES = {
 /* One drawing per movement, shared by everything that moves that way. Line
    work rather than filled shapes, so they sit at any size and take the ink
    colour they are given. */
-const EX_ICON = {
-  press: '<path d="M4 15h16"/><path d="M6 12.5v5M18 12.5v5"/><path d="M12 11V4"/><path d="M9 6.5 12 3.5l3 3"/>',
-  pull: '<path d="M4 6h16"/><path d="M6 3.5v5M18 3.5v5"/><path d="M12 10v7"/><path d="M9 14.5 12 17.5l3-3"/>',
-  raise: '<path d="M12 4v13"/><circle cx="12" cy="19" r="1.6"/><path d="M8 10 4.5 6.5M16 10l3.5-3.5"/><path d="M4.5 10v-3.5H8M19.5 10v-3.5H16"/>',
-  curl: '<path d="M6 19h4"/><path d="M8 19V9"/><path d="M8 9a5 5 0 0 1 9 3"/><path d="M14.5 10.5 17 12l1.5-2.5"/>',
-  extend: '<path d="M5 6v10"/><path d="M5 11h9"/><path d="M14 11a4 4 0 0 0 4-4"/><path d="M16 8.5 18 6.5l2 2"/>',
-  fly: '<path d="M12 5v14"/><path d="M12 9a6 6 0 0 0-6-4M12 9a6 6 0 0 1 6-4"/><circle cx="5" cy="5" r="1.6"/><circle cx="19" cy="5" r="1.6"/>',
-  squat: '<path d="M4 7h16"/><path d="M6 4.5v5M18 4.5v5"/><path d="M12 11v4l-3 5M12 15l3 5"/>',
-  hinge: '<path d="M4 19h16"/><path d="M6 16.5v5M18 16.5v5"/><path d="M8 5v6"/><path d="M8 11a7 7 0 0 0 7 5"/>',
-  twist: '<path d="M6 8a8 8 0 0 1 12 0"/><path d="M18 16a8 8 0 0 1-12 0"/><path d="M16.5 4.5 18.5 8l-3.5 1"/><path d="M7.5 19.5 5.5 16l3.5-1"/>',
-  hold: '<path d="M3 15h18"/><circle cx="6.5" cy="11.5" r="2"/><path d="M8.5 13.5 13 15"/><path d="M13 15l5-3.5"/>'
+/* A stick figure at each end of the movement, because a single glyph shows an
+   arrow and two show the thing itself: where you start and where you finish.
+   One pair per pattern rather than per exercise - a lateral raise and a front
+   raise are the same two positions with the arms in a different plane, and
+   fifty pairs would be fifty chances to draw something wrong.
+
+   Built from one body and one set of limbs, so the pair only ever differs by
+   where the arms and legs are. Viewbox 0 0 40 48: head at 20,7. */
+const EX_HEAD = '<circle cx="20" cy="7" r="4.6"/>';
+const EX_TRUNK = '<path d="M20 12v15"/>';
+
+// Arms and legs as pairs of angles, drawn from the shoulder and the hip.
+const exLimb = (x, y, a, b, len1, len2) => {
+  const r = (d) => (d * Math.PI) / 180;
+  const x1 = x + Math.sin(r(a)) * len1, y1 = y + Math.cos(r(a)) * len1;
+  const x2 = x1 + Math.sin(r(b)) * len2, y2 = y1 + Math.cos(r(b)) * len2;
+  return `M${x} ${y}L${x1.toFixed(1)} ${y1.toFixed(1)}L${x2.toFixed(1)} ${y2.toFixed(1)}`;
 };
 
-const exIcon = (move, size) => `<svg class="ex-ico" viewBox="0 0 24 24" width="${size || 22}" height="${size || 22}"
-  fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
-  aria-hidden="true">${EX_ICON[move] || EX_ICON.hold}</svg>`;
+/* Each pose is [left arm, right arm, left leg, right leg, extra], every limb a
+   pair of angles measured from straight down. */
+const exPose = (arms, legs, extra) => {
+  const [la, lb, ra, rb] = arms;
+  const [pa, pb, qa, qb] = legs;
+  return EX_HEAD + EX_TRUNK
+    + `<path d="${exLimb(20, 15, la, lb, 7, 6)}"/>`
+    + `<path d="${exLimb(20, 15, ra, rb, 7, 6)}"/>`
+    + `<path d="${exLimb(20, 27, pa, pb, 9, 8)}"/>`
+    + `<path d="${exLimb(20, 27, qa, qb, 9, 8)}"/>`
+    + (extra || '');
+};
+
+const EX_STAND = [-30, -20, 30, 20];
+const EX_LEGS = [-8, -4, 8, 4];
+const EX_BAR = (y) => `<path d="M8 ${y}h24"/>`;
+
+/* start and end, in that order. */
+const EX_POSE = {
+  press: [
+    exPose([-105, -160, 105, 160], EX_LEGS, EX_BAR(13)),
+    exPose([-160, -175, 160, 175], EX_LEGS, EX_BAR(-2))
+  ],
+  pull: [
+    exPose([-165, -170, 165, 170], EX_LEGS, EX_BAR(-1)),
+    exPose([-120, -155, 120, 155], EX_LEGS, EX_BAR(12))
+  ],
+  raise: [
+    exPose([-10, -6, 10, 6], EX_LEGS),
+    exPose([-88, -90, 88, 90], EX_LEGS)
+  ],
+  curl: [
+    exPose([-8, -4, 8, 4], EX_LEGS),
+    exPose([-12, -125, 12, 125], EX_LEGS)
+  ],
+  extend: [
+    exPose([-155, -70, 155, 70], EX_LEGS),
+    exPose([-168, -176, 168, 176], EX_LEGS)
+  ],
+  fly: [
+    exPose([-95, -95, 95, 95], EX_LEGS),
+    exPose([-30, -25, 30, 25], EX_LEGS)
+  ],
+  squat: [
+    exPose([-150, -165, 150, 165], EX_LEGS, EX_BAR(12)),
+    EX_HEAD + '<path d="M20 12v10"/>'
+      + '<path d="M20 15 14 17M20 15 26 17"/>'
+      + '<path d="M20 22 13 27 16 36M20 22 27 27 24 36"/>' + EX_BAR(12)
+  ],
+  hinge: [
+    exPose([-14, -10, 14, 10], EX_LEGS, EX_BAR(40)),
+    EX_HEAD.replace('cx="20" cy="7"', 'cx="12" cy="14"')
+      + '<path d="M16 17 26 24"/>'
+      + '<path d="M17 18 13 30M17 18 20 31"/>'
+      + '<path d="M26 24 25 36 23 44M26 24 29 36 31 44"/>' + EX_BAR(30)
+  ],
+  twist: [
+    EX_HEAD.replace('cy="7"', 'cy="30"') + '<path d="M25 32 36 36"/>'
+      + '<path d="M26 33 20 27M26 33 22 38"/>' + '<path d="M36 36 30 42 32 46"/>',
+    EX_HEAD.replace('cx="20" cy="7"', 'cx="14" cy="22"')
+      + '<path d="M18 25 32 34"/>' + '<path d="M19 26 14 19M19 26 16 32"/>'
+      + '<path d="M32 34 27 41 29 46"/>'
+  ],
+  hold: [
+    EX_HEAD.replace('cx="20" cy="7"', 'cx="7" cy="22"')
+      + '<path d="M11 24 34 32"/>' + '<path d="M11 24 9 34"/>'
+      + '<path d="M34 32 33 42"/>' + '<path d="M4 34h34"/>',
+    EX_HEAD.replace('cx="20" cy="7"', 'cx="7" cy="22"')
+      + '<path d="M11 24 34 32"/>' + '<path d="M11 24 9 34"/>'
+      + '<path d="M34 32 33 42"/>' + '<path d="M4 34h34"/>'
+  ]
+};
+
+/* Both frames, side by side, with an arrow between them: start on the left and
+   finish on the right, which is the order anybody reads a movement in. */
+const exFrame = (d) => `<svg viewBox="0 0 40 48" fill="none" stroke="currentColor" stroke-width="2"
+  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+
+const exIcon = (move) => {
+  const pair = EX_POSE[move] || EX_POSE.hold;
+  return `<span class="ex-ico">
+    ${exFrame(pair[0])}
+    <span class="ex-ico-arrow" aria-hidden="true">›</span>
+    ${exFrame(pair[1])}
+  </span>`;
+};
 
 /* The figure, twice.
 
@@ -8294,15 +8383,31 @@ function exList(part) {
         <span class="ex-move-tick" aria-hidden="true">${on ? '✓' : ''}</span>
       </button>${count}</div>`;
   };
+  /* Nine moves is a scroll on a phone and fifty is a search. Matched on any
+     part of the name rather than only the start, because somebody looking for
+     an incline press thinks "incline" before they think "bench". */
+  const find = String(state.exFind || '').trim().toLowerCase();
+  const keep = (name) => !find || name.toLowerCase().indexOf(find) >= 0;
+  const listed = (EX_MOVES[part] || []).filter(([name]) => keep(name));
+  const own = mine.filter(keep);
   return `
   <div class="ex-head">
     <button type="button" class="ex-back" data-act="ex-back" aria-label="Back to the body">←</button>
     <strong>${esc(EX_PART_LABEL[part] || part)}</strong>
     <span class="ex-count">${picked.length ? `${picked.length} chosen` : ''}</span>
   </div>
+  <div class="ex-find">
+    <input class="input" type="search" data-k="ex-find-input" data-sync="exFind"
+      placeholder="Search exercises"
+      value="${esc(state.exFind)}" aria-label="Search this list">
+    ${find ? '<button type="button" class="ex-find-x" data-act="ex-find-clear" aria-label="Clear the search">✕</button>' : ''}
+  </div>
   <div class="ex-moves">
-    ${(EX_MOVES[part] || []).map(([name, move]) => row(name, move)).join('')}
-    ${mine.length ? `<p class="ex-mine">Yours</p>${mine.map((name) => row(name, 'hold')).join('')}` : ''}
+    ${listed.map(([name, move]) => row(name, move)).join('')}
+    ${own.length ? `<p class="ex-mine">Yours</p>${own.map((name) => row(name, 'hold')).join('')}` : ''}
+    ${!listed.length && !own.length
+    ? `<p class="ex-none">Nothing here called “${esc(state.exFind)}”. Add it below and it is yours from now on.</p>`
+    : ''}
   </div>
   ${state.exPick.adding
     ? `<div class="ex-add">
@@ -8380,6 +8485,7 @@ function exOpen(note) {
   const found = exParse(note);
   state.exPick = { type: found.type, part: '', picked: found.picked, adding: false };
   state.exDraft = '';
+  state.exFind = '';
   state.noteDraft = found.type && found.type !== 'weights' ? found.said : (found.type ? '' : String(note || ''));
 }
 
@@ -14174,6 +14280,14 @@ function closeFollowUp(saveIt) {
   if (!p) { render(); return; }
   const text = state.noteDraft.trim();
   state.noteDraft = '';
+  /* The phone asks before the row exists: its flow carries the note as its own
+     last step, so there is nothing to write to yet and the answer goes back to
+     the draft the flow is holding. */
+  if (p.draft) {
+    if (saveIt) mSet({ note: text });
+    else render();
+    return;
+  }
   if (saveIt) {
     /* Saving means the question is welcome; it keeps being asked next time.
 
@@ -14355,11 +14469,13 @@ const ACTIONS = {
     if (p.part) p.part = '';
     else { p.type = ''; state.noteDraft = ''; }
     p.adding = false;
+    state.exFind = '';
     render();
   },
   'ex-part': (el) => {
     state.exPick.part = String(el.dataset.part || '');
     state.exPick.adding = false;
+    state.exFind = '';
     render();
   },
   'ex-toggle': (el) => {
@@ -14373,7 +14489,16 @@ const ACTIONS = {
     else delete state.exPick.picked[part];
     render();
   },
-  'ex-add-open': () => { state.exPick.adding = true; state.exDraft = ''; state.focusField = 'ex-add-input'; render(); },
+  'ex-find-clear': () => { state.exFind = ''; state.focusField = 'ex-find-input'; render(); },
+  /* Seeded with whatever was searched for. Somebody who typed "Cable pullover"
+     and found nothing has already said what they want it called - the same
+     thing pickCreateRow does for a category. */
+  'ex-add-open': () => {
+    state.exPick.adding = true;
+    state.exDraft = String(state.exFind || '').trim();
+    state.focusField = 'ex-add-input';
+    render();
+  },
   'ex-add-save': () => {
     const part = state.exPick.part;
     /* Commas and the separator would both come back as two names on the way
@@ -14388,6 +14513,7 @@ const ACTIONS = {
     }
     state.exPick.adding = false;
     state.exDraft = '';
+    state.exFind = '';
     render();
   },
   'ex-save': () => {
@@ -14401,6 +14527,14 @@ const ACTIONS = {
   // rather than a second one that could drift from it.
   'note-remove': () => { state.noteDraft = ''; closeFollowUp(true); },
   'note-edit': (el) => editNote(el.dataset.kind, el.dataset.id),
+  /* The phone's flow, asking before the row exists. Same dialog, answered back
+     into the draft rather than into a row. */
+  'm-note-workout': () => {
+    exOpen(state.m.note || '');
+    state.notePrompt = { kind: 'entries', id: null, key: null, draft: true, ex: true,
+      title: 'What was the workout?', hint: '', placeholder: '', activity: mDraftLabel() };
+    render();
+  },
 
   'row-new-cancel': () => { state.rowNew = null; state.rowNewName = ''; render(); },
   /* Makes it and files the row under it in one go — the name was typed to be
@@ -18174,6 +18308,15 @@ ${warning ? `
 </div>`;
 }
 
+/* Judged on the draft the way the ledger will judge the row - the same
+   matchFollowUp over the same words - so what counts as a workout in the flow
+   cannot drift from what counts as one afterwards. */
+function mFlowIsWorkout() {
+  if (mIsMoney()) return false;
+  const q = followUpFor('entries', { activity: mDraftLabel() || '', category: state.m.cat || '' });
+  return !!q && q.key === 'workout';
+}
+
 function mFlowReview() {
   const s = state.m;
   const money = mIsMoney();
@@ -18191,10 +18334,14 @@ function mFlowReview() {
         style="border:0;background:transparent;cursor:pointer;font-family:var(--font-body);font-weight:600;font-size:14.5px;color:#16131f;text-align:right;padding:0;">${esc(r[1])} <span style="color:#7450e4;font-size:12.5px;font-weight:600;">edit</span></button>
     </div>`).join('')}
 </div>
-${s.noteOpen
-    ? `<textarea class="input" data-k="m-note" data-sync="m.note" placeholder="Anything worth remembering?"
+${mFlowIsWorkout()
+    ? `<button data-act="m-note-workout"
+        style="width:100%;padding:14px;border-radius:16px;cursor:pointer;font-family:var(--font-body);font-size:14px;font-weight:600;color:#7450e4;background:transparent;border:1px dashed rgba(120,86,245,.5);text-align:left;">${
+  s.note.trim() ? `✎ ${esc(s.note)}` : '+ What was the workout?'}</button>`
+    : s.noteOpen
+      ? `<textarea class="input" data-k="m-note" data-sync="m.note" placeholder="Anything worth remembering?"
         style="min-height:88px;padding:12px 14px;font-size:14.5px;border:1.5px solid #7856f5;border-radius:16px;box-shadow:0 0 0 3px rgba(120,86,245,.18);">${esc(s.note)}</textarea>`
-    : `<button data-act="m-note-open"
+      : `<button data-act="m-note-open"
         style="width:100%;padding:14px;border-radius:16px;cursor:pointer;font-family:var(--font-body);font-size:14px;font-weight:600;color:#7450e4;background:transparent;border:1px dashed rgba(120,86,245,.5);text-align:left;">+ Add a note</button>`}`;
 }
 
@@ -19187,11 +19334,16 @@ function mDetail() {
     <div style="font-family:var(--font-heading);font-weight:700;font-size:40px;line-height:1.1;margin-top:6px;color:${money ? moneyInk(dir) : '#16131f'};">${esc(money ? (dir === 'in' ? '+' : '−') + mMoney(amt) : mDur(span(row)))}</div>
     <div style="height:1px;background:rgba(22,19,31,.12);margin:18px 0;"></div>
     <div style="display:flex;flex-direction:column;gap:13px;">
-      ${rows.map((r) => `
-        <div style="display:flex;justify-content:space-between;gap:16px;font-size:14px;">
+      ${rows.map((r) => (r[0] === 'Note'
+    ? `<button data-act="note-edit" data-kind="${money ? 'money' : 'entries'}" data-id="${esc(row.id)}"
+          style="display:flex;justify-content:space-between;gap:16px;font-size:14px;width:100%;padding:0;border:0;background:transparent;cursor:pointer;font-family:var(--font-body);text-align:left;">
+          <span style="color:#756f88;">${esc(r[0])}</span>
+          <span style="font-weight:600;color:#7450e4;text-align:right;text-decoration:underline;text-underline-offset:3px;">${esc(r[1] === '—' ? 'Add' : r[1])}</span>
+        </button>`
+    : `<div style="display:flex;justify-content:space-between;gap:16px;font-size:14px;">
           <span style="color:#756f88;">${esc(r[0])}</span>
           <span style="font-weight:600;color:#16131f;text-align:right;">${esc(r[1])}</span>
-        </div>`).join('')}
+        </div>`)).join('')}
     </div>
   </div>
   <div style="display:flex;gap:10px;margin-top:16px;">

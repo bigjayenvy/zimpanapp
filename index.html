@@ -2732,9 +2732,14 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .ex-move:hover { border-color: var(--color-accent-300); background: var(--color-accent-100); }
   .ex-move.is-on { border-color: var(--color-accent); background: var(--color-accent-100); }
-  .ex-move-ico { flex: none; display: grid; place-items: center; width: 34px; height: 34px;
-    border-radius: 10px; background: var(--color-accent-100); color: var(--color-accent-700); }
+  /* Two frames and an arrow: where the movement starts and where it ends. */
+  .ex-move-ico { flex: none; display: grid; place-items: center;
+    border-radius: 11px; background: var(--color-accent-100); color: var(--color-accent-700);
+    padding: 4px 6px; }
   .ex-move.is-on .ex-move-ico { background: var(--color-accent); color: #fff; }
+  .ex-ico { display: flex; align-items: center; gap: 2px; }
+  .ex-ico svg { width: 34px; height: 41px; }
+  .ex-ico-arrow { font-size: 15px; line-height: 1; opacity: .5; }
   .ex-move-name { flex: 1; min-width: 0; font-size: 14px; color: #16131f; }
   .ex-move-tick { flex: none; width: 18px; font-weight: 700; color: var(--color-accent-700); }
   /* The count sits under the move it belongs to, inside the same card, so a
@@ -2761,6 +2766,22 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     margin: 8px 0 2px; font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase;
     font-weight: 700; color: var(--color-neutral-500);
   }
+  .ex-find { position: relative; display: flex; }
+  .ex-find .input {
+    flex: 1; min-width: 0; padding: 9px 34px 9px 13px; border-radius: 12px;
+    font: inherit; font-size: 14px;
+  }
+  .ex-find-x {
+    position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+    width: 28px; height: 28px; border: 0; border-radius: 50%; cursor: pointer;
+    background: transparent; color: var(--color-neutral-600); font-size: 13px; line-height: 1;
+  }
+  .ex-find-x:hover { background: var(--color-neutral-100); }
+  .ex-none {
+    margin: 4px 0; padding: 12px; border-radius: 12px; font-size: 12.5px; line-height: 1.55;
+    background: var(--color-neutral-100); color: var(--color-neutral-700);
+  }
+
   .ex-add { display: flex; gap: 8px; }
   .ex-add .input { flex: 1; min-width: 0; }
   .ex-add-open {
