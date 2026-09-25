@@ -18,7 +18,7 @@ Three things, once.
 On the server, in cPanel's terminal:
 
 ```
-cd ~/zimpan/server && node push-keys.mjs
+cd ~/zimpan/server && node push-keys.js
 ```
 
 It prints three lines. Paste them into **cPanel → Setup Node.js App →
@@ -38,7 +38,7 @@ like this, with your own app's path and node version in it:
 source /home/zimpxioc/nodevenv/zimpan/server/20/bin/activate && cd /home/zimpxioc/zimpan/server
 ```
 
-Run that first, then `node push-keys.mjs`. That screen is the authority on the
+Run that first, then `node push-keys.js`. That screen is the authority on the
 path — the version number in it changes when the app's node version does.
 
 If that screen is not to hand, the environment can be found instead:
@@ -50,7 +50,7 @@ ls -d ~/nodevenv/*/*/*/bin/activate /opt/cpanel/ea-nodejs*/bin/node 2>/dev/null
 #### Or without node at all
 
 The keypair is an ordinary P-256 pair, and openssl is on every cPanel box. This
-prints exactly what `push-keys.mjs` prints:
+prints exactly what `push-keys.js` prints:
 
 ```
 openssl ecparam -name prime256v1 -genkey -noout -out ~/vapid.pem

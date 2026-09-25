@@ -30,7 +30,7 @@ const unb64 = (s) => Buffer.from(String(s), 'base64url');
 
 /* ── the keypair ──
 
-   Generated once by `node push-keys.mjs` and pasted into the environment. The
+   Generated once by `node push-keys.js` and pasted into the environment. The
    public half is handed to browsers and is not a secret; the private half signs,
    and a server that leaks it has handed somebody else the ability to send
    notifications as this app. */

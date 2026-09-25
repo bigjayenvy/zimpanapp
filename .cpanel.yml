@@ -28,8 +28,6 @@ deployment:
     # Whole directory, not *.css — the stylesheet was joined by favicon.svg and
     # will be joined by og-image.jpg, and an extension list silently drops both.
     - /bin/cp -Rf ds/. $DEPLOYPATH/ds/
-    # *.mjs as well as *.js: push-keys.mjs is run by hand, once, from cPanel's
-    # terminal on the server, so it has to have arrived there.
-    - /bin/cp -f server/*.js server/*.mjs server/*.sql server/package.json server/package-lock.json $DEPLOYPATH/server/
+    - /bin/cp -f server/*.js server/*.sql server/package.json server/package-lock.json $DEPLOYPATH/server/
     # Passenger watches this file; touching it restarts the app on the next request.
     - /bin/touch $DEPLOYPATH/server/tmp/restart.txt

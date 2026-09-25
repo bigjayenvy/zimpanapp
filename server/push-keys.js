@@ -1,6 +1,6 @@
 /* Makes the one keypair this server's notifications are signed with.
  *
- *   node push-keys.mjs
+ *   node push-keys.js
  *
  * "bash: node: command not found" in cPanel's terminal is expected rather than
  * broken: node lives inside the application's virtual environment, not on the
