@@ -2033,6 +2033,27 @@ async function syncNow() {
 
 const hasLocalData = () => state.entries.length > 0 || state.money.length > 0;
 
+/* Everything this browser holds on behalf of an account, cleared because the
+   account changed.
+
+   The log is the obvious half. The profile is the half that bit: name, weight,
+   the hour the day ends, what is being tracked, the step counts, the meal
+   estimates, a running timer. Every one of those merges last-write-wins on its
+   own stamp — so leaving the values behind does not merely show the wrong name
+   under the wrong address, it leaves a stamp NEWER than anything the new
+   account has, and the server's own answer is refused for ever after. Clearing
+   the stamp is the part that matters; clearing the value is only what makes it
+   look right in the meantime.
+
+   setupDone goes with them. It is a fact about a person rather than about a
+   browser, and a new account that inherits it never gets asked its name, which
+   is the other half of what somebody signing up would notice.
+
+   What is NOT cleared is what belongs to this device and not to anyone in
+   particular: the standing answers in Preferences, what has been consented to,
+   whether the phone was sent to the full view, which entry card is open. Those
+   are per-device by design, and the Preferences panel says so in as many
+   words. */
 function resetLocal() {
   const tax = seedTaxonomy();
   const t = Date.now();
@@ -2047,6 +2068,28 @@ function resetLocal() {
   state.lastSyncAt = 0;
   state.focus = null;
   state.focusOpen = false;
+
+  // The profile, value and stamp together. A stamp left at its old value is
+  // what stops the new account's own answer from ever arriving.
+  state.displayName = ''; state.nameUpdatedAt = 0;
+  state.weightKg = null; state.weightUpdatedAt = 0;
+  state.sleepMin = null; state.sleepUpdatedAt = 0;
+  state.tracks = { time: true, money: true, steps: false, meals: false };
+  state.tracksUpdatedAt = 0;
+  state.steps = {}; state.stepsAt = {};
+  state.aiCache = {};
+  state.timerStart = null; state.timerActivity = ''; state.timerCategory = '';
+  state.timerUpdatedAt = 0;
+  /* The currency's stamp, but not the currency itself: afterSignIn sets that
+     from the account it just signed in to, on the very next line. */
+  state.currencyUpdatedAt = 0;
+
+  // Asked again, because this is somebody else.
+  state.setupDone = false;
+  state.planSeen = {};
+  state.recapAsk = false;
+  state.noteSkipped = {};
+
   // A fresh account has no taxonomy server-side, so push these up.
   ['categories', 'purposes'].forEach((k) => state[k].forEach((r) => markDirty(k, r.name)));
 }
