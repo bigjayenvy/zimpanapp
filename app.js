@@ -708,6 +708,10 @@ const CHAT_CONSENT_KEY = 'zimpan.ai.chat.v1';
 // Whether the offer to install has already been made on this device. Per
 // device on purpose: it is a home screen, and every phone has its own.
 const INSTALL_ASKED_KEY = 'zimpan.install.asked';
+/* Asked once per installed copy. On iOS the home-screen app has its own
+   storage, so the answer given in Safari is not the answer given here — which
+   is right: they are two different places to be interrupted. */
+const PUSH_ASKED_KEY = 'zimpan.push.asked';
 // Whether replies are read aloud. A per-browser preference: the speaker you
 // have to hand is a fact about the device, not about the account.
 const CHAT_SPEAK_KEY = 'zimpan.ai.speak.v1';
@@ -1058,6 +1062,8 @@ const state = {
   installPrompt: null,
   installAsk: false,
   installAsked: readJson(INSTALL_ASKED_KEY, false) === true,
+  // Whether the offer of reminders has been put to this installed copy.
+  pushAsked: readJson(PUSH_ASKED_KEY, false) === true,
   // The answer waiting on "shall I read this aloud?". See chatSpeakDialog().
   chatSpeakAsk: '',
   newPurposeOpen: false, newPurposeName: '',
@@ -12581,12 +12587,20 @@ const captureScrolls = () => {
 
 function restoreScrolls(scrolls) {
   if (!scrolls) return;
-  Object.keys(scrolls).forEach((key) => {
+  const put = () => Object.keys(scrolls).forEach((key) => {
     const el = root.querySelector(`[data-keep-scroll="${key}"]`);
     /* Only ever downwards to where it was. A panel that got shorter between
        paints clamps itself, and one that is no longer there is simply gone. */
     if (el) el.scrollTop = scrolls[key];
   });
+  put();
+  /* And again on the next frame. Setting scrollTop against a panel whose
+     height is not final yet clamps silently to whatever fits at that instant —
+     an image, a web font or a control that has not been measured leaves the
+     dialog shorter for one frame than it is about to be, and the position is
+     lost with no error anywhere. Harmless when the first attempt worked: the
+     same number written twice moves nothing. */
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(put);
 }
 
 /* Which phone screen the last paint drew, so the next one can tell whether it
@@ -14431,6 +14445,11 @@ function prefsDialog() {
         'set-currency',
         CURRENCIES.map((c) => [c.code, `${c.label} (${c.symbol.trim()})`]),
         currency().code)}
+      <!-- Second, under the currency. It is the only row here that reaches
+           somebody who is not looking at the app, which makes it the one worth
+           finding; the two standing answers below it are about what the app
+           does while they are already in it. -->
+      ${prefsPush()}
       ${prefsRow(
         'Money you spend',
         'Whether a spend comes off your balance or is kept aside.',
@@ -14441,7 +14460,6 @@ function prefsDialog() {
         'Whether a logged meal or effort is re-read by Claude for a closer figure.',
         [['ask', 'Ask each time'], ['true', 'Always'], ['false', 'Never']],
         'pref-refine', state.refineAlways === null ? 'ask' : String(state.refineAlways))}
-      ${prefsPush()}
       ${consented ? `
       <div class="pref-row">
         <div class="pref-name">What you have allowed to be sent</div>
@@ -14809,6 +14827,19 @@ const ACTIONS = {
     if (want) pushEnable(); else pushDisable();
   },
   'pref-push-at': (el) => pushAt(Number(el.value) || 480),
+  /* Answered either way, and recorded either way. The permission prompt the
+     browser raises next is its own business — declining that is not a reason
+     to ask this again. */
+  'push-offer-yes': () => {
+    state.pushAsked = true;
+    writeJson(PUSH_ASKED_KEY, true);
+    pushEnable();
+  },
+  'push-offer-no': () => {
+    state.pushAsked = true;
+    writeJson(PUSH_ASKED_KEY, true);
+    render();
+  },
   'pref-push-test': () => pushTestSend(),
 
   'ex-ask-skip': () => {
@@ -16899,6 +16930,8 @@ const mDefaultStart = () => {
 
 state.m = {
   screen: 'home', step: 1, setupStep: 1,
+  // Whether setup offers the install step; decided when setup opens.
+  setupInstall: false,
   // draft
   kind: null, day: 'today', earlierIso: '', calMonth: '', skip: [], timed: false,
   /* The draft as it was when the flow opened, and whether the way out is being
@@ -16993,6 +17026,10 @@ function mBoot() {
   }
   state.m.screen = 'setup';
   state.m.setupStep = 1;
+  /* Asked once, here. See mSetupLast(): a flow that gains or loses a step
+     while somebody is walking through it starts miscounting itself, and
+     installing on Android happens inside the very step that would vanish. */
+  state.m.setupInstall = installable();
   // AED is what the picker opens on; `state.currency` is only ever PHP here,
   // which is the storage fallback rather than anybody's answer.
   state.m.setupCurrency = DEFAULT_CURRENCY;
@@ -17130,8 +17167,15 @@ function mFooter(o) {
 const M_SETUP_COPY = {
   1: ['First, the basics', 'Two things and we are done with settings.'],
   2: ['What do you want to watch?', 'Pick what Zimpan asks you about. Change it any time.'],
-  3: ['Two optional extras', 'Both can stay empty — nothing here is required.']
+  3: ['Two optional extras', 'Both can stay empty — nothing here is required.'],
+  4: ['One last thing', 'Zimpan works best as an app on your home screen.']
 };
+
+/* Whether setup has a fourth step at all, decided once when setup opens rather
+   than asked again on every paint. A flow that gains or loses a step halfway
+   through is a flow whose "Step 3 of 4" starts lying, and installing on Android
+   happens in the middle of that very step. */
+const mSetupLast = () => (state.m.setupInstall ? 4 : 3);
 
 const mSetupCan = () => {
   const s = state.m;
@@ -17216,22 +17260,65 @@ function mSetupStep3() {
     + field('m-sleep', 'm.sleep', 'What time do you usually sleep?', 'Sets where Zimpan stops counting your day.', 'e.g. 10:30pm', '', '');
 }
 
+/* The install offer, as a step of setup rather than as a row to find later.
+
+   This is the one moment somebody is already being walked through something,
+   which is the only moment a four-tap detour into another app's share sheet is
+   a reasonable thing to ask for. It is also the step nothing depends on, so it
+   is last and it is skippable.
+
+   Three states, because the platforms differ in what they will let us do:
+   Android hands over a real prompt and gets a button; iOS hands over nothing
+   and gets the steps; and somebody who did it while the step was on screen
+   gets told so rather than being left reading instructions they have already
+   followed. */
+function mSetupStep4() {
+  if (zInstalled()) {
+    return `
+<div class="zi" style="padding-top:8px;">
+  <span class="zi-mark"><img src="/ds/icon-192.png" alt="" width="62" height="62"></span>
+  <strong>You are in the app</strong>
+  <p>Zimpan is on your home screen. It opens without the browser around it, and it works with no signal.</p>
+</div>`;
+  }
+  const ios = !state.installPrompt && zIsIos();
+  return `
+<div class="zi" style="padding-top:4px;">
+  <span class="zi-mark"><img src="/ds/icon-192.png" alt="" width="62" height="62"></span>
+  <strong>Open Zimpan as a Mobile App</strong>
+  <p>An icon on your home screen, and it works with no signal.</p>
+  ${ios ? `
+  <ol class="zi-steps">
+    <li>Tap <strong>Share</strong> at the bottom of Safari (at the top if using Chrome on iPhone)</li>
+    <li>Scroll down and tap <strong>Add to Home Screen</strong></li>
+    <li>Tap <strong>Add</strong></li>
+  </ol>
+  <p class="zi-why">iPhone browsers have no button we can press for you &mdash; this is the only way they offer.</p>`
+    : `<button class="btn btn-primary" data-act="install-go">Add it to my home screen</button>`}
+</div>`;
+}
+
 function mSetup() {
   const s = state.m;
   const copy = M_SETUP_COPY[s.setupStep] || ['', ''];
-  const last = s.setupStep >= 3;
+  const total = mSetupLast();
+  const last = s.setupStep >= total;
+  /* Step three's skip says "skip both" because it has two fields to skip.
+     Step four has nothing to fill in, so what it offers is to leave it. */
+  const skipLabel = s.setupStep === 4 ? 'Not now' : 'Skip both';
   return `
 <div style="min-height:100vh;padding-bottom:140px;">
-${mStepChrome({ step: s.setupStep, total: 3, label: `Step ${s.setupStep} of 3`, back: 'm-setup-back', hideBack: s.setupStep <= 1 })}
+${mStepChrome({ step: s.setupStep, total, label: `Step ${s.setupStep} of ${total}`, back: 'm-setup-back', hideBack: s.setupStep <= 1 })}
 <div style="padding:18px 22px 12px;">
   ${mHead(copy[0], copy[1])}
   ${s.setupStep === 1 ? mSetupStep1() : ''}
   ${s.setupStep === 2 ? mSetupStep2() : ''}
   ${s.setupStep === 3 ? mSetupStep3() : ''}
+  ${s.setupStep === 4 ? mSetupStep4() : ''}
 </div>
 ${mFooter({
     act: 'm-setup-next', can: mSetupCan(), label: last ? 'Start tracking' : 'Continue',
-    skip: last ? 'm-setup-skip' : '', skipLabel: 'Skip both'
+    skip: s.setupStep >= 3 ? 'm-setup-skip' : '', skipLabel
   })}
 </div>`;
 }
@@ -19696,6 +19783,39 @@ async function pushTestSend() {
   }
 }
 
+/* ── the offer, once, in the installed app ──
+
+   Asked here and not on the web, because this is the moment it means something:
+   somebody who put Zimpan on their home screen has said they want it to be an
+   app, and an app that can remind you is the difference. In a browser tab the
+   same question is a website asking to send notifications, which is the thing
+   everybody has learned to refuse.
+
+   Once. A declined offer is an answer, and asking again is how an app gets its
+   notifications turned off for good.
+
+   Held until the phone is on its home screen and the setup flow is behind
+   them: it is the one screen where nothing else is being asked. */
+const pushOfferReady = () => pushOffered() && zInstalled() && state.setupDone
+  && state.push.ready && !state.push.on && !state.push.busy
+  && !state.push.denied && !state.pushAsked
+  && state.m.screen === 'home' && !state.m.accountOpen;
+
+function pushOfferSheet() {
+  if (!pushOfferReady()) return '';
+  return mSheet(`
+  <div class="zi">
+    <span class="zi-mark"><img src="/ds/icon-192.png" alt="" width="54" height="54"></span>
+    <strong>Want a reminder each morning?</strong>
+    <p>One notification a day, at eight, about what is due and what is planned. Nothing to say, nothing sent.</p>
+    <div class="zi-acts">
+      <button class="btn btn-secondary" data-act="push-offer-no">Not now</button>
+      <button class="btn btn-primary" data-act="push-offer-yes">Turn them on</button>
+    </div>
+    <p class="zi-why">You can change the time, or turn them off, in Preferences.</p>
+  </div>`, '22px 20px 26px', 'push-offer-no');
+}
+
 /* The hours worth offering. Not a free time field: the useful answers are "when
    I get up", "when I start", and "before the day is gone", and a spinner asking
    somebody to choose 07:43 is a spinner they close. */
@@ -19710,7 +19830,7 @@ function prefsPush() {
   const justSent = p.sent && Date.now() - p.sent < 20000;
   return `
     <div class="pref-row">
-      <div class="pref-name">A reminder each morning</div>
+      <div class="pref-name">Notification Reminders</div>
       <p class="pref-note">One notification a day on this device, about what is due and what is planned. Nothing to say, nothing sent.</p>
       <div class="seg pref-seg">
         <label class="seg-opt"><input type="radio" name="pref-push" data-act="pref-push" data-v="off"${
@@ -20260,8 +20380,12 @@ function mTabs() {
 
    overscroll-behavior keeps a flick at the end of the list from carrying on
    into the page behind the sheet. */
-const mSheet = (inner, pad) => `
-<div data-backdrop="m-sheet-close" style="position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(36,31,48,.5);">
+/* The third argument names what tapping past the sheet means. It defaults to
+   the shared close, which clears the flags the shared sheets are opened by — a
+   sheet shown on a condition of its own has to say how it is dismissed, or
+   tapping past it renders it straight back. */
+const mSheet = (inner, pad, closeAct) => `
+<div data-backdrop="${esc(closeAct || 'm-sheet-close')}" style="position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(36,31,48,.5);">
   <div data-keep-scroll="m-sheet" style="background:#fff;border-radius:28px 28px 0 0;padding:${pad};box-shadow:0 -18px 44px rgba(47,28,102,.24);animation:zStep .26s ease both;
               max-height:calc(100dvh - 18px);overflow-y:auto;overscroll-behavior:contain;">${inner}</div>
 </div>`;
@@ -20380,6 +20504,7 @@ function mobileApp() {
   ${refineAskDialog()}
   ${mVoiceSheet()}
   ${installSheet()}
+  ${pushOfferSheet()}
   ${mChatSheet()}
   ${chatConsentDialog()}
   ${chatSpeakDialog()}
@@ -20813,11 +20938,19 @@ const M_ACTIONS = {
   },
   'm-setup-next': () => {
     if (!mSetupCan()) return;
-    if (state.m.setupStep >= 3) { mFinishSetup(); return; }
+    if (state.m.setupStep >= mSetupLast()) { mFinishSetup(); return; }
     mSet({ setupStep: state.m.setupStep + 1, nameTyping: false, catTyping: false });
   },
-  // "Skip both" leaves the two optional fields empty and finishes anyway.
-  'm-setup-skip': () => { state.m.weight = ''; state.m.sleep = ''; mFinishSetup(); },
+  /* Skipping is per step rather than per flow. "Skip both" on the optional
+     fields means those two fields, not the rest of setup — so where there is
+     an install step after it, skipping lands there. */
+  'm-setup-skip': () => {
+    if (state.m.setupStep === 3) {
+      state.m.weight = ''; state.m.sleep = '';
+      if (mSetupLast() > 3) { mSet({ setupStep: 4 }); return; }
+    }
+    mFinishSetup();
+  },
   'm-name-open': () => { state.focusField = 'm-name'; mSet({ nameTyping: true }); },
   'm-currency': (el) => mSet({ setupCurrency: el.dataset.code }),
   'm-track': (el) => {
