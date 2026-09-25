@@ -621,7 +621,7 @@ const API = {
   pull: (since) => api(`/api/sync?since=${encodeURIComponent(since || 0)}`),
   estimate: (text) => api('/api/estimate', { method: 'POST', body: { text } }),
   // A ticket to one voice conversation. POST because it mints something.
-  voiceSession: () => api('/api/voice/session', { method: 'POST' }),
+  voiceSession: (agent) => api('/api/voice/session', { method: 'POST', body: { agent: agent || 'log' } }),
   deckSummary: (facts) => api('/api/deck-summary', { method: 'POST', body: { facts } }),
   chat: (history, facts, mode) => api('/api/chat', { method: 'POST', body: { history, facts, mode } }),
   estimateBurn: (text, weightKg, minutes) => api('/api/estimate-burn', { method: 'POST', body: { text, weightKg, minutes } }),
@@ -1040,6 +1040,8 @@ const state = {
   },
   chatConsent: readJson(CHAT_CONSENT_KEY, false) === true,
   chatAsking: false,
+  // Which way of asking raised the consent question, so it can be resumed.
+  chatAfterConsent: '',
   // The answer waiting on "shall I read this aloud?". See chatSpeakDialog().
   chatSpeakAsk: '',
   newPurposeOpen: false, newPurposeName: '',
@@ -1075,11 +1077,11 @@ const state = {
   // Whether the server has a key at all; the button is not drawn without one.
   aiEstimates: false,
   // Whether this server has a voice agent behind it. See /api/config.
-  voiceAgent: false,
+  voiceAgent: false, voiceAskAgent: false,
   /* The voice conversation, while there is one. Session state in every sense:
      the transcript is not stored, not synced and not sent anywhere but the
      screen it is on, and closing the sheet is the end of it. */
-  voice: { open: false, status: 'idle', mode: '', error: '', said: [], draft: null, session: null, ctx: null, done: 0, muted: false, calls: 0, unknown: '', bye: 0 },
+  voice: { open: false, status: 'idle', mode: '', error: '', said: [], draft: null, session: null, ctx: null, done: 0, muted: false, calls: 0, unknown: '', bye: 0, kind: 'log' },
   aiConsent: readJson(AI_CONSENT_KEY, false) === true,
   aiCache: readJson(AI_CACHE_KEY, {}),
   aiAsking: null,   // scope awaiting consent
@@ -2262,6 +2264,7 @@ async function boot() {
     state.paypalClientId = cfg.paypalClientId || null;
     state.aiEstimates = !!cfg.aiEstimates;
     state.voiceAgent = !!cfg.voiceAgent;
+    state.voiceAskAgent = !!cfg.voiceAskAgent;
     if (state.googleClientId) loadGoogle();
   } catch (e) { /* offline, or not configured — email sign-in is unaffected */ }
 
@@ -15482,6 +15485,14 @@ const ACTIONS = {
     state.focusField = 'pick-new-name';
     render();
   },
+  /* Ask, out loud where that is on offer. Consent first, because the answer is
+     read off the log and the log leaving the device is the thing consent is
+     about - the typed panel asks at the same point, for the same reason. */
+  'm-ask-voice': () => {
+    if (!voiceAskReady()) { ACTIONS['chat-open'](); return; }
+    if (!state.chatConsent) { state.chatAfterConsent = 'voice'; state.chatAsking = true; render(); return; }
+    voiceOpen('ask');
+  },
   'chat-open': () => {
     if (!state.aiEstimates) return;
     state.chat.open = true; state.chat.error = '';
@@ -15536,11 +15547,16 @@ const ACTIONS = {
     state.chatConsent = true;
     state.chatAsking = false;
     writeJson(CHAT_CONSENT_KEY, true);
+    // Back to whichever way of asking raised the question, rather than to the
+    // screen behind it: consent was given in order to get on with something.
+    const going = state.chatAfterConsent;
+    state.chatAfterConsent = '';
     render();
+    if (going === 'voice') { voiceOpen('ask'); return; }
     // Whatever was typed when the question was raised is still in the box.
     if (state.chat.draft.trim()) chatSend();
   },
-  'chat-consent-no': () => { state.chatAsking = false; render(); },
+  'chat-consent-no': () => { state.chatAsking = false; state.chatAfterConsent = ''; render(); },
 
   'refine-yes': () => refineAnswer(true),
   'refine-no': () => refineAnswer(false),
@@ -18627,7 +18643,12 @@ function mFlowBody() {
    signed in — the session is minted per user and metered on our bill — and a
    server with no agent behind it says so in /api/config rather than letting the
    button open a sheet that cannot connect. */
+/* The logging agent, and the one that answers questions about the log. Each is
+   offered only where it has somewhere to go: logging is a phone feature on the
+   personal app, and Ask is wherever Ask already is. */
 const voiceReady = () => !!state.voiceAgent && !!state.auth && mobileOn() && !workMode();
+const voiceAskReady = () => !!state.voiceAskAgent && !!state.auth && mobileOn() && !!state.aiEstimates;
+const voiceIsAsk = () => state.voice.kind === 'ask';
 
 /* A short tone before the first word.
 
@@ -19054,6 +19075,44 @@ function voiceCancelDraft() {
    object because it is a contract with something configured elsewhere: the
    names here and the tool names on ElevenLabs have to match exactly, and a
    contract spread across a file is a contract nobody can check. */
+/* ── the other conversation ──
+
+   Ask Zimpan out loud. The agent is the voice; the answer is the one the typed
+   panel already gives, from the same endpoint with the same facts and the same
+   consent behind it. Nothing about the log is put in the agent's prompt - it
+   asks this tool and reads back what comes out, so what leaves the device is
+   what left it before and the answer cannot drift from the written one.
+
+   The turn goes into the panel's own transcript as well, so closing the sheet
+   leaves the conversation where somebody would look for it. */
+async function voiceAsk(a) {
+  const q = voiceText(a && a.question, 400);
+  if (!q) return { ok: false, spoken: 'I did not catch the question. What was it?' };
+  if (!state.chatConsent) {
+    return { ok: false, spoken: 'I need your permission to read your log first. '
+      + 'Open Ask Zimpan and allow it, then ask me again.' };
+  }
+  state.chat.messages = state.chat.messages.concat([{ role: 'user', text: q }]);
+  voicePaint();
+  try {
+    const mode = state.chat.mode || 'log';
+    const res = await API.chat(chatHistory(), mode === 'app' ? {} : chatFacts(), mode);
+    const reply = String((res.reply && res.reply.text) || '').trim();
+    if (!reply) return { ok: false, spoken: 'I could not find an answer to that one.' };
+    state.chat.messages = state.chat.messages.concat([
+      { role: 'assistant', text: reply, truncated: !!(res.reply && res.reply.truncated) }]);
+    state.voice.done = (state.voice.done || 0) + 1;
+    voicePaint();
+    /* Read out whole. It is already an answer written to be read aloud, and a
+       summary of a summary is where a figure goes wrong. */
+    return { ok: true, spoken: reply };
+  } catch (err) {
+    state.chat.error = err.message || 'Could not reach the assistant.';
+    voicePaint();
+    return { ok: false, spoken: 'I could not reach the log just now. Try again in a moment?' };
+  }
+}
+
 /* Counted, every one of them.
 
    An agent with no tools registered against it still holds a perfectly good
@@ -19066,6 +19125,10 @@ const voiceCounted = (fn) => (a) => {
   state.voice.calls = (state.voice.calls || 0) + 1;
   return fn(a);
 };
+
+/* The asking agent has one tool and writes nothing. Counted the same way, so
+   an agent with no tools registered against it is as visible here as there. */
+const VOICE_ASK_TOOLS = { ask_zimpan: voiceCounted(voiceAsk) };
 
 const VOICE_TOOLS = Object.fromEntries(Object.entries({
   log_activity: voiceLogActivity,
@@ -19170,23 +19233,24 @@ async function voiceAdapter() {
 /* Opening one. Every failure lands in the same place, because to somebody
    holding a phone a refused microphone and a refused key are the same event:
    this did not work, and the form is right there. */
-async function voiceOpen() {
+async function voiceOpen(kind) {
   const v = state.voice;
   if (v.status === 'starting' || v.status === 'live') return;
+  v.kind = kind === 'ask' ? 'ask' : 'log';
   v.open = true; v.status = 'starting'; v.error = ''; v.said = []; v.draft = null; v.done = 0;
   v.muted = false; v.calls = 0; v.unknown = ''; v.bye = 0;
   v.ctx = voiceBeep();
   render();
 
   try {
-    const ticket = await API.voiceSession();
+    const ticket = await API.voiceSession(v.kind);
     const adapter = await voiceAdapter();
     v.session = await adapter.start({
       agentId: ticket.agentId,
       signedUrl: ticket.signedUrl,
       conversationToken: ticket.conversationToken,
       variables: voiceVariables(),
-      tools: VOICE_TOOLS,
+      tools: v.kind === 'ask' ? VOICE_ASK_TOOLS : VOICE_TOOLS,
       onOpen: () => { state.voice.status = 'live'; voicePaint(); },
       onClose: () => {
         if (state.voice.status !== 'error') state.voice.status = 'ended';
@@ -19303,20 +19367,23 @@ function mVoiceBody() {
   const line = known ? known.line
     : v.muted ? 'Microphone off'
       : v.mode === 'speaking' ? 'Zimpan is speaking'
-        : d ? (voiceAskTitle(d) || 'Log it?') : 'Say something';
+        : d ? (voiceAskTitle(d) || 'Log it?')
+          : voiceIsAsk() ? 'Ask away' : 'Say something';
 
   /* Only before the first thing is said, and only while there is a point in
      saying it. Three because there are three things this can do, and a hint
      that outlives its usefulness is furniture. */
   const hints = (v.status === 'live' && !v.said.length && !d)
-    ? `<div class="mv-hints">${['Log an activity', 'Money in or out', 'Make a plan']
+    ? `<div class="mv-hints">${(voiceIsAsk()
+      ? ['Where did my money go?', 'How was last week?', 'How does the app work?']
+      : ['Log an activity', 'Money in or out', 'Make a plan'])
       .map((h) => `<span class="mv-hint">${esc(h)}</span>`).join('')}</div>`
     : '';
 
   return `
     <div class="mv-top">
-      <span class="mv-kick">Zimpan</span>
-      ${v.done ? `<span class="mv-count">${v.done} logged</span>` : ''}
+      <span class="mv-kick">${voiceIsAsk() ? 'Ask Zimpan' : 'Zimpan'}</span>
+      ${v.done ? `<span class="mv-count">${v.done} ${voiceIsAsk() ? 'answered' : 'logged'}</span>` : ''}
     </div>
 
     <div class="mv-stage">
@@ -19346,7 +19413,7 @@ function mVoiceBody() {
     </div>` : ''}
 
     <div class="mv-bar">
-      <button class="mv-ghost" data-act="m-voice-manual">Log manually</button>
+      <button class="mv-ghost" data-act="m-voice-manual">${voiceIsAsk() ? 'Chat manually' : 'Log manually'}</button>
       <button class="mv-mic${v.muted ? ' is-off' : ''}" data-act="m-voice-mute"
         ${v.status === 'live' ? '' : 'disabled'}
         aria-pressed="${v.muted ? 'true' : 'false'}"
@@ -19391,6 +19458,10 @@ function mVoiceNote() {
        is a conversation that drafted something and never confirmed it, which
        is a thing somebody might have meant to do. Worth telling apart: only
        one of them is broken. */
+    if (voiceIsAsk()) {
+      return v.calls ? '' : `<p class="mv-note">Nothing was asked. The agent never put a
+        question to this app &mdash; check that its <strong>ask_zimpan</strong> client tool is set up.</p>`;
+    }
     return v.calls
       ? `<p class="mv-note">Nothing was kept from that conversation. The draft was never confirmed.</p>`
       : `<p class="mv-note">Nothing was logged. The agent never asked this app to write
@@ -19685,7 +19756,7 @@ function mTabs() {
     style="width:58px;height:58px;flex:none;border:0;border-radius:50%;cursor:pointer;background:${M_GRAD_FLAT};box-shadow:0 10px 24px rgba(79,70,229,.4);color:#fff;font-size:26px;font-weight:300;line-height:1;margin-bottom:12px;">+</button>
   ${side(`
     ${tab('m-go-insights', nodeIcon('insights', 21), 'Insights', on === 'insights')}
-    ${state.aiEstimates ? tab('chat-open', nodeIcon('pulse', 21), 'Ask', state.chat.open) : ''}`)}
+    ${state.aiEstimates ? tab('m-ask-voice', nodeIcon('pulse', 21), 'Ask', state.chat.open || (state.voice.open && voiceIsAsk())) : ''}`)}
 </div>`;
 }
 
@@ -20377,8 +20448,12 @@ const M_ACTIONS = {
     mSet({ screen: 'flow', day: mDraftDayFromRange() });
   },
   // The way the form is reached deliberately, from inside the sheet.
+  /* The way out is the other way of doing the same thing, so it goes where the
+     conversation was going: the form for logging, the typed panel for asking. */
   'm-voice-manual': () => {
+    const ask = voiceIsAsk();
     voiceClose();
+    if (ask) { ACTIONS['chat-open'](); return; }
     mResetDraft();
     mSet({ screen: 'flow', day: mDraftDayFromRange() });
   },

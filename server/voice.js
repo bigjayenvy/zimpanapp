@@ -15,7 +15,15 @@
    is handed over as-is, which works only if the agent was made public. So an
    install that sets both gets the safe path by default. */
 
-const AGENT_ID = (process.env.ELEVENLABS_AGENT_ID || '').trim();
+/* Two agents, because they have opposite jobs. One writes entries and is told
+   to refuse questions about totals; the other answers those questions and
+   writes nothing. One prompt trying to do both would be worse at each, so the
+   id is per kind and everything below takes which one it wants. */
+const AGENTS = {
+  log: (process.env.ELEVENLABS_AGENT_ID || '').trim(),
+  ask: (process.env.ELEVENLABS_ASK_AGENT_ID || '').trim()
+};
+const agentFor = (kind) => AGENTS[kind === 'ask' ? 'ask' : 'log'];
 const KEY = (process.env.ELEVENLABS_API_KEY || '').trim();
 const SIGN_URL = 'https://api.elevenlabs.io/v1/convai/conversation/get-signed-url';
 const TOKEN_URL = 'https://api.elevenlabs.io/v1/convai/conversation/token';
@@ -24,7 +32,7 @@ const TIMEOUT_MS = Number(process.env.ELEVENLABS_TIMEOUT_MS) || 10000;
 /* On when there is an agent to talk to. The key is optional — see above — so it
    is deliberately not part of this test, or an install with a public agent would
    be told the feature is off while it is perfectly able to run it. */
-export const voiceConfigured = () => !!AGENT_ID;
+export const voiceConfigured = (kind) => !!agentFor(kind);
 
 /* One call to ElevenLabs, with the reason it failed kept rather than thrown away.
 
@@ -33,10 +41,10 @@ export const voiceConfigured = () => !!AGENT_ID;
    body, not the status. So the body goes to the log: whoever is reading it in
    cPanel is trying to answer "which of my three guesses is it", and a bare 401
    answers none of them. */
-async function ask(url) {
+async function ask(url, agentId) {
   let res;
   try {
-    res = await fetch(`${url}?agent_id=${encodeURIComponent(AGENT_ID)}`, {
+    res = await fetch(`${url}?agent_id=${encodeURIComponent(agentId)}`, {
       headers: { 'xi-api-key': KEY },
       signal: AbortSignal.timeout(TIMEOUT_MS)
     });
@@ -65,11 +73,12 @@ async function ask(url) {
    signed URL. The token is asked for first and the signed URL is the fallback,
    so an account whose API does not offer one still gets the other, and the
    browser is told which it is holding rather than left to guess. */
-export async function voiceSession() {
-  if (!AGENT_ID) throw new Error('The voice agent is not configured on this server.');
-  if (!KEY) return { agentId: AGENT_ID };
+export async function voiceSession(kind) {
+  const agentId = agentFor(kind);
+  if (!agentId) throw new Error('The voice agent is not configured on this server.');
+  if (!KEY) return { agentId };
 
-  const tok = await ask(TOKEN_URL);
+  const tok = await ask(TOKEN_URL, agentId);
   if (tok.ok) {
     const token = tok.body && (tok.body.token || tok.body.conversation_token);
     if (typeof token === 'string' && token) return { conversationToken: token };
@@ -83,7 +92,7 @@ export async function voiceSession() {
     console.error(`[zimpan] voice token unavailable (${tok.status}): ${tok.text}`);
   }
 
-  const sig = await ask(SIGN_URL);
+  const sig = await ask(SIGN_URL, agentId);
   if (!sig.ok) {
     console.error(`[zimpan] voice session refused (${sig.status}): ${sig.text}`);
     throw new Error(sig.status === 401 || sig.status === 403

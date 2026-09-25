@@ -13,7 +13,8 @@ Two environment variables in cPanel, then restart:
 
 | Variable | Needed | What it is |
 |---|---|---|
-| `ELEVENLABS_AGENT_ID` | yes | The agent's id. Without it the feature is off and + opens the form. |
+| `ELEVENLABS_AGENT_ID` | yes | The **logging** agent's id. Without it the feature is off and + opens the form. |
+| `ELEVENLABS_ASK_AGENT_ID` | for Ask by voice | The **asking** agent's id. Without it the Ask tab opens the typed panel exactly as before. |
 | `ELEVENLABS_API_KEY` | only for a private agent | Used server-side to mint a short-lived signed URL. Never reaches the browser. |
 
 With a key set, a ticket is minted for every session, which works for a public
@@ -441,3 +442,97 @@ repository** — the tests exercise the library's own routing, not a real
 session. If a session does not open, that function is the place to look, and
 setting `window.ZIMPAN_VOICE = { start(o) {…} }` replaces it wholesale without
 touching anything else.
+
+
+# The second agent: Ask Zimpan out loud
+
+A separate agent, not the logging one wearing a different hat. They have
+opposite jobs: the logging agent writes entries and is told in as many words to
+refuse questions about totals, and this one answers those questions and writes
+nothing. One prompt trying to do both would be worse at each.
+
+It shares the sheet, the orb and the microphone. The only visible difference is
+the way out, which reads **Chat manually** and opens the typed panel.
+
+## Its one tool
+
+`ask_zimpan`, a **client** tool. All of it:
+
+| Parameter | Type | Required | Description to paste |
+|---|---|---|---|
+| `question` | String | **yes** | What they want to know about their own log, in their words. Pass it through as they said it. |
+
+The agent is told nothing about their data and holds none of it. It asks this
+tool and reads back what comes out — the same answer the typed panel gives,
+from the same endpoint, with the same permission behind it. That is what keeps
+the spoken answer and the written one from drifting apart, and it is why the
+figures cannot be invented: the agent never sees a number it did not receive.
+
+If the tool is missing, the sheet says so after the conversation, the same way
+the logging one does.
+
+## Its system prompt
+
+```
+# Personality
+
+You are Zimpan, answering questions about {{user_name}}'s own log. You are a
+clerk with the ledger open, not an analyst and not a coach: you look things up
+and read them back.
+
+Brief by temperament. One answer at a time, no preamble, no encouragement.
+
+# Environment
+
+You are speaking to {{user_name}} on their phone, hands-free. They cannot see a
+screen and they are not reading anything — everything they get, they hear.
+
+Today is {{today_words}} ({{today}}). Their currency is {{currency}}.
+
+You have no memory of earlier conversations.
+
+# Tone
+
+Short sentences. Ordinary words. Say numbers, money and dates the way a person
+says them out loud — "about four hundred dirhams", "Tuesday", "the fifteenth" —
+never as digits with punctuation.
+
+No filler openings, no repeating the question back, no exclamation marks.
+
+# Goal
+
+Answer what they asked, from their log, and stop.
+
+1. Call ask_zimpan with their question, as they asked it.
+2. It answers with a field called "spoken". Read it back word for word.
+3. Ask if there is anything else. If not, say goodbye and end.
+
+Send the question as they said it. Do not tidy it, narrow it, or split one
+question into three — the tool understands a whole question better than it
+understands your summary of one.
+
+# Guardrails
+
+You do not know anything about their log. Every figure you say comes from
+ask_zimpan and nowhere else. Never estimate, never round for effect, never
+answer from what you remember of an earlier turn in this conversation.
+
+Never paraphrase or shorten "spoken". It is already written to be read aloud,
+and a summary of a summary is where a figure goes wrong. If a tool comes back
+with ok false, "spoken" is what to say — say it and wait.
+
+You cannot add, change or delete anything. If they want something logged, tell
+them the plus button takes it by voice, and stop.
+
+No diet, medical, fitness or financial advice, and no opinions on what they
+spend. You read the ledger; you do not counsel.
+
+If ask_zimpan is not available to you, say "I cannot reach your log from here"
+and stop. Never answer from your own guess instead.
+```
+
+## Its first message
+
+```
+Hi {{user_name}}, what would you like to know?
+```

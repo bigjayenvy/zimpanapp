@@ -789,7 +789,8 @@ app.get('/api/config', (req, res) => res.json({
   googleClientId: GOOGLE_CLIENT_ID || null,
   paypalClientId: PAYPAL_CLIENT_ID || null,
   aiEstimates: aiConfigured(),
-  voiceAgent: voiceConfigured()
+  voiceAgent: voiceConfigured('log'),
+  voiceAskAgent: voiceConfigured('ask')
 }));
 
 /* A ticket to one voice conversation.
@@ -802,11 +803,17 @@ app.get('/api/config', (req, res) => res.json({
    else's bill, so a loop that reconnects on error — which is the shape every
    connection bug takes — has a ceiling on what it can spend before it stops. */
 app.post('/api/voice/session', requireUser, wrap(async (req, res) => {
-  if (!voiceConfigured()) return res.status(503).json({ error: 'The voice agent is not set up on this server.' });
+  // Which of the two: the one that writes entries, or the one that answers
+  // questions about them. Anything unrecognised is the logging one.
+  const kind = (req.body && req.body.agent) === 'ask' ? 'ask' : 'log';
+  if (!voiceConfigured(kind)) return res.status(503).json({ error: 'The voice agent is not set up on this server.' });
+  /* One ceiling across both, deliberately. The cost is conversation minutes on
+     somebody else's bill either way, and two counters would be twice the
+     spend for a loop that found whichever one was emptier. */
   const limited = rateLimit({ key: `voice:${req.user.id}`, limit: 40, windowMs: 60 * 60 * 1000 });
   if (!limited.ok) return res.status(429).json({ error: `That is a lot of conversations. Try again ${retryLabel(limited.retryAfterMs)}.` });
   try {
-    res.json(await voiceSession());
+    res.json(await voiceSession(kind));
   } catch (err) {
     res.status(502).json({ error: err.message || 'Could not start a voice session.' });
   }
