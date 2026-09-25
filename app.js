@@ -16297,38 +16297,62 @@ function mSub(name, money) {
 const mDayEnd = () => (state.sleepMin == null ? 1320 : state.sleepMin);
 
 /* ── the window ──
-   The five spans Today can be read over. DECK_RANGES is the source rather than
-   a second list of the same five: the report deck already defines them, and two
-   lists of windows are two chances for them to disagree about what "2 Weeks"
-   means. */
+
+   The same spans the desktop offers, in the same words. It used to borrow the
+   report deck's list, which is a different set for a different job: every one
+   of the deck's windows is a trailing count of days, so the phone said "Month"
+   and meant the last thirty days while the page on a laptop said "This Month"
+   and meant the calendar one. Two screens over the same log disagreeing about
+   what a month is.
+
+   The labels are still the definitions - "This Month" is this calendar month -
+   and rangeWindow is what settles every one of them, for the phone exactly as
+   for the page, so there is one answer rather than two. Today and Yesterday
+   stay: the desktop reaches a single day by parking on it, and the phone has
+   nowhere to park. */
+const M_RANGES = [
+  ['today', 'Today', 'day', 0],
+  ['yesterday', 'Yesterday', 'day', 1],
+  ['week', 'Week', 'week', 0],
+  ['thismonth', 'This Month', 'thismonth', 0],
+  ['lastmonth', 'Last Month', 'lastmonth', 0],
+  ...LONG_RANGES.map(([key, label]) => [key, label, key, 0]),
+  ['all', 'All Time', 'all', 0]
+];
+
 const mRangeKey = () => state.m.range || 'today';
-const mRangeDef = (key) => DECK_RANGES.find((r) => r[0] === (key || mRangeKey())) || DECK_RANGES[0];
+const mRangeDef = (key) => M_RANGES.find((r) => r[0] === (key || mRangeKey())) || M_RANGES[0];
 
 /* A window somebody chose, on the phone.
 
-   Kept out of DECK_RANGES rather than added to it. That list is the report
-   deck's set of fixed windows — every one of them a rule with a length, which
-   is what the deck's cards are built from — and a sixth entry with no length
-   would have to be special-cased everywhere the deck reads it anyway. So it is
-   special-cased here, once, in the four places the phone asks what its window
-   is. The two dates are the same pair the desktop picker sets, so a window
-   chosen on one is the window the other opens on. */
+   Kept out of M_RANGES rather than added to it. Every entry in that list is a
+   rule rangeWindow can settle on its own; a window somebody typed two dates
+   into is not, and it would have to be special-cased everywhere the list is
+   read anyway. So it is special-cased here, once. The two dates are the same
+   pair the desktop picker sets, so a window chosen on one is the window the
+   other opens on. */
 const M_CUSTOM = 'custom';
 const mIsCustom = (key) => (key || mRangeKey()) === M_CUSTOM;
 
+/* Every day in the window, asked of rangeWindow rather than worked out again.
+
+   Yesterday is the one that needs saying: it is a single day that ends a day
+   back, so the anchor moves rather than the length. Everything else ends today
+   and rangeWindow decides where it starts - which is how the phone gets
+   calendar months and All Time without knowing what either means. */
 function mRangeDates(key) {
-  if (mIsCustom(key)) {
+  const k = key || mRangeKey();
+  if (mIsCustom(k)) {
     const w = customWindow();
     const out = [];
     for (let d = w.from; d <= w.to; d = mShiftIso(d, 1)) out.push(d);
     return out.length ? out : [w.to];
   }
-  const def = mRangeDef(key);
-  const days = RANGE_DAYS[def[2]] || 1;
-  const end = mShiftIso(todayIso, -def[3]);
+  const def = mRangeDef(k);
+  const w = rangeWindow(def[2], mShiftIso(todayIso, -def[3]));
   const out = [];
-  for (let i = days - 1; i >= 0; i--) out.push(mShiftIso(end, -i));
-  return out;
+  for (let d = w.from; d <= w.to; d = mShiftIso(d, 1)) out.push(d);
+  return out.length ? out : [w.to];
 }
 const mIsSingleDay = (key) => mRangeDates(key).length === 1;
 // The one day a per-day reading applies to. Only meaningful on the two
@@ -16336,12 +16360,17 @@ const mIsSingleDay = (key) => mRangeDates(key).length === 1;
 const mSelectedDay = () => mRangeDates()[mRangeDates().length - 1];
 
 const mRangeHeading = (key) => {
-  const k = key || mRangeKey();
-  if (k === M_CUSTOM) return 'Your window';
+  const asked = key || mRangeKey();
+  if (asked === M_CUSTOM) return 'Your window';
+  /* Resolved through mRangeDef rather than read straight, so a window this
+     list does not know falls back to the same one its dates fall back to.
+     The two used to disagree - Today's dates under a heading saying This week. */
+  const k = mRangeDef(asked)[0];
   if (k === 'today') return 'Today';
   if (k === 'yesterday') return 'Yesterday';
-  return { week: 'This week', fortnight: 'Last 2 weeks', month: 'This month',
-    quarter: 'Last 3 months', half: 'Last 6 months', year: 'Last 12 months' }[k] || 'This week';
+  return { week: 'This week', thismonth: 'This month', lastmonth: 'Last month',
+    quarter: 'Last 3 months', half: 'Last 6 months', year: 'Last 12 months',
+    all: 'All time' }[k] || 'This week';
 };
 const mRangeKicker = (key) => {
   const dates = mRangeDates(key);
@@ -17801,7 +17830,7 @@ function mRangeChips(act, on) {
   return `
 ${mScrollHint('Scroll for more')}
 <div class="m-chiprow" style="display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;margin-bottom:${on === M_CUSTOM ? '10' : '16'}px;padding-bottom:2px;">
-  ${DECK_RANGES.map(chip).join('')}
+  ${M_RANGES.map(chip).join('')}
   ${chip([M_CUSTOM, 'Custom'])}
 </div>
 ${on === M_CUSTOM ? mCustomRange() : ''}`;
@@ -20580,15 +20609,16 @@ const M_ACTIONS = {
      is pointed at the deck before the existing action opens it — everything
      after that (the warm-up flag, the summary fetch, the card index) is the
      desktop's and is reused whole. */
+  /* The deck's windows are trailing counts of days and the phone's are the
+     page's, so the two lists overlap rather than match. A window the deck has
+     no rule for would land on its fallback and quietly open a week while the
+     screen behind it said This Month, so it keeps what it had instead. */
   'm-report-open': () => {
     state.app = state.m.insightTab === 'money' ? 'money' : 'time';
-    /* The deck opens on the window Insights is already showing. Both read the
-       same five spans off DECK_RANGES, so handing one to the other is a
-       straight assignment rather than a translation — except for a window
-       somebody chose, which is not one of the deck's spans. Handing that over
-       would land on the deck's fallback and silently open a week while the
-       screen behind it said something else, so the deck keeps what it had. */
-    if (!mIsCustom(mInsightKey())) state.deckRange = mInsightKey();
+    // The deck opens on the window Insights is already showing, where it has one.
+
+    const want = mInsightKey();
+    if (DECK_RANGES.some((r) => r[0] === want)) state.deckRange = want;
     ACTIONS['open-report']();
   },
 
