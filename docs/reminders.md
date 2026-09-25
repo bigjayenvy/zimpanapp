@@ -54,12 +54,16 @@ prints exactly what `push-keys.js` prints:
 
 ```
 openssl ecparam -name prime256v1 -genkey -noout -out ~/vapid.pem
-echo "VAPID_PUBLIC=$(openssl ec -in ~/vapid.pem -outform DER 2>/dev/null \
+echo "PUBLIC  : $(openssl ec -in ~/vapid.pem -outform DER 2>/dev/null \
   | tail -c 65 | openssl base64 -A | tr '+/' '-_' | tr -d '=')"
-echo "VAPID_PRIVATE=$(openssl ec -in ~/vapid.pem -outform DER 2>/dev/null \
+echo "PRIVATE : $(openssl ec -in ~/vapid.pem -outform DER 2>/dev/null \
   | tail -c +8 | head -c 32 | openssl base64 -A | tr '+/' '-_' | tr -d '=')"
 rm ~/vapid.pem
 ```
+
+Labelled rather than printed as `VAPID_PUBLIC=…`, for the same reason the
+script is: cPanel has a name field and a value field, and a `NAME=value` line
+is an invitation to paste the whole thing into the value one.
 
 The offsets are fixed for this curve: a SEC1 P-256 private key is always a
 seven-byte header, the 32-byte scalar, then the parameters and the 65-byte
@@ -71,8 +75,10 @@ key it subscribed with, and there is no way to move one to a new key. A second
 keypair silently unsubscribes everybody who had already said yes, and they are
 not asked again — the app believes they are still subscribed.
 
-`VAPID_SUBJECT` has to be a `mailto:` or an `https:` URL. Google and Mozilla
-both reject a token without one.
+`VAPID_SUBJECT` has to be a `mailto:` or an `https:` URL — `mailto:` included,
+not the bare address. A push service rejects a token whose contact is not a
+URI, and Google reports that as `BadJwtToken`, which names neither the field
+nor the problem.
 
 The private half is a signing key. Anybody holding it can send notifications
 that this app's users will see as coming from Zimpan. It belongs in the
