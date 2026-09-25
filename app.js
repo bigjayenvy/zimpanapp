@@ -8832,7 +8832,7 @@ function mealNeedsFoods(p) {
 function lightbox(o) {
   const tone = o.tone || 'var(--color-accent)';
   return `
-  <div class="no-print lb-back"${o.closeAct ? ` data-backdrop="${esc(o.closeAct)}"` : ''}>
+  <div class="no-print lb-back" data-keep-scroll="lb:${esc(o.closeAct || o.title)}"${o.closeAct ? ` data-backdrop="${esc(o.closeAct)}"` : ''}>
     <div class="lb${o.wide ? ' lb-wide' : ''}${o.tall ? ' lb-tall' : ''}" role="dialog" aria-modal="true" aria-label="${esc(o.title)}">
       ${o.closeAct ? `<button class="lb-x" data-act="${esc(o.closeAct)}" aria-label="Close">✕</button>` : ''}
       ${o.flat
@@ -12508,11 +12508,42 @@ function captureFocus() {
   return { k: el.dataset.k, sel };
 }
 function restoreFocus(f) {
-  if (!f) return;
+  restoreScrolls(f && f.scrolls);
+  if (!f || !f.k) return;
   const el = root.querySelector(`[data-k="${f.k}"]`);
   if (!el) return;
   el.focus();
   if (f.sel && f.sel.s != null) { try { el.setSelectionRange(f.sel.s, f.sel.e); } catch (err) { /* ignore */ } }
+}
+
+/* ── what was scrolled inside the page ──
+
+   render() puts the window's own scroll back, and for a dialog that says
+   nothing at all: a dialog scrolls inside its backdrop, which is fixed, so the
+   window never moved. Rebuilding the tree therefore took somebody reading the
+   bottom of Preferences back to the top of it, on every heartbeat.
+
+   Keyed rather than counted, because the answer has to survive the panel being
+   the second dialog on the page one moment and the first the next. Anything
+   that scrolls and should stay put across a repaint carries data-keep-scroll;
+   anything without it is a thing being drawn fresh and has no position worth
+   keeping. */
+const captureScrolls = () => {
+  const out = {};
+  root.querySelectorAll('[data-keep-scroll]').forEach((el) => {
+    if (el.scrollTop) out[el.dataset.keepScroll] = el.scrollTop;
+  });
+  return out;
+};
+
+function restoreScrolls(scrolls) {
+  if (!scrolls) return;
+  Object.keys(scrolls).forEach((key) => {
+    const el = root.querySelector(`[data-keep-scroll="${key}"]`);
+    /* Only ever downwards to where it was. A panel that got shorter between
+       paints clamps itself, and one that is no longer there is simply gone. */
+    if (el) el.scrollTop = scrolls[key];
+  });
 }
 
 /* Which phone screen the last paint drew, so the next one can tell whether it
@@ -12528,7 +12559,7 @@ function render() {
      arriving rather than as staying. Only the phone branch below sets it. */
   const lastScreen = mPaintedScreen;
   mPaintedScreen = '';
-  const f = captureFocus();
+  const f = Object.assign(captureFocus() || {}, { scrolls: captureScrolls() });
   /* Every render replaces the whole tree, which collapses the document to
      nothing for an instant and takes the scroll position with it — switching
      the range from down the page threw you back to the top. Captured here and
@@ -20188,7 +20219,7 @@ function mTabs() {
    into the page behind the sheet. */
 const mSheet = (inner, pad) => `
 <div data-backdrop="m-sheet-close" style="position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(36,31,48,.5);">
-  <div style="background:#fff;border-radius:28px 28px 0 0;padding:${pad};box-shadow:0 -18px 44px rgba(47,28,102,.24);animation:zStep .26s ease both;
+  <div data-keep-scroll="m-sheet" style="background:#fff;border-radius:28px 28px 0 0;padding:${pad};box-shadow:0 -18px 44px rgba(47,28,102,.24);animation:zStep .26s ease both;
               max-height:calc(100dvh - 18px);overflow-y:auto;overscroll-behavior:contain;">${inner}</div>
 </div>`;
 
