@@ -6779,6 +6779,7 @@ function header(v) {
         <button data-act="sync-now" title="Sync now" style="border:0;background:transparent;padding:0;font:inherit;font-size:12px;cursor:pointer;color:var(--color-neutral-600);"><span data-net>${esc(netLabel())}</span></button>` : ''}
     </div>
     <div class="appbar-actions" style="display:flex;align-items:center;gap:10px;">
+      ${installLink()}
       ${appbarMenu()}
     </div>
   </div>`;
@@ -12695,6 +12696,7 @@ function render() {
   ${deductDialog()}
   ${donateSheet()}
   ${aiConsentDialog()}
+  ${installDialog()}
   ${legalSheet()}
   ${helpDialog()}
   ${closeAccountDialog()}
@@ -14691,6 +14693,10 @@ const ACTIONS = {
     render();
   },
   'install-done': () => ACTIONS['install-later'](),
+  /* The desktop dialog's own way out. It does not set installAsked: that flag
+     is about the offer on the phone's home screen, and this is a different
+     device that will never show it. */
+  'install-close': () => { state.installAsk = false; render(); },
 
   'ex-ask-skip': () => {
     state.exAsk = null;
@@ -19435,6 +19441,39 @@ const installable = () => !!state.auth && mobileOn() && !zInstalled()
 // The row on the home screen is the offer, so it goes once it is answered.
 // The menu item is a door, and a door does not stop being one.
 const installReady = () => installable() && !state.installAsked;
+
+/* Beside the menu rather than in it. On a computer this is the only mention
+   the phone app gets, and a door nobody can see is not a door. Hidden on a
+   phone in the full view, which has the offer and the menu entry already. */
+const installLink = () => (!state.auth || isPhone()) ? '' : `
+  <button class="zi-get" data-act="install-open">
+    ${nodeIcon('home', 16)}<span>Get the App</span>
+  </button>`;
+
+/* The same offer on a desktop, where it cannot be acted on at all: there is no
+   home screen here and no prompt to hand over, so the only useful thing this
+   can say is where to go on the phone in somebody's pocket. Which is why the
+   address is the first step rather than a Share button. */
+function installDialog() {
+  if (!state.installAsk) return '';
+  return lightbox({
+    icon: 'home',
+    kicker: 'On your phone',
+    title: 'Open Zimpan as a Mobile App',
+    sub: 'An icon on your home screen, and it works with no signal.',
+    body: `
+    <ol class="zi-steps">
+      <li>On your phone, open <strong>www.zimpan.com</strong> in Chrome or Safari</li>
+      <li>Sign in, so today&rsquo;s log is there when you open it</li>
+      <li>Tap <strong>Share</strong> on iPhone, or the <strong>&#8942;</strong> menu on Android</li>
+      <li>Tap <strong>Add to Home Screen</strong> &mdash; <strong>Install app</strong> on Android</li>
+      <li>Tap <strong>Add</strong>, and it is on your home screen</li>
+    </ol>
+    <p class="zi-why">Nothing to install on a computer &mdash; Zimpan already runs here, in this tab.</p>`,
+    actions: `<button class="btn btn-primary" data-act="install-close">Got it</button>`,
+    closeAct: 'install-close'
+  });
+}
 
 function installSheet() {
   if (!state.installAsk) return '';

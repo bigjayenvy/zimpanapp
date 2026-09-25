@@ -2840,6 +2840,22 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .zi-row-go { flex: none; font-size: 17px; color: rgba(255, 255, 255, .9); }
 
+  /* The desktop door to the same thing. Same height as the menu toggle beside
+     it, and in the accent rather than the text colour, because it is the one
+     control in that bar that leads somewhere off this screen. */
+  .zi-get {
+    display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 14px;
+    border-radius: 999px; cursor: pointer; font: inherit; font-size: 13px; font-weight: 600;
+    color: var(--color-accent-700); background: var(--color-accent-100, #f2eefe);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+    white-space: nowrap;
+  }
+  .zi-get:hover { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 16%, transparent); }
+  .zi-get svg { flex: none; }
+  /* The bar wraps before it shrinks, and on a narrow window the words are the
+     first thing there is no room for. The glyph still says it. */
+  @media (max-width: 900px) { .zi-get span { display: none; } .zi-get { padding: 0 11px; } }
+
   .zi { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; }
   .zi-mark { display: grid; place-items: center; }
   .zi-mark img { border-radius: 14px; box-shadow: 0 10px 26px rgba(47, 28, 102, .22); }
@@ -2854,6 +2870,9 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
   .zi-steps strong { font-family: var(--font-body); font-size: 13.5px; }
   .zi-why { font-size: 12px !important; color: var(--color-neutral-600) !important; }
+  /* In the dialog the steps are a list rather than a flex column, so the note
+     under them needs its own air. */
+  .lb-body .zi-why { margin: 14px 0 0; text-align: center; }
   .zi .btn { width: 100%; min-height: 48px; border-radius: 999px; justify-content: center; margin-top: 4px; }
   .zi-acts { display: flex; gap: 9px; width: 100%; margin-top: 4px; }
   .zi-acts .btn { flex: 1 1 0; margin-top: 0; }
