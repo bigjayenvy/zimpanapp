@@ -1,0 +1,18 @@
+{
+  "name": "ZIMPAN",
+  "short_name": "ZIMPAN",
+  "description": "Track what matters — where your hours and your money actually went.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#efedf6",
+  "theme_color": "#5f3ac9",
+  "categories": ["productivity", "finance", "lifestyle"],
+  "icons": [
+    { "src": "/ds/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/ds/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/ds/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

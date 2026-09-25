@@ -48,8 +48,19 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
      browser is handed HTML where it expected a script and paints nothing. Every
      asset here is absolute for that reason. -->
 <link rel="icon" type="image/svg+xml" href="/ds/favicon.svg">
-<link rel="apple-touch-icon" href="/ds/favicon.svg">
+<!-- PNG rather than the SVG that was here: iOS ignores an SVG home-screen
+     icon and puts a screenshot of the page on the home screen instead. Square
+     to the edge, because iOS rounds its own corners. -->
+<link rel="apple-touch-icon" href="/ds/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#5f3ac9">
+<!-- Installed on an iPhone, this is what makes it open without Safari's
+     chrome. The status bar is drawn over the page, which suits a header that
+     already carries the brand colour. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="ZIMPAN">
+<meta name="mobile-web-app-capable" content="yes">
 <link rel="stylesheet" href="/ds/styles.css">
 <style>
   body { margin: 0; }
@@ -2801,6 +2812,42 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     font-size: 13px; font-weight: 600; color: var(--color-accent-700);
     text-decoration: underline; text-underline-offset: 3px; text-align: left;
   }
+
+  /* ── the install offer ──
+     A row on the home screen rather than a dialog on arrival: it is worth
+     offering and not worth interrupting for. */
+  .zi-row {
+    display: flex; align-items: center; gap: 12px; width: 100%; cursor: pointer;
+    padding: 12px 14px; border-radius: 16px; margin-bottom: 22px; text-align: left;
+    font: inherit; background: #fff; border: 1px solid rgba(120, 86, 245, .22);
+    box-shadow: 0 4px 14px rgba(47, 28, 102, .07);
+  }
+  .zi-row img { flex: none; border-radius: 9px; }
+  .zi-row span { flex: 1; min-width: 0; }
+  .zi-row b {
+    display: block; font-family: var(--font-body); font-weight: 600;
+    font-size: 14.5px; color: #16131f;
+  }
+  .zi-row i { display: block; font-style: normal; font-size: 12.5px; color: #756f88; margin-top: 2px; }
+  .zi-row-go { flex: none; font-size: 17px; color: #7450e4; }
+
+  .zi { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; }
+  .zi-mark { display: grid; place-items: center; }
+  .zi-mark img { border-radius: 14px; box-shadow: 0 10px 26px rgba(47, 28, 102, .22); }
+  .zi strong { font-family: var(--font-heading); font-size: 19px; color: #16131f; }
+  .zi p { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--color-neutral-700); max-width: 32ch; }
+  /* Numbered, because it is a sequence somebody is carrying out with their
+     other hand while reading it. */
+  .zi-steps {
+    margin: 4px 0 0; padding: 0 0 0 22px; text-align: left; align-self: stretch;
+    display: flex; flex-direction: column; gap: 7px;
+    font-size: 13.5px; line-height: 1.5; color: #16131f;
+  }
+  .zi-steps strong { font-family: var(--font-body); font-size: 13.5px; }
+  .zi-why { font-size: 12px !important; color: var(--color-neutral-600) !important; }
+  .zi .btn { width: 100%; min-height: 48px; border-radius: 999px; justify-content: center; margin-top: 4px; }
+  .zi-acts { display: flex; gap: 9px; width: 100%; margin-top: 4px; }
+  .zi-acts .btn { flex: 1 1 0; margin-top: 0; }
 
   .chat-empty { margin: auto 0; text-align: center; }
   .chat-empty p { margin: 0 0 12px; font-size: 13px; line-height: 1.5; color: var(--color-neutral-700); }

@@ -21,7 +21,10 @@ deployment:
     # admin.html and admin.js are the dashboard at /admin. Same rule as the
     # sitemap: the server names them explicitly, so a file that never reaches
     # $DEPLOYPATH is a 404 however correct it is in the repository.
-    - /bin/cp -f app.js index.html admin.html admin.js sitemap.xml robots.txt $DEPLOYPATH/
+    # manifest.webmanifest and sw.js are the installable half: both are served
+    # from the root by name, and the worker in particular MUST be at the root —
+    # a service worker can only control what sits at or below its own path.
+    - /bin/cp -f app.js index.html admin.html admin.js sitemap.xml robots.txt manifest.webmanifest sw.js $DEPLOYPATH/
     # Whole directory, not *.css — the stylesheet was joined by favicon.svg and
     # will be joined by og-image.jpg, and an extension list silently drops both.
     - /bin/cp -Rf ds/. $DEPLOYPATH/ds/

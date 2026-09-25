@@ -1148,6 +1148,25 @@ app.get('/sitemap.xml', wrap(async (req, res) => {
 }));
 app.get('/robots.txt', sendRoot('robots.txt'));
 
+/* The two files that make this installable.
+
+   Named routes like everything else at the root. The worker is served from the
+   root deliberately: a service worker may only control what sits at or below
+   its own path, and this one has to answer for the whole site.
+
+   It is also the one file that must never be held in a browser cache for long.
+   A worker cached for a day is a worker that cannot be replaced for a day -
+   including a worker with a bug in it - so it is asked for every time. */
+app.get('/manifest.webmanifest', (req, res) => {
+  res.type('application/manifest+json');
+  res.sendFile(join(ROOT, 'manifest.webmanifest'));
+});
+app.get('/sw.js', (req, res) => {
+  res.set('Cache-Control', 'no-cache');
+  res.type('application/javascript');
+  res.sendFile(join(ROOT, 'sw.js'));
+});
+
 /* The admin dashboard is a separate page, so it needs its own entries here for
    the same reason the sitemap did: a file at the project root is not reachable
    until it is named. The page itself is public HTML — everything it displays

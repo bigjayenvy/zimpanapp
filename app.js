@@ -699,6 +699,9 @@ const AI_CONSENT_KEY = 'zimpan.ai.consent.v1';
    itself, notes included. Reusing that flag would have people who agreed to one
    sentence of food text silently agreeing to their whole diary. */
 const CHAT_CONSENT_KEY = 'zimpan.ai.chat.v1';
+// Whether the offer to install has already been made on this device. Per
+// device on purpose: it is a home screen, and every phone has its own.
+const INSTALL_ASKED_KEY = 'zimpan.install.asked';
 // Whether replies are read aloud. A per-browser preference: the speaker you
 // have to hand is a fact about the device, not about the account.
 const CHAT_SPEAK_KEY = 'zimpan.ai.speak.v1';
@@ -1043,6 +1046,12 @@ const state = {
   chatAsking: false,
   // Which way of asking raised the consent question, so it can be resumed.
   chatAfterConsent: '',
+  /* The browser's own install prompt, kept from the moment it is offered
+     until somebody takes it. Session state: an unsaved event is meaningless
+     after a reload, and the browser offers it again. */
+  installPrompt: null,
+  installAsk: false,
+  installAsked: readJson(INSTALL_ASKED_KEY, false) === true,
   // The answer waiting on "shall I read this aloud?". See chatSpeakDialog().
   chatSpeakAsk: '',
   newPurposeOpen: false, newPurposeName: '',
@@ -14661,6 +14670,28 @@ const ACTIONS = {
     state.noteSkipped.workout = true;
     mCommit();
   },
+  /* The offer, and the three ways out of it. Asked once per device either way:
+     somebody who said no does not want to be asked at every sign-in, and
+     somebody who installed it has no use for the question at all. */
+  'install-open': () => { state.installAsk = true; render(); },
+  'install-go': async () => {
+    const ev = state.installPrompt;
+    state.installAsk = false;
+    state.installAsked = true;
+    writeJson(INSTALL_ASKED_KEY, true);
+    state.installPrompt = null;
+    render();
+    // The browser's own prompt from here on. It can only be used once.
+    if (ev && typeof ev.prompt === 'function') { try { await ev.prompt(); } catch (e) { /* dismissed */ } }
+  },
+  'install-later': () => {
+    state.installAsk = false;
+    state.installAsked = true;
+    writeJson(INSTALL_ASKED_KEY, true);
+    render();
+  },
+  'install-done': () => ACTIONS['install-later'](),
+
   'ex-ask-skip': () => {
     state.exAsk = null;
     // Answered, so the question does not come back at the next session either.
@@ -18077,6 +18108,16 @@ function mHome() {
     <span style="font-size:17px;color:#7450e4;">→</span>
   </button>` : ''}
 
+  ${installReady() ? `
+  <button class="zi-row" data-act="install-open">
+    <img src="/ds/icon-192.png" alt="" width="34" height="34">
+    <span>
+      <b>Add Zimpan to your home screen</b>
+      <i>Opens like an app, and works with no signal</i>
+    </span>
+    <span class="zi-row-go" aria-hidden="true">→</span>
+  </button>` : ''}
+
   ${single ? mBodyCard(day) : ''}
 
   ${mCalCard(dates)}
@@ -19370,6 +19411,52 @@ function voicePaint() {
    like every other panel on this layout, and the way out is a link rather than
    a corner cross because the way out here is not "close this", it is "do it the
    other way" — which is a different thing and deserves to say so. */
+/* ── adding it to the home screen ──
+
+   Worth offering because of what it changes: an icon rather than a tab, no
+   browser chrome around the app, and - the reason this was built first - the
+   only way an iPhone will ever deliver a notification from a website.
+
+   Two platforms, two different things to do. Android and desktop Chrome hand
+   over a real prompt and the button calls it. Safari hands over nothing: there
+   is no API, so the only honest thing is to say where the button is. Saying
+   "tap Share, then Add to Home Screen" is not a fallback, it is the whole
+   feature there. */
+const zIsIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent)
+  // iPadOS reports itself as a Mac, and is told apart by having a touchscreen.
+  || (/macintosh/i.test(navigator.userAgent) && (navigator.maxTouchPoints || 0) > 1);
+
+/* Offered only where it can be acted on, and only to somebody who has stayed:
+   an install prompt over an empty app on a first visit is the thing everybody
+   dismisses without reading. */
+const installReady = () => !!state.auth && mobileOn() && !zInstalled() && !state.installAsked
+  && (!!state.installPrompt || zIsIos());
+
+function installSheet() {
+  if (!state.installAsk) return '';
+  const ios = !state.installPrompt && zIsIos();
+  return mSheet(`
+  <div class="zi">
+    <span class="zi-mark"><img src="/ds/icon-192.png" alt="" width="54" height="54"></span>
+    <strong>Keep Zimpan on your home screen</strong>
+    <p>It opens like an app, without the browser around it, and it still works
+      with no signal &mdash; everything you have logged is already on this phone.</p>
+    ${ios ? `
+    <ol class="zi-steps">
+      <li>Tap <strong>Share</strong> at the bottom of Safari</li>
+      <li>Scroll down and tap <strong>Add to Home Screen</strong></li>
+      <li>Tap <strong>Add</strong></li>
+    </ol>
+    <p class="zi-why">Safari has no button we can press for you &mdash; this is the only way it offers.</p>
+    <button class="btn btn-primary" data-act="install-done">Got it</button>`
+    : `
+    <div class="zi-acts">
+      <button class="btn btn-secondary" data-act="install-later">Not now</button>
+      <button class="btn btn-primary" data-act="install-go">Add it</button>
+    </div>`}
+  </div>`, '22px 20px 26px');
+}
+
 function mVoiceSheet() {
   if (!state.voice.open) return '';
   /* Its own frame rather than mSheet's. This is the one panel nobody is
@@ -19952,6 +20039,7 @@ function mobileApp() {
   ${aiConsentDialog()}
   ${refineAskDialog()}
   ${mVoiceSheet()}
+  ${installSheet()}
   ${mChatSheet()}
   ${chatConsentDialog()}
   ${chatSpeakDialog()}
@@ -22114,3 +22202,45 @@ document.addEventListener('visibilitychange', () => {
 
 window.addEventListener('online', () => { if (state.auth) syncNow(); });
 window.addEventListener('offline', () => { if (state.auth) setNet('offline', ''); });
+
+/* ── installing it ──
+
+   Registered after load rather than during it: the worker's own install fetches
+   the shell, and racing that against the first paint slows the thing it is
+   meant to help.
+
+   Failure is silence. A browser with no support, a private window that refuses
+   the registration, an install that throws - none of it is the reader's
+   problem, and every one of them leaves an app that works exactly as it did
+   before this file existed. */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => { /* not supported, or refused */ });
+  });
+}
+
+/* Whether this is already the installed copy.
+
+   Two ways of asking, because the two platforms answer differently: Android
+   reports the display mode the manifest asked for, and iOS has its own flag
+   that predates any of it. */
+const zInstalled = () => (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+  || window.navigator.standalone === true;
+
+/* Android hands over a real prompt; iOS hands over nothing at all.
+
+   So the offer is only made where it can be honoured: the event is caught and
+   kept, and Safari gets the one thing that works there, which is being told
+   where the button is. */
+window.addEventListener('beforeinstallprompt', (ev) => {
+  ev.preventDefault();
+  state.installPrompt = ev;
+  render();
+});
+
+window.addEventListener('appinstalled', () => {
+  state.installPrompt = null;
+  state.installAsk = false;
+  writeJson(INSTALL_ASKED_KEY, true);
+  render();
+});
