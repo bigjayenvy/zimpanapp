@@ -1081,7 +1081,7 @@ const state = {
   /* The voice conversation, while there is one. Session state in every sense:
      the transcript is not stored, not synced and not sent anywhere but the
      screen it is on, and closing the sheet is the end of it. */
-  voice: { open: false, status: 'idle', mode: '', error: '', said: [], draft: null, session: null, ctx: null, done: 0, muted: false, calls: 0, unknown: '', bye: 0, kind: 'log' },
+  voice: { open: false, status: 'idle', mode: '', error: '', said: [], draft: null, session: null, ctx: null, done: 0, muted: false, calls: 0, unknown: '', bye: 0, kind: 'log', busy: false, slow: 0 },
   aiConsent: readJson(AI_CONSENT_KEY, false) === true,
   aiCache: readJson(AI_CACHE_KEY, {}),
   aiAsking: null,   // scope awaiting consent
@@ -19085,6 +19085,13 @@ function voiceCancelDraft() {
 
    The turn goes into the panel's own transcript as well, so closing the sheet
    leaves the conversation where somebody would look for it. */
+/* Long enough for a real answer, short enough that the agent is not left on a
+   promise it has given up on. "List everything I did today" is a heavier
+   question than "how much on food" and the endpoint behind it is a model, so
+   the ceiling is generous - but there has to be one, because a tool that never
+   answers is a tool the agent decides is broken. */
+const VOICE_ASK_MS = 20000;
+
 async function voiceAsk(a) {
   const q = voiceText(a && a.question, 400);
   if (!q) return { ok: false, spoken: 'I did not catch the question. What was it?' };
@@ -19093,23 +19100,45 @@ async function voiceAsk(a) {
       + 'Open Ask Zimpan and allow it, then ask me again.' };
   }
   state.chat.messages = state.chat.messages.concat([{ role: 'user', text: q }]);
+  /* Said on the sheet while it is happening. The answer comes from a model and
+     takes the seconds a model takes; with nothing on screen saying so, the
+     panel went on reading "Ask away" through the whole silence as though
+     nothing had been heard. */
+  state.voice.busy = true;
   voicePaint();
+
+  const mode = state.chat.mode || 'log';
+  const asked = API.chat(chatHistory(), mode === 'app' ? {} : chatFacts(), mode);
+  /* The request is not abandoned when the wait is. It goes on and its answer
+     still lands in the panel, so a slow one is late rather than lost - and
+     "Chat manually" then opens onto the answer that arrived after the agent
+     had stopped waiting for it. */
+  asked.then((res) => {
+    const late = String((res.reply && res.reply.text) || '').trim();
+    if (!late || state.chat.messages.some((m) => m.role === 'assistant' && m.text === late)) return;
+    state.chat.messages = state.chat.messages.concat([
+      { role: 'assistant', text: late, truncated: !!(res.reply && res.reply.truncated) }]);
+    if (state.voice.open) voicePaint();
+  }).catch(() => { /* handled below */ });
+
   try {
-    const mode = state.chat.mode || 'log';
-    const res = await API.chat(chatHistory(), mode === 'app' ? {} : chatFacts(), mode);
+    const res = await Promise.race([asked,
+      new Promise((_, no) => setTimeout(() => no(new Error('slow')), VOICE_ASK_MS))]);
     const reply = String((res.reply && res.reply.text) || '').trim();
     if (!reply) return { ok: false, spoken: 'I could not find an answer to that one.' };
-    state.chat.messages = state.chat.messages.concat([
-      { role: 'assistant', text: reply, truncated: !!(res.reply && res.reply.truncated) }]);
     state.voice.done = (state.voice.done || 0) + 1;
-    voicePaint();
-    /* Read out whole. It is already an answer written to be read aloud, and a
-       summary of a summary is where a figure goes wrong. */
     return { ok: true, spoken: reply };
   } catch (err) {
+    if (err && err.message === 'slow') {
+      state.voice.slow = (state.voice.slow || 0) + 1;
+      return { ok: false, spoken: 'That one is taking a while to work out. '
+        + 'It will be waiting in your chat - ask me something else, or have a look there.' };
+    }
     state.chat.error = err.message || 'Could not reach the assistant.';
+    return { ok: false, spoken: 'I could not reach your log just now. Ask me again in a moment?' };
+  } finally {
+    state.voice.busy = false;
     voicePaint();
-    return { ok: false, spoken: 'I could not reach the log just now. Try again in a moment?' };
   }
 }
 
@@ -19238,7 +19267,7 @@ async function voiceOpen(kind) {
   if (v.status === 'starting' || v.status === 'live') return;
   v.kind = kind === 'ask' ? 'ask' : 'log';
   v.open = true; v.status = 'starting'; v.error = ''; v.said = []; v.draft = null; v.done = 0;
-  v.muted = false; v.calls = 0; v.unknown = ''; v.bye = 0;
+  v.muted = false; v.calls = 0; v.unknown = ''; v.bye = 0; v.busy = false; v.slow = 0;
   v.ctx = voiceBeep();
   render();
 
@@ -19359,16 +19388,18 @@ function mVoiceBody() {
   const d = v.draft;
   const known = VOICE_PHASE[v.status];
   const phase = known ? known.phase
-    : v.muted ? 'muted'
-      : v.mode === 'speaking' ? 'speaking' : 'listening';
+    : v.busy ? 'speaking'
+      : v.muted ? 'muted'
+        : v.mode === 'speaking' ? 'speaking' : 'listening';
   /* "Say something" is wrong once there is a draft: the question on the table
      is a yes, not an opening. The card below says what it is; this says what
      is being waited for. */
   const line = known ? known.line
-    : v.muted ? 'Microphone off'
-      : v.mode === 'speaking' ? 'Zimpan is speaking'
-        : d ? (voiceAskTitle(d) || 'Log it?')
-          : voiceIsAsk() ? 'Ask away' : 'Say something';
+    : v.busy ? 'Looking it up'
+      : v.muted ? 'Microphone off'
+        : v.mode === 'speaking' ? 'Zimpan is speaking'
+          : d ? (voiceAskTitle(d) || 'Log it?')
+            : voiceIsAsk() ? 'Ask away' : 'Say something';
 
   /* Only before the first thing is said, and only while there is a point in
      saying it. Three because there are three things this can do, and a hint
@@ -19459,6 +19490,11 @@ function mVoiceNote() {
        is a thing somebody might have meant to do. Worth telling apart: only
        one of them is broken. */
     if (voiceIsAsk()) {
+      if (v.slow) {
+        return `<p class="mv-note">${v.slow === 1 ? 'A question took' : `${v.slow} questions took`}
+          longer than the conversation would wait. The ${v.slow === 1 ? 'answer is' : 'answers are'}
+          in your chat.</p>`;
+      }
       return v.calls ? '' : `<p class="mv-note">Nothing was asked. The agent never put a
         question to this app &mdash; check that its <strong>ask_zimpan</strong> client tool is set up.</p>`;
     }
