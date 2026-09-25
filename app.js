@@ -18112,8 +18112,8 @@ function mHome() {
   <button class="zi-row" data-act="install-open">
     <img src="/ds/icon-192.png" alt="" width="34" height="34">
     <span>
-      <b>Add Zimpan to your home screen</b>
-      <i>Opens like an app, and works with no signal</i>
+      <b>Open Zimpan as a Mobile App</b>
+      <i>An icon on your home screen, and it works with no signal</i>
     </span>
     <span class="zi-row-go" aria-hidden="true">→</span>
   </button>` : ''}
@@ -19429,8 +19429,12 @@ const zIsIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent)
 /* Offered only where it can be acted on, and only to somebody who has stayed:
    an install prompt over an empty app on a first visit is the thing everybody
    dismisses without reading. */
-const installReady = () => !!state.auth && mobileOn() && !zInstalled() && !state.installAsked
+const installable = () => !!state.auth && mobileOn() && !zInstalled()
   && (!!state.installPrompt || zIsIos());
+
+// The row on the home screen is the offer, so it goes once it is answered.
+// The menu item is a door, and a door does not stop being one.
+const installReady = () => installable() && !state.installAsked;
 
 function installSheet() {
   if (!state.installAsk) return '';
@@ -19438,8 +19442,7 @@ function installSheet() {
   return mSheet(`
   <div class="zi">
     <span class="zi-mark"><img src="/ds/icon-192.png" alt="" width="54" height="54"></span>
-    <strong>Add Zimpan to Home Screen</strong>
-    <p>Opens like a mobile app.</p>
+    <strong>Open Zimpan as a Mobile App</strong>
     ${ios ? `
     <ol class="zi-steps">
       <li>Tap <strong>Share</strong> at the bottom of Safari (at the top if using Chrome on iPhone)</li>
@@ -19994,6 +19997,12 @@ function mAccountSheet() {
          Insights happened to be open would be a pad nobody could find. -->
     ${workMode() ? '' : menuRow({ act: 'plan-open', icon: 'scales', label: 'Money Planner', badge: planDueCount() || '' })}
     ${menuRow({ act: 'm-classic', icon: 'layout', label: 'Full view' })}
+    <!-- Not gated on whether the offer has been made before: the row on the
+         home screen is an offer and goes once it has been answered, and this
+         is the way back to it for anybody who said not now. Hidden only when
+         there is nothing left to do - already installed, or a browser with no
+         way to install anything. -->
+    ${installable() ? menuRow({ act: 'install-open', icon: 'home', label: 'Open Zimpan as a Mobile App' }) : ''}
     ${menuRow({ act: 'team-open', icon: 'people', label: team ? team.name : 'Start a team' })}
     ${menuRow({ act: 'prefs-open', icon: 'sliders', label: 'Preferences' })}
     ${menuRow({ act: 'go-blogs', icon: 'article', label: 'Blog' })}
