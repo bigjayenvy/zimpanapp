@@ -5896,6 +5896,26 @@ function padPickShow() {
     const room = list.clientHeight - chrome - (btn ? btn.getBoundingClientRect().height + 5 : 0) - 12;
     if (room >= 90 && room < inner.getBoundingClientRect().height) inner.style.maxHeight = `${Math.floor(room)}px`;
   }
+  /* Then wide enough to be read and narrow enough to stay in.
+
+     The panel is hung from the chip's right edge and is wider than the chip,
+     so it grows leftwards - which is right for a chip on the right of a card
+     and wrong for one on the left, where it ran off the pad and took the start
+     of every name with it. The pad clips what leaves it, so what left was
+     simply gone.
+
+     Measured rather than guessed, because where the chip sits depends on what
+     is beside it: capped to the pad's own width first, then pushed back inside
+     whichever edge it is over. Right grows leftwards, hence the negation. */
+  const GAP = 8;
+  const room = list.getBoundingClientRect();
+  if (room.width > 120) pop.style.maxWidth = `${Math.floor(room.width - GAP * 2)}px`;
+  const box = pop.getBoundingClientRect();
+  let shift = 0;
+  if (box.left < room.left + GAP) shift = (room.left + GAP) - box.left;
+  if (box.right + shift > room.right - GAP) shift = Math.min(shift, (room.right - GAP) - box.right);
+  if (shift) pop.style.right = `${-Math.round(shift)}px`;
+
   /* The scroll, though, only for the render that put the panel there. Sizing
      is idempotent and has to happen on every render — the tree is rebuilt each
      time, so a sync landing behind an open panel would otherwise hand back the
