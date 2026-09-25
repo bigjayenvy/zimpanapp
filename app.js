@@ -361,8 +361,15 @@ const FOLLOW_UPS = [
     key: 'food',
     re: /\bfood\b|\beat\b|eating|\bate\b|\bdrinks?\b|\bdrank\b|\bmeal\b|breakfast|lunch|dinner|snack|merienda|restaurant|dining|kape|coffee|cafe|takeout|kain|inuman/,
     title: 'What did you eat?',
-    hint: 'Optional — a line about the meal is enough.',
-    placeholder: 'e.g. grilled chicken, rice, salad'
+    /* The shape the estimate reads best, said outright. It prices what is
+       written down item by item, so a quantity and a size are the difference
+       between a reading and a guess at a portion — and the commas are what
+       separate one item from the next. */
+    hint: 'Quantity, size, and the food, separated with commas '
+      + '(e.g. 1 medium sunny side up egg, 330ml cappuccino with 1 tbsp sugar)',
+    // Matched to the hint: an example without quantities would teach the
+    // opposite of the line above it.
+    placeholder: 'e.g. 1 grilled chicken breast, 1 cup rice, 1 small salad'
   },
   {
     key: 'workout',
