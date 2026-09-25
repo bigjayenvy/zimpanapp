@@ -645,7 +645,8 @@ app.post('/api/chat', requireUser, wrap(async (req, res) => {
   if (JSON.stringify(facts).length > 60000) return res.status(400).json({ error: 'That is more log than we can send in one go.' });
 
   try {
-    res.json({ reply: await chatReply(history, facts, mode) });
+    // Asked out loud: the answer is going to a speaker, not a screen.
+    res.json({ reply: await chatReply(history, facts, mode, body.brief === true) });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

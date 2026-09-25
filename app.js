@@ -623,7 +623,8 @@ const API = {
   // A ticket to one voice conversation. POST because it mints something.
   voiceSession: (agent) => api('/api/voice/session', { method: 'POST', body: { agent: agent || 'log' } }),
   deckSummary: (facts) => api('/api/deck-summary', { method: 'POST', body: { facts } }),
-  chat: (history, facts, mode) => api('/api/chat', { method: 'POST', body: { history, facts, mode } }),
+  chat: (history, facts, mode, brief) => api('/api/chat',
+    { method: 'POST', body: { history, facts, mode, brief: brief === true } }),
   estimateBurn: (text, weightKg, minutes) => api('/api/estimate-burn', { method: 'POST', body: { text, weightKg, minutes } }),
   donateClick: () => api('/api/donate-click', { method: 'POST', body: {} }),
 
@@ -19108,7 +19109,9 @@ async function voiceAsk(a) {
   voicePaint();
 
   const mode = state.chat.mode || 'log';
-  const asked = API.chat(chatHistory(), mode === 'app' ? {} : chatFacts(), mode);
+  // Brief, because it is going to a speaker. It is also the difference between
+  // an answer that arrives inside the conversation and one that does not.
+  const asked = API.chat(chatHistory(), mode === 'app' ? {} : chatFacts(), mode, true);
   /* The request is not abandoned when the wait is. It goes on and its answer
      still lands in the panel, so a slow one is late rather than lost - and
      "Chat manually" then opens onto the answer that arrived after the agent

@@ -503,7 +503,23 @@ const CHAT_MAX_CHARS = 2000;
    no business carrying a diary with it, and an assistant holding the diary
    answers a question about a button with the diary. Anything else is the log
    assistant, which is what every caller before the split meant. */
-export async function chatReply(history, facts, mode) {
+/* Read aloud rather than read.
+
+   The typed panel can answer "list everything I did today" with forty lines
+   and somebody can skim them. Spoken, forty lines is unusable - and generating
+   them is where the seconds go, which is what left a voice conversation
+   waiting on a tool it had given up on. So a spoken answer is capped short and
+   told to summarise rather than recite: fewer tokens to make, and the right
+   shape for an ear at the same time. */
+const CHAT_VOICE_NOTE = `
+
+This answer will be spoken aloud, not read. Keep it to two or three sentences.
+Never read out a list of more than three items - give the count and the notable
+ones instead ("seven things, about six hours; the long ones were the gym and the
+client call"). Say numbers the way somebody says them out loud. No markdown, no
+bullet points, no headings.`;
+
+export async function chatReply(history, facts, mode, brief) {
   const howto = mode === 'app';
   if (!aiConfigured()) throw new Error('Chat is not configured on this server.');
 
@@ -531,10 +547,12 @@ export async function chatReply(history, facts, mode) {
   try {
     res = await (await anthropic()).beta.messages.create({
       model: MODEL,
-      max_tokens: 1024,
+      // A spoken answer is two or three sentences, so the ceiling is the
+      // length of one rather than of a page. It is also most of the wait.
+      max_tokens: brief ? 320 : 1024,
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
-      system: howto ? HOWTO_SYSTEM : CHAT_SYSTEM,
+      system: (howto ? HOWTO_SYSTEM : CHAT_SYSTEM) + (brief ? CHAT_VOICE_NOTE : ''),
       messages: turns
     }, { timeout: TIMEOUT_MS });
   } catch (err) {
