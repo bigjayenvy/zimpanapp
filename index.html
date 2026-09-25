@@ -3513,6 +3513,19 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 
   /* Withdrawing reads as leaving, not as a switch: a consent you can flick
      back on in one tap is not a consent, it is a preference. */
+  /* The hour and the test sit on one line under the switch. The select takes
+     what is left so the button keeps its words at any width. */
+  .pref-when { display: flex; align-items: center; gap: 9px; margin-top: 10px; }
+  .pref-when > span { flex: none; font-size: 13px; color: var(--color-neutral-700); }
+  .pref-when .pref-pick { flex: 1 1 auto; width: auto; min-width: 0; }
+  .pref-test { flex: none; min-height: 46px; font-size: 13px; padding-inline: 14px; white-space: nowrap; }
+  /* A refusal, which is nearly always a permission the person turned off
+     themselves and has to turn back on somewhere this app cannot reach. */
+  .pref-warn {
+    margin: 10px 0 0; font-size: 12.5px; line-height: 1.45; color: #8a2f4a;
+    background: color-mix(in srgb, #8a2f4a 8%, transparent);
+    border-radius: 10px; padding: 8px 10px;
+  }
   .pref-revoke {
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
     width: 100%; min-height: 44px; margin-top: 8px; padding: 0 14px;

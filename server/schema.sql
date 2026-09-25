@@ -516,3 +516,54 @@ CREATE TABLE IF NOT EXISTS support_tickets (
   KEY idx_ticket_status (status),
   KEY idx_ticket_new (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+/* ── who to notify, and where ──
+
+   One row per browser, not per person: a notification goes to a device, and
+   somebody signed in on a laptop and a phone made two independent decisions
+   about whether they wanted to be interrupted on each.
+
+   The endpoint is the address the push service gave that browser. It is the
+   identity of the subscription and it is opaque — a URL at Google or Mozilla
+   with a token on the end — so it is what UNIQUE is on, keyed by its hash
+   rather than the URL itself: endpoints run past what MySQL will index, and a
+   256-bit digest of one is as unique as the one it stands for.
+
+   p256dh and auth are the browser's half of the encryption. They are not
+   credentials for anything else and they cannot be used to read anything the
+   browser did not seal for itself, but they are stored as given and never
+   logged: together with the endpoint they are the ability to send that device
+   a notification.
+
+   The clock is the device's, because "eight in the morning" is a question
+   about where the phone is rather than where this server is. tz_offset is
+   minutes east of UTC as the browser reported it, refreshed on every sync from
+   that device, which is what carries somebody through a flight and a change of
+   season without anybody having to think about it. */
+CREATE TABLE IF NOT EXISTS push_subs (
+  id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id    INT UNSIGNED NOT NULL,
+  endpoint   VARCHAR(512) NOT NULL,
+  -- SHA-256 of the endpoint, hex. Only so there is something short to index.
+  endpoint_id CHAR(64)    NOT NULL,
+  p256dh     VARCHAR(255) NOT NULL,
+  auth       VARCHAR(64)  NOT NULL,
+  -- Minutes since midnight, in the device's own day. 480 is eight in the
+  -- morning, which is when a reminder about today is still worth having.
+  at_min     SMALLINT UNSIGNED NOT NULL DEFAULT 480,
+  -- Minutes east of UTC. Written by the browser, which is the only thing that
+  -- knows; a device that has not reported one is treated as UTC.
+  tz_offset  SMALLINT     NOT NULL DEFAULT 0,
+  -- The last day, in the device's own reckoning, a reminder went out. What
+  -- stops a cron that runs every ten minutes from sending six.
+  last_date  CHAR(10)     NULL,
+  -- Consecutive failures that were not a refusal. A subscription the push
+  -- service keeps timing out on is dropped rather than retried for ever.
+  fails      TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  created_at BIGINT       NOT NULL,
+  updated_at BIGINT       NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_push_endpoint (endpoint_id),
+  KEY idx_push_user (user_id),
+  CONSTRAINT fk_push_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

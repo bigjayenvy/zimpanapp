@@ -71,3 +71,51 @@ self.addEventListener('fetch', (e) => {
     }
   })());
 });
+
+/* ── notifications ──
+
+   The payload arrives sealed to this browser and nobody else — the push service
+   that carried it cannot read it, and neither can this file until the browser
+   has opened it. What comes out is the object the server composed.
+
+   The catch is that a browser will only deliver a push event if something
+   visible follows it. Skipping showNotification on a malformed payload does not
+   quietly do nothing; it gets the permission revoked. So every path here ends
+   in a notification, including the path where the payload made no sense. */
+self.addEventListener('push', (e) => {
+  let note = {};
+  try { note = (e.data && e.data.json()) || {}; } catch (err) { /* not ours, or not JSON */ }
+  const title = note.title || 'ZIMPAN';
+  e.waitUntil(self.registration.showNotification(title, {
+    body: note.body || 'Open Zimpan to see today.',
+    icon: '/ds/icon-192.png',
+    // The small monochrome mark Android puts in the status bar.
+    badge: '/ds/badge-72.png',
+    /* One tag for the daily reminder, so a phone that was off for two days
+       shows the newer one rather than a stack of stale mornings. */
+    tag: note.tag || 'zimpan',
+    renotify: true,
+    data: { url: note.url || '/' }
+  }));
+});
+
+/* Tapping it should land on the app that is already open, not a second copy of
+   it. A window belonging to this origin is focused where there is one, and only
+   a person with no Zimpan open gets a new one. */
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || '/';
+  e.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of all) {
+      if (new URL(c.url).origin === self.location.origin) {
+        /* Focused rather than navigated. navigate() reloads, and an app holding
+           a half-typed entry is better brought to the front as it is than
+           reloaded onto the same screen with that entry gone. */
+        await c.focus();
+        return;
+      }
+    }
+    await self.clients.openWindow(url);
+  })());
+});

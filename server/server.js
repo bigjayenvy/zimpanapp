@@ -24,6 +24,8 @@ import {
 import { SupportError, SUPPORT_TO, fileTicket, listTickets, setTicketStatus, TICKET_STATUSES } from './support.js';
 import { estimateNutrition, estimateBurn, summariseDeck, chatReply, aiConfigured, warmAI } from './ai.js';
 import { voiceSession, voiceConfigured } from './voice.js';
+import { sendPush, pushConfigured, pushPublicKey } from './push.js';
+import { dayAhead, composeReminder, composeTest, localDate, pushDue } from './remind.js';
 import {
   overview as adminOverview, users as adminUsers, donationsFor,
   setRole, addDonation, removeDonation, deleteAccount, noteDonateClick, touchSeen, isAdminRole, ROLES
@@ -791,7 +793,12 @@ app.get('/api/config', (req, res) => res.json({
   paypalClientId: PAYPAL_CLIENT_ID || null,
   aiEstimates: aiConfigured(),
   voiceAgent: voiceConfigured('log'),
-  voiceAskAgent: voiceConfigured('ask')
+  voiceAskAgent: voiceConfigured('ask'),
+  /* The key is the browser's half of subscribing and is not a secret — it is
+     what ties a subscription to this server rather than any other. Null when
+     push is not set up, which is what the app reads to decide whether to offer
+     reminders at all. */
+  pushKey: pushPublicKey()
 }));
 
 /* A ticket to one voice conversation.
@@ -818,6 +825,157 @@ app.post('/api/voice/session', requireUser, wrap(async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err.message || 'Could not start a voice session.' });
   }
+}));
+
+/* ── reminders ──
+
+   One notification a day per browser, at an hour that browser chose, about what
+   that day holds. See remind.js for what it says and why it sometimes says
+   nothing at all.
+
+   Everything here is keyed on the endpoint the push service handed the browser.
+   It is the subscription's identity, it is not guessable, and it is not a
+   credential for anything else — but it is the ability to interrupt somebody,
+   so a request may only ever touch a row belonging to the account making it. */
+const endpointId = (endpoint) => crypto.createHash('sha256').update(endpoint).digest('hex');
+
+/* What the browser sends is what the PushManager gave it, unchanged. It is
+   validated rather than trusted: an endpoint has to be an https URL, and the
+   two keys have to be the sizes the encryption needs, or every send to this row
+   would fail later with nothing to point at.
+
+   The clock comes over on the same call, because the browser is the only thing
+   that knows what time it is where the person is. */
+function readSubscription(body) {
+  const b = body || {};
+  const endpoint = String(b.endpoint || '').trim();
+  const keys = b.keys || {};
+  const p256dh = String(keys.p256dh || '').trim();
+  const auth = String(keys.auth || '').trim();
+  if (!/^https:\/\//.test(endpoint) || endpoint.length > 512) return { error: 'That is not a push endpoint.' };
+  if (Buffer.from(p256dh, 'base64url').length !== 65) return { error: 'The browser sent an unusable key.' };
+  if (Buffer.from(auth, 'base64url').length !== 16) return { error: 'The browser sent an unusable secret.' };
+  /* Clamped rather than rejected. A minute outside the day or an offset outside
+     the ones that exist is a clock this server cannot argue with, and refusing
+     the subscription over it would turn a strange timezone into no reminders. */
+  const at = Math.min(24 * 60 - 1, Math.max(0, Math.round(Number(b.at)) || 0));
+  const tz = Math.min(840, Math.max(-720, Math.round(Number(b.tz)) || 0));
+  return { endpoint, p256dh, auth, at, tz };
+}
+
+app.post('/api/push/subscribe', requireUser, wrap(async (req, res) => {
+  if (!pushConfigured()) return res.status(503).json({ error: 'Reminders are not set up on this server.' });
+  const sub = readSubscription(req.body);
+  if (sub.error) return res.status(400).json({ error: sub.error });
+  const t = now();
+  /* An upsert on the endpoint, so re-subscribing on a browser that already had
+     permission moves the row rather than making a second one — and so a device
+     handed on to somebody else follows the account that subscribed last.
+
+     last_date is deliberately not cleared: somebody who changes the hour at
+     noon, having already had today's reminder, is asking about tomorrow. */
+  await query(
+    `INSERT INTO push_subs (user_id, endpoint, endpoint_id, p256dh, auth, at_min, tz_offset, created_at, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?)
+     ON DUPLICATE KEY UPDATE user_id = VALUES(user_id), endpoint = VALUES(endpoint),
+       p256dh = VALUES(p256dh), auth = VALUES(auth), at_min = VALUES(at_min),
+       tz_offset = VALUES(tz_offset), fails = 0, updated_at = VALUES(updated_at)`,
+    [req.user.id, sub.endpoint, endpointId(sub.endpoint), sub.p256dh, sub.auth, sub.at, sub.tz, t, t]);
+  res.json({ ok: true, at: sub.at });
+}));
+
+app.post('/api/push/unsubscribe', requireUser, wrap(async (req, res) => {
+  const endpoint = String((req.body || {}).endpoint || '').trim();
+  if (!endpoint) return res.status(400).json({ error: 'No subscription named.' });
+  await query('DELETE FROM push_subs WHERE user_id = ? AND endpoint_id = ?',
+    [req.user.id, endpointId(endpoint)]);
+  res.json({ ok: true });
+}));
+
+/* One notification, now, to the device asking for it.
+
+   This exists because everything about push fails silently. Permission can be
+   granted and the worker still not registered; a key can be right and the
+   subject rejected; a phone can be in a battery mode that holds notifications
+   until it is unlocked. A button that either produces a notification or names
+   the refusal turns all of that into one answer. */
+app.post('/api/push/test', requireUser, wrap(async (req, res) => {
+  if (!pushConfigured()) return res.status(503).json({ error: 'Reminders are not set up on this server.' });
+  const endpoint = String((req.body || {}).endpoint || '').trim();
+  const row = endpoint && await one(
+    'SELECT * FROM push_subs WHERE user_id = ? AND endpoint_id = ?', [req.user.id, endpointId(endpoint)]);
+  if (!row) return res.status(404).json({ error: 'This browser is not subscribed.' });
+  const limited = rateLimit({ key: `push-test:${req.user.id}`, limit: 10, windowMs: 60 * 60 * 1000 });
+  if (!limited.ok) return res.status(429).json({ error: `That is a lot of tests. Try again ${retryLabel(limited.retryAfterMs)}.` });
+
+  const day = await dayAhead(req.user.id, localDate(row.tz_offset), req.user.currency);
+  const out = await sendPush(row, composeTest(day));
+  if (out.gone) await query('DELETE FROM push_subs WHERE id = ?', [row.id]);
+  if (!out.ok) return res.status(502).json({ error: out.error || 'The push service would not take it.' });
+  res.json({ ok: true });
+}));
+
+/* ── the round ──
+
+   Called by a scheduler, not by a person: cPanel's cron, every ten minutes.
+   Guarded by a shared secret rather than a session, because there is nobody
+   signed in at four in the morning.
+
+   It walks every subscription, works out what time it is on that device, and
+   sends to the ones whose chosen minute has passed and who have not already had
+   today's. Which means the cron's interval sets the lateness and nothing else:
+   run it hourly and a reminder set for 08:00 arrives some time before 09:00. */
+const PUSH_CRON_SECRET = (process.env.PUSH_CRON_SECRET || '').trim();
+/* How late a reminder may be and still be worth sending. A server that was down
+   from seven until noon should not greet everybody with a reminder about a
+   morning that has gone; it should skip them and be on time tomorrow. */
+const PUSH_LATE_MIN = Number(process.env.PUSH_LATE_MIN) || 120;
+
+app.post('/api/push/run', wrap(async (req, res) => {
+  if (!pushConfigured()) return res.status(503).json({ error: 'Reminders are not set up on this server.' });
+  if (!PUSH_CRON_SECRET) return res.status(503).json({ error: 'PUSH_CRON_SECRET is not set.' });
+  const given = String(req.get('X-Zimpan-Cron') || (req.query && req.query.key) || '');
+  /* Compared in constant time, and only once the lengths match — timingSafeEqual
+     throws on a mismatch, which would itself be a timing signal. */
+  const ok = given.length === PUSH_CRON_SECRET.length
+    && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(PUSH_CRON_SECRET));
+  if (!ok) return res.status(404).json({ error: 'No such endpoint.' });
+
+  const at = Date.now();
+  const rows = await query(
+    `SELECT p.*, u.currency FROM push_subs p JOIN users u ON u.id = p.user_id ORDER BY p.id`);
+  let sent = 0, quiet = 0, dropped = 0, failed = 0;
+
+  for (const row of rows) {
+    const date = pushDue(row, at, PUSH_LATE_MIN);
+    if (!date) continue;
+
+    const note = composeReminder(await dayAhead(row.user_id, date, row.currency));
+    if (!note) {
+      /* Marked as done for the day even though nothing went out, so a quiet
+         morning is not re-examined every ten minutes until lunchtime. */
+      quiet++;
+      await query('UPDATE push_subs SET last_date = ? WHERE id = ?', [date, row.id]);
+      continue;
+    }
+    const out = await sendPush(row, note);
+    if (out.ok) {
+      sent++;
+      await query('UPDATE push_subs SET last_date = ?, fails = 0 WHERE id = ?', [date, row.id]);
+    } else if (out.gone) {
+      dropped++;
+      await query('DELETE FROM push_subs WHERE id = ?', [row.id]);
+    } else {
+      failed++;
+      /* Three bad days in a row and the row goes. Not on the first: a push
+         service having an outage is not a person who uninstalled the app. */
+      const fails = Number(row.fails || 0) + 1;
+      if (fails >= 3) await query('DELETE FROM push_subs WHERE id = ?', [row.id]);
+      else await query('UPDATE push_subs SET fails = ? WHERE id = ?', [fails, row.id]);
+      console.error(`[zimpan] push to subscription ${row.id} failed: ${out.error}`);
+    }
+  }
+  res.json({ ok: true, considered: rows.length, sent, quiet, dropped, failed });
 }));
 
 app.get('/api/currencies', (req, res) => res.json({ currencies: CURRENCIES }));

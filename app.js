@@ -623,6 +623,12 @@ const API = {
   // A ticket to one voice conversation. POST because it mints something.
   voiceSession: (agent) => api('/api/voice/session', { method: 'POST', body: { agent: agent || 'log' } }),
   deckSummary: (facts) => api('/api/deck-summary', { method: 'POST', body: { facts } }),
+  /* Reminders. The subscription goes over exactly as the browser minted it,
+     with the device's clock beside it — the server has no other way to know
+     what "eight in the morning" means where this phone is. */
+  pushOn: (sub, at, tz) => api('/api/push/subscribe', { method: 'POST', body: Object.assign(sub, { at, tz }) }),
+  pushOff: (endpoint) => api('/api/push/unsubscribe', { method: 'POST', body: { endpoint } }),
+  pushTest: (endpoint) => api('/api/push/test', { method: 'POST', body: { endpoint } }),
   chat: (history, facts, mode, brief) => api('/api/chat',
     { method: 'POST', body: { history, facts, mode, brief: brief === true } }),
   estimateBurn: (text, weightKg, minutes) => api('/api/estimate-burn', { method: 'POST', body: { text, weightKg, minutes } }),
@@ -1086,6 +1092,20 @@ const state = {
 
   // Whether the server has a key at all; the button is not drawn without one.
   aiEstimates: false,
+  /* The server's public key for notifications, or null where reminders are not
+     set up. Read from /api/config, and the only thing that decides whether the
+     panel is offered at all. */
+  pushKey: null,
+  /* This browser's own reminder, which is a property of the browser rather than
+     of the account: session state, re-read from the PushManager on every boot,
+     because the browser is the thing that actually knows and a remembered
+     answer here would go stale the moment somebody revoked permission in their
+     system settings.
+
+     `at` is minutes since midnight, the same unit every other time in this app
+     is in. 480 is eight, which is early enough to act on and late enough not to
+     be the thing that wakes somebody. */
+  push: { ready: false, on: false, at: 480, busy: false, err: '', sent: 0, denied: false },
   // Whether this server has a voice agent behind it. See /api/config.
   voiceAgent: false, voiceAskAgent: false,
   /* The voice conversation, while there is one. Session state in every sense:
@@ -2098,6 +2118,10 @@ async function afterSignIn(user) {
   // Same reasoning: yesterday is only worth offering once this device has
   // pulled what the other one logged.
   maybeAskRecap();
+  /* Again here, because the read on boot runs before there is an account and a
+     subscription can only be re-reported against one. This is what carries a
+     device's clock to the server after a flight. */
+  if (state.pushKey) pushRead();
 }
 
 /* ── google sign-in ──
@@ -2275,6 +2299,10 @@ async function boot() {
     state.aiEstimates = !!cfg.aiEstimates;
     state.voiceAgent = !!cfg.voiceAgent;
     state.voiceAskAgent = !!cfg.voiceAskAgent;
+    state.pushKey = cfg.pushKey || null;
+    // Only worth asking the browser anything once there is a server to
+    // subscribe to.
+    if (state.pushKey) pushRead();
     if (state.googleClientId) loadGoogle();
   } catch (e) { /* offline, or not configured — email sign-in is unaffected */ }
 
@@ -14339,6 +14367,7 @@ function prefsDialog() {
         'Whether a logged meal or effort is re-read by Claude for a closer figure.',
         [['ask', 'Ask each time'], ['true', 'Always'], ['false', 'Never']],
         'pref-refine', state.refineAlways === null ? 'ask' : String(state.refineAlways))}
+      ${prefsPush()}
       ${consented ? `
       <div class="pref-row">
         <div class="pref-name">What you have allowed to be sent</div>
@@ -14697,6 +14726,16 @@ const ACTIONS = {
      is about the offer on the phone's home screen, and this is a different
      device that will never show it. */
   'install-close': () => { state.installAsk = false; render(); },
+
+  'pref-push': (el) => {
+    // The radio is the request, not the answer: it is put back where it was and
+    // only moves once the browser and the server have both agreed.
+    const want = el.dataset.v === 'on';
+    if (want === state.push.on) return;
+    if (want) pushEnable(); else pushDisable();
+  },
+  'pref-push-at': (el) => pushAt(Number(el.value) || 480),
+  'pref-push-test': () => pushTestSend(),
 
   'ex-ask-skip': () => {
     state.exAsk = null;
@@ -19441,6 +19480,183 @@ const installable = () => !!state.auth && mobileOn() && !zInstalled()
 // The row on the home screen is the offer, so it goes once it is answered.
 // The menu item is a door, and a door does not stop being one.
 const installReady = () => installable() && !state.installAsked;
+
+/* ── reminders ──
+
+   A notification is the only thing this app can do that reaches somebody who is
+   not looking at it, which makes it the one feature that can genuinely annoy.
+   So it is off until asked for, it is one a day, and the hour is theirs.
+
+   Per browser, not per account. Permission is granted to an origin in a browser
+   and to nothing else: the phone can be subscribed while the laptop is not, and
+   neither knows about the other. Everything below therefore reads the truth out
+   of the PushManager rather than out of anything remembered, because a person
+   who revoked the permission in their system settings did not tell this app. */
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window
+  && 'Notification' in window;
+/* Offered where there is a server to subscribe to, a browser that can, and an
+   account to remind. Not gated on being installed: a notification from a tab
+   works on Android and is worth having. */
+const pushOffered = () => !!state.pushKey && !!state.auth && pushSupported();
+
+/* The key travels as base64url because that is what fits in JSON; the
+   subscribe call wants the bytes. */
+function pushKeyBytes(b64) {
+  const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+
+/* Minutes east of UTC, which is the opposite sign to the one JavaScript gives:
+   getTimezoneOffset counts minutes to add to local time to reach UTC, so Manila
+   reports -480 for a place that is eight hours ahead. */
+const pushTz = () => -new Date().getTimezoneOffset();
+
+const pushReg = () => (navigator.serviceWorker && navigator.serviceWorker.ready) || Promise.reject(new Error('no worker'));
+
+/* What this browser actually has, asked of the browser. Called once on boot and
+   after every change, and it is what the panel draws from. */
+async function pushRead() {
+  if (!pushSupported()) return;
+  state.push.denied = Notification.permission === 'denied';
+  try {
+    const sub = await (await pushReg()).pushManager.getSubscription();
+    state.push.on = !!sub;
+    state.push.ready = true;
+    /* A device that is already subscribed re-reports its clock, without a word
+       on screen. It is the cheapest way to follow somebody across a timezone,
+       and the only one that does not involve asking them about it. */
+    if (sub && state.auth) {
+      API.pushOn(sub.toJSON(), state.push.at, pushTz()).catch(() => { /* offline; next boot */ });
+    }
+  } catch (e) {
+    state.push.ready = true;
+  }
+  renderLater();
+}
+
+/* Turning them on, which is three refusals in a trench coat: the browser can
+   refuse the permission, the push service can refuse the subscription, and this
+   server can refuse to store it. Each one is reported as itself — "it did not
+   work" over a permission the person denied on purpose is the kind of message
+   that gets an app uninstalled. */
+async function pushEnable() {
+  state.push.busy = true; state.push.err = ''; render();
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      state.push.denied = permission === 'denied';
+      state.push.err = permission === 'denied'
+        ? 'Notifications are blocked for Zimpan in your browser settings. They have to be allowed there first.'
+        : 'Not allowed yet — reminders stay off.';
+      return;
+    }
+    const sub = await (await pushReg()).pushManager.subscribe({
+      /* Required, and it is a promise rather than a flag: it says every push
+         this server sends will produce something the person can see. A browser
+         catches you breaking it and revokes the permission itself. */
+      userVisibleOnly: true,
+      applicationServerKey: pushKeyBytes(state.pushKey)
+    });
+    await API.pushOn(sub.toJSON(), state.push.at, pushTz());
+    state.push.on = true;
+    state.push.denied = false;
+  } catch (e) {
+    state.push.err = e.message || 'The browser would not set up notifications.';
+  } finally {
+    state.push.busy = false;
+    render();
+  }
+}
+
+/* And off. The browser's subscription is dropped first: a server row without it
+   is a row that can never be delivered to, and the other order leaves this
+   browser subscribed to a server that has forgotten it — which is the one state
+   nothing can clean up later. */
+async function pushDisable() {
+  state.push.busy = true; state.push.err = ''; render();
+  try {
+    const sub = await (await pushReg()).pushManager.getSubscription();
+    if (sub) {
+      const { endpoint } = sub;
+      await sub.unsubscribe();
+      await API.pushOff(endpoint).catch(() => { /* gone from here either way */ });
+    }
+    state.push.on = false;
+  } catch (e) {
+    state.push.err = e.message || 'Could not turn reminders off.';
+  } finally {
+    state.push.busy = false;
+    render();
+  }
+}
+
+/* The hour, which only means anything once there is a subscription to attach it
+   to. Changing it while off just remembers the number for when it is turned on. */
+async function pushAt(min) {
+  state.push.at = min;
+  if (!state.push.on) { render(); return; }
+  try {
+    const sub = await (await pushReg()).pushManager.getSubscription();
+    if (sub) await API.pushOn(sub.toJSON(), min, pushTz());
+  } catch (e) { state.push.err = e.message || 'Could not save that time.'; }
+  render();
+}
+
+/* Everything about push fails quietly: permission granted and the worker not
+   running, a key that matches and a subject the service rejects, a phone in a
+   battery mode that holds notifications until it is unlocked. This button turns
+   all of it into one answer. */
+async function pushTestSend() {
+  state.push.busy = true; state.push.err = ''; render();
+  try {
+    const sub = await (await pushReg()).pushManager.getSubscription();
+    if (!sub) throw new Error('This browser is not subscribed.');
+    await API.pushTest(sub.endpoint);
+    state.push.sent = Date.now();
+  } catch (e) {
+    state.push.err = e.message || 'The test did not go through.';
+  } finally {
+    state.push.busy = false;
+    render();
+  }
+}
+
+/* The hours worth offering. Not a free time field: the useful answers are "when
+   I get up", "when I start", and "before the day is gone", and a spinner asking
+   somebody to choose 07:43 is a spinner they close. */
+const PUSH_TIMES = [[360, '6am'], [420, '7am'], [480, '8am'], [540, '9am'], [720, 'Noon'], [1140, '7pm']];
+
+/* The panel, inside Preferences. Drawn only where it can do something: a server
+   with no key, a browser with no PushManager, or a signed-out visitor gets
+   nothing rather than a switch that cannot move. */
+function prefsPush() {
+  if (!pushOffered()) return '';
+  const p = state.push;
+  const justSent = p.sent && Date.now() - p.sent < 20000;
+  return `
+    <div class="pref-row">
+      <div class="pref-name">A reminder each morning</div>
+      <p class="pref-note">One notification a day on this device, about what is due and what is planned. Nothing to say, nothing sent.</p>
+      <div class="seg pref-seg">
+        <label class="seg-opt"><input type="radio" name="pref-push" data-act="pref-push" data-v="off"${
+  p.on ? '' : ' checked'}${p.busy ? ' disabled' : ''}><span>Off</span></label>
+        <label class="seg-opt"><input type="radio" name="pref-push" data-act="pref-push" data-v="on"${
+  p.on ? ' checked' : ''}${p.busy ? ' disabled' : ''}><span>On</span></label>
+      </div>
+      ${p.on ? `
+      <div class="pref-when">
+        <span>At</span>
+        <select class="input pref-pick" data-act="pref-push-at" aria-label="When to remind you">
+          ${PUSH_TIMES.map(([m, label]) => `<option value="${m}"${m === p.at ? ' selected' : ''}>${esc(label)}</option>`).join('')}
+        </select>
+        <button class="btn btn-secondary pref-test" data-act="pref-push-test"${p.busy ? ' disabled' : ''}>${
+  justSent ? 'Sent' : 'Send one now'}</button>
+      </div>` : ''}
+      ${p.err ? `<p class="pref-warn">${esc(p.err)}</p>` : ''}
+      ${justSent ? '<p class="pref-note">On its way. A phone that is locked may hold it until you wake it.</p>' : ''}
+    </div>`;
+}
 
 /* Beside the menu rather than in it. On a computer this is the only mention
    the phone app gets, and a door nobody can see is not a door. Hidden on a
