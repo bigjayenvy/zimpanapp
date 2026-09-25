@@ -129,6 +129,7 @@ names the refusal.
 | What you see | What it is |
 | --- | --- |
 | The switch will not move, "blocked in your browser settings" | The permission was denied. It cannot be re-asked from the page; it has to be allowed in the browser's own site settings. |
+| The test says `VAPID_PRIVATE decodes to N bytes, not 32` | The value field holds something other than the key alone. A whole `VAPID_PRIVATE=…` line pasted into it decodes to 9 bytes, because base64url reads the `=` as the end of the data. The key on its own is exactly **43 characters**; the public one is **87**. |
 | The test says the push service would not take it | The server reached the push service and was refused. The reason is in the app's stderr log — a 403 is nearly always `VAPID_SUBJECT` missing or the keypair having been regenerated. |
 | Nothing at all, on an iPhone | iOS only delivers push to an app that has been **added to the home screen**. In Safari's own tab it will never arrive, and the switch will not even be offered — iOS has no PushManager in a tab. |
 | Nothing at all, on Android, but the test works | The round has not run. Check the cron, and that the secret in the cron line matches the environment. |

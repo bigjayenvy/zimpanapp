@@ -60,7 +60,15 @@ const P256_PKCS8_PREFIX = Buffer.from(
    holds them. */
 function vapidPrivateKey() {
   const raw = unb64(PRIVATE);
-  if (raw.length !== 32) throw new Error('VAPID_PRIVATE must be 32 bytes, base64url encoded.');
+  /* The length it actually got, and the one thing that reliably produces a
+     short one. base64url treats '=' as the end of the data, so a value pasted
+     as the whole `VAPID_PRIVATE=…` line decodes to the nine bytes before the
+     equals sign and nothing after it — which looks like a corrupt key and is
+     really a copied prefix. A length is not a secret; the key is never named. */
+  if (raw.length !== 32) {
+    throw new Error(`VAPID_PRIVATE decodes to ${raw.length} bytes, not 32.`
+      + (raw.length < 32 ? ' Check the value holds the key alone — a pasted "VAPID_PRIVATE=" prefix cuts it short.' : ''));
+  }
   return createPrivateKey({ key: Buffer.concat([P256_PKCS8_PREFIX, raw]), format: 'der', type: 'pkcs8' });
 }
 
