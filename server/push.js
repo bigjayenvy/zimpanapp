@@ -58,24 +58,64 @@ const P256_PKCS8_PREFIX = Buffer.from(
    prints it and what the browser-side ecosystem passes around. Node will only
    load a structured key, so the bytes are wrapped in the smallest PKCS#8 that
    holds them. */
-function vapidPrivateKey() {
+/* The length it actually got, and the one thing that reliably produces a short
+   one. base64url treats '=' as the end of the data, so a value pasted as the
+   whole `VAPID_PRIVATE=…` line decodes to the nine bytes before the equals sign
+   and nothing after it — which looks like a corrupt key and is really a copied
+   prefix. A length is not a secret; the key itself is never named. */
+function vapidScalar() {
   const raw = unb64(PRIVATE);
-  /* The length it actually got, and the one thing that reliably produces a
-     short one. base64url treats '=' as the end of the data, so a value pasted
-     as the whole `VAPID_PRIVATE=…` line decodes to the nine bytes before the
-     equals sign and nothing after it — which looks like a corrupt key and is
-     really a copied prefix. A length is not a secret; the key is never named. */
   if (raw.length !== 32) {
     throw new Error(`VAPID_PRIVATE decodes to ${raw.length} bytes, not 32.`
       + (raw.length < 32 ? ' Check the value holds the key alone — a pasted "VAPID_PRIVATE=" prefix cuts it short.' : ''));
   }
-  return createPrivateKey({ key: Buffer.concat([P256_PKCS8_PREFIX, raw]), format: 'der', type: 'pkcs8' });
+  return raw;
+}
+
+function vapidPrivateKey() {
+  return createPrivateKey({ key: Buffer.concat([P256_PKCS8_PREFIX, vapidScalar()]), format: 'der', type: 'pkcs8' });
+}
+
+/* ── the two ways a keyed server still gets refused ──
+
+   Both produce the same thing from Google: 403 BadJwtToken, which names the
+   symptom and not one of the causes. Both are checked here instead, because a
+   vendor error code is not something anybody should have to decode.
+
+   The pair first. A public key and a private key from two different generations
+   sign perfectly and verify against nothing — the browser subscribed with one
+   and the signature is made with the other. Deriving the point from the scalar
+   and comparing is the whole test.
+
+   Then the subject. RFC 8292 wants a contact URI, and a push service refuses a
+   token without one. It is the field most likely to have been pasted with its
+   own name still attached, which is precisely the shape that looks right in a
+   settings screen and is rejected on the wire. */
+function vapidCheck() {
+  /* Most specific first. A key of the wrong length is not a mismatched pair,
+     and saying so would send somebody regenerating both halves over a paste. */
+  const scalar = vapidScalar();
+  const pub = unb64(PUBLIC);
+  if (pub.length !== 65 || pub[0] !== 4) {
+    throw new Error(`VAPID_PUBLIC decodes to ${pub.length} bytes, not the 65 of a P-256 point.`);
+  }
+  const derived = createECDH('prime256v1');
+  derived.setPrivateKey(scalar);
+  if (!derived.getPublicKey().equals(pub)) {
+    throw new Error('VAPID_PUBLIC and VAPID_PRIVATE are not a pair. '
+      + 'They have to come from the same generation — regenerating one alone leaves a key that signs nothing anybody will accept.');
+  }
+  if (!/^(mailto:\S+@\S+|https:\/\/\S+)$/.test(SUBJECT)) {
+    throw new Error(`VAPID_SUBJECT must be a mailto: address or an https: URL, not ${JSON.stringify(SUBJECT.slice(0, 60))}. `
+      + 'A value pasted with its own name in front of it is the usual reason.');
+  }
 }
 
 /* The audience is the push service's origin and nothing more — not the endpoint
    path, which identifies one subscriber and has no business in a token that
    covers a whole batch. */
 export function vapidHeaders(endpoint, ttl) {
+  vapidCheck();
   const aud = new URL(endpoint).origin;
   const header = b64(JSON.stringify({ typ: 'JWT', alg: 'ES256' }));
   /* Twelve hours. The ceiling is 24 and the token is minted per send, so this

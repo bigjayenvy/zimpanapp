@@ -130,7 +130,10 @@ names the refusal.
 | --- | --- |
 | The switch will not move, "blocked in your browser settings" | The permission was denied. It cannot be re-asked from the page; it has to be allowed in the browser's own site settings. |
 | The test says `VAPID_PRIVATE decodes to N bytes, not 32` | The value field holds something other than the key alone. A whole `VAPID_PRIVATE=…` line pasted into it decodes to 9 bytes, because base64url reads the `=` as the end of the data. The key on its own is exactly **43 characters**; the public one is **87**. |
-| The test says the push service would not take it | The server reached the push service and was refused. The reason is in the app's stderr log — a 403 is nearly always `VAPID_SUBJECT` missing or the keypair having been regenerated. |
+| The test says `VAPID_PUBLIC and VAPID_PRIVATE are not a pair` | The two halves came from different generations. Make a fresh pair and set both. |
+| The test says `VAPID_SUBJECT must be a mailto: address or an https: URL` | Same paste mistake as above, in a different field. The value is the address alone — `mailto:you@example.com`, not `VAPID_SUBJECT=mailto:you@example.com`. |
+| `403 {"reason":"BadJwtToken"}` | Google refusing the signed token. On a build before those two checks existed it means one of them: a mismatched pair, or a subject that is not a contact URI. Failing that, check the server's clock (`date -u`) — a token whose expiry is wildly out is rejected the same way. |
+| The test says the push service would not take it | The server reached the push service and was refused, and the reason it gave is in the message. |
 | Nothing at all, on an iPhone | iOS only delivers push to an app that has been **added to the home screen**. In Safari's own tab it will never arrive, and the switch will not even be offered — iOS has no PushManager in a tab. |
 | Nothing at all, on Android, but the test works | The round has not run. Check the cron, and that the secret in the cron line matches the environment. |
 | It arrives hours late | `PUSH_LATE_MIN` (default 120) is the window after the chosen minute in which a reminder is still worth sending. The cron's interval decides the rest. |
