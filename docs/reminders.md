@@ -24,6 +24,48 @@ cd ~/zimpan/server && node push-keys.mjs
 It prints three lines. Paste them into **cPanel → Setup Node.js App →
 Environment variables** and restart the app.
 
+#### `bash: node: command not found`
+
+Expected, and not a broken server. cPanel keeps node inside the application's
+own virtual environment rather than on the PATH, so a fresh terminal has no
+node in it at all.
+
+Open **cPanel → Setup Node.js App**, click the pencil on the Zimpan app, and
+copy the command it shows beside *"Enter to the virtual environment"*. It looks
+like this, with your own app's path and node version in it:
+
+```
+source /home/zimpxioc/nodevenv/zimpan/server/20/bin/activate && cd /home/zimpxioc/zimpan/server
+```
+
+Run that first, then `node push-keys.mjs`. That screen is the authority on the
+path — the version number in it changes when the app's node version does.
+
+If that screen is not to hand, the environment can be found instead:
+
+```
+ls -d ~/nodevenv/*/*/*/bin/activate /opt/cpanel/ea-nodejs*/bin/node 2>/dev/null
+```
+
+#### Or without node at all
+
+The keypair is an ordinary P-256 pair, and openssl is on every cPanel box. This
+prints exactly what `push-keys.mjs` prints:
+
+```
+openssl ecparam -name prime256v1 -genkey -noout -out ~/vapid.pem
+echo "VAPID_PUBLIC=$(openssl ec -in ~/vapid.pem -outform DER 2>/dev/null \
+  | tail -c 65 | openssl base64 -A | tr '+/' '-_' | tr -d '=')"
+echo "VAPID_PRIVATE=$(openssl ec -in ~/vapid.pem -outform DER 2>/dev/null \
+  | tail -c +8 | head -c 32 | openssl base64 -A | tr '+/' '-_' | tr -d '=')"
+rm ~/vapid.pem
+```
+
+The offsets are fixed for this curve: a SEC1 P-256 private key is always a
+seven-byte header, the 32-byte scalar, then the parameters and the 65-byte
+public point at the end. `rm` at the end matters — the file is the private key,
+and it has no reason to stay in a home directory once the two lines are pasted.
+
 **Generate this once and keep it.** A browser's subscription is bound to the
 key it subscribed with, and there is no way to move one to a new key. A second
 keypair silently unsubscribes everybody who had already said yes, and they are
