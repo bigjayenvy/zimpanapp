@@ -1082,7 +1082,7 @@ const state = {
   /* The voice conversation, while there is one. Session state in every sense:
      the transcript is not stored, not synced and not sent anywhere but the
      screen it is on, and closing the sheet is the end of it. */
-  voice: { open: false, status: 'idle', mode: '', error: '', said: [], draft: null, session: null, ctx: null, done: 0, muted: false, calls: 0, unknown: '', bye: 0, kind: 'log', busy: false, slow: 0 },
+  voice: { open: false, status: 'idle', mode: '', error: '', said: [], draft: null, session: null, ctx: null, done: 0, muted: false, calls: 0, unknown: '', bye: 0, kind: 'log', busy: false, slow: 0, took: 0 },
   aiConsent: readJson(AI_CONSENT_KEY, false) === true,
   aiCache: readJson(AI_CACHE_KEY, {}),
   aiAsking: null,   // scope awaiting consent
@@ -19111,6 +19111,7 @@ async function voiceAsk(a) {
   const mode = state.chat.mode || 'log';
   // Brief, because it is going to a speaker. It is also the difference between
   // an answer that arrives inside the conversation and one that does not.
+  const began = Date.now();
   const asked = API.chat(chatHistory(), mode === 'app' ? {} : chatFacts(), mode, true);
   /* The request is not abandoned when the wait is. It goes on and its answer
      still lands in the panel, so a slow one is late rather than lost - and
@@ -19130,6 +19131,14 @@ async function voiceAsk(a) {
     const reply = String((res.reply && res.reply.text) || '').trim();
     if (!reply) return { ok: false, spoken: 'I could not find an answer to that one.' };
     state.voice.done = (state.voice.done || 0) + 1;
+    /* How long the slowest answer took, kept for the sheet to say.
+
+       The agent has a ceiling of its own on how long it will wait for a tool,
+       set where the tool is registered rather than here, and a question that
+       runs past it comes back as the agent deciding the tool is broken - which
+       looks exactly like the tool being broken. This is the number to set that
+       ceiling above, and there is nowhere else to read it. */
+    state.voice.took = Math.max(state.voice.took || 0, Date.now() - began);
     return { ok: true, spoken: reply };
   } catch (err) {
     if (err && err.message === 'slow') {
@@ -19270,7 +19279,7 @@ async function voiceOpen(kind) {
   if (v.status === 'starting' || v.status === 'live') return;
   v.kind = kind === 'ask' ? 'ask' : 'log';
   v.open = true; v.status = 'starting'; v.error = ''; v.said = []; v.draft = null; v.done = 0;
-  v.muted = false; v.calls = 0; v.unknown = ''; v.bye = 0; v.busy = false; v.slow = 0;
+  v.muted = false; v.calls = 0; v.unknown = ''; v.bye = 0; v.busy = false; v.slow = 0; v.took = 0;
   v.ctx = voiceBeep();
   render();
 
@@ -19486,7 +19495,20 @@ function mVoiceNote() {
     return `<p class="mv-note">Zimpan was asked for <strong>${esc(v.unknown)}</strong>, which is not
       something this app can do. The agent and the app disagree about the tools.</p>`;
   }
-  if ((v.status === 'ended' || v.status === 'error') && !v.done) {
+  const over = v.status === 'ended' || v.status === 'error';
+
+  /* Asking has a complaint the logging side does not: an answer this app gave
+     in nine seconds that the agent never waited for. That is worth saying even
+     when other questions were answered fine - especially then, because a
+     conversation where three worked and one did not is the one where the wait
+     is the thing at fault rather than the wiring. */
+  if (over && voiceIsAsk() && v.took >= 6000) {
+    return `<p class="mv-note">The slowest answer took <strong>${Math.round(v.took / 1000)} seconds</strong>.
+      If the agent said it could not reach your log, raise the response timeout on its
+      <strong>ask_zimpan</strong> tool above that.</p>`;
+  }
+
+  if (over && !v.done) {
     /* Two different faults wearing the same face. Nothing asked of this app at
        all is an agent with no client tools on it. Asked and then not finished
        is a conversation that drafted something and never confirmed it, which
@@ -19498,8 +19520,8 @@ function mVoiceNote() {
           longer than the conversation would wait. The ${v.slow === 1 ? 'answer is' : 'answers are'}
           in your chat.</p>`;
       }
-      return v.calls ? '' : `<p class="mv-note">Nothing was asked. The agent never put a
-        question to this app &mdash; check that its <strong>ask_zimpan</strong> client tool is set up.</p>`;
+      return v.calls ? '' : `<p class="mv-note">Nothing was asked. The agent never put a question
+        to this app &mdash; check that its <strong>ask_zimpan</strong> client tool is set up.</p>`;
     }
     return v.calls
       ? `<p class="mv-note">Nothing was kept from that conversation. The draft was never confirmed.</p>`
