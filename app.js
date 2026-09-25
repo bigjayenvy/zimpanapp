@@ -19438,16 +19438,18 @@ function installSheet() {
   return mSheet(`
   <div class="zi">
     <span class="zi-mark"><img src="/ds/icon-192.png" alt="" width="54" height="54"></span>
-    <strong>Keep Zimpan on your home screen</strong>
-    <p>It opens like an app, without the browser around it, and it still works
-      with no signal &mdash; everything you have logged is already on this phone.</p>
+    <strong>Add Zimpan to Home Screen</strong>
+    <p>Opens like a mobile app.</p>
     ${ios ? `
     <ol class="zi-steps">
-      <li>Tap <strong>Share</strong> at the bottom of Safari</li>
+      <li>Tap <strong>Share</strong> at the bottom of Safari (at the top if using Chrome on iPhone)</li>
       <li>Scroll down and tap <strong>Add to Home Screen</strong></li>
       <li>Tap <strong>Add</strong></li>
     </ol>
-    <p class="zi-why">Safari has no button we can press for you &mdash; this is the only way it offers.</p>
+    <!-- Every browser on an iPhone is Safari underneath, Chrome included, so
+         none of them has an install button to offer - which is why the steps
+         are the feature here rather than a fallback. -->
+    <p class="zi-why">iPhone browsers have no button we can press for you &mdash; this is the only way they offer.</p>
     <button class="btn btn-primary" data-act="install-done">Got it</button>`
     : `
     <div class="zi-acts">
