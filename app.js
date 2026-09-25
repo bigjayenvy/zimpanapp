@@ -19057,7 +19057,7 @@ const VOICE_BYE_MS = 1800;
 function voiceByeSoon() {
   const v = state.voice;
   if (v.bye) { clearTimeout(v.bye); v.bye = 0; }
-  if (v.error || v.unknown || mVoiceNote()) return;
+  if (v.error || v.unknown || voiceNote().holds) return;
   v.bye = setTimeout(() => {
     state.voice.bye = 0;
     // Only if nothing has happened since: a draft that arrived late, or a
@@ -19489,24 +19489,21 @@ const voiceBodyTitle = (d) => (d && d.kind === 'body'
    talks, it agrees, it says the entry is logged, and nothing was ever asked of
    this app. Both used to look exactly like success, which for a thing whose
    whole job is to write a row is the worst way to fail. */
-function mVoiceNote() {
+/* What the sheet has to say when it is over, and whether saying it is a reason
+   to stay up.
+
+   Most of these are faults: something did not happen and the sentence is how
+   anybody finds out. One is not - the timing line is a measurement, offered in
+   case a conversation went wrong, and a measurement is no reason to leave a
+   drawer sitting over the app after the goodbye. So the two are told apart
+   rather than both holding the door. */
+function voiceNote() {
   const v = state.voice;
   if (v.unknown) {
-    return `<p class="mv-note">Zimpan was asked for <strong>${esc(v.unknown)}</strong>, which is not
-      something this app can do. The agent and the app disagree about the tools.</p>`;
+    return { holds: true, html: `<p class="mv-note">Zimpan was asked for <strong>${esc(v.unknown)}</strong>, which is not
+      something this app can do. The agent and the app disagree about the tools.</p>` };
   }
   const over = v.status === 'ended' || v.status === 'error';
-
-  /* Asking has a complaint the logging side does not: an answer this app gave
-     in nine seconds that the agent never waited for. That is worth saying even
-     when other questions were answered fine - especially then, because a
-     conversation where three worked and one did not is the one where the wait
-     is the thing at fault rather than the wiring. */
-  if (over && voiceIsAsk() && v.took >= 6000) {
-    return `<p class="mv-note">The slowest answer took <strong>${Math.round(v.took / 1000)} seconds</strong>.
-      If the agent said it could not reach your log, raise the response timeout on its
-      <strong>ask_zimpan</strong> tool above that.</p>`;
-  }
 
   if (over && !v.done) {
     /* Two different faults wearing the same face. Nothing asked of this app at
@@ -19516,20 +19513,33 @@ function mVoiceNote() {
        one of them is broken. */
     if (voiceIsAsk()) {
       if (v.slow) {
-        return `<p class="mv-note">${v.slow === 1 ? 'A question took' : `${v.slow} questions took`}
+        return { holds: true, html: `<p class="mv-note">${v.slow === 1 ? 'A question took' : `${v.slow} questions took`}
           longer than the conversation would wait. The ${v.slow === 1 ? 'answer is' : 'answers are'}
-          in your chat.</p>`;
+          in your chat.</p>` };
       }
-      return v.calls ? '' : `<p class="mv-note">Nothing was asked. The agent never put a question
-        to this app &mdash; check that its <strong>ask_zimpan</strong> client tool is set up.</p>`;
+      if (!v.calls) {
+        return { holds: true, html: `<p class="mv-note">Nothing was asked. The agent never put a question
+          to this app &mdash; check that its <strong>ask_zimpan</strong> client tool is set up.</p>` };
+      }
+    } else {
+      return v.calls
+        ? { holds: true, html: `<p class="mv-note">Nothing was kept from that conversation. The draft was never confirmed.</p>` }
+        : { holds: true, html: `<p class="mv-note">Nothing was logged. The agent never asked this app to write
+          anything &mdash; check that its six client tools are set up.</p>` };
     }
-    return v.calls
-      ? `<p class="mv-note">Nothing was kept from that conversation. The draft was never confirmed.</p>`
-      : `<p class="mv-note">Nothing was logged. The agent never asked this app to write
-        anything &mdash; check that its six client tools are set up.</p>`;
   }
-  return '';
+
+  /* A measurement rather than a complaint: said in case the conversation did
+     go wrong, and never a reason to keep the drawer up when it did not. */
+  if (over && voiceIsAsk() && v.took >= 6000) {
+    return { holds: false, html: `<p class="mv-note">The slowest answer took <strong>${Math.round(v.took / 1000)} seconds</strong>.
+      If the agent said it could not reach your log, raise the response timeout on its
+      <strong>ask_zimpan</strong> tool above that.</p>` };
+  }
+  return { holds: false, html: '' };
 }
+
+const mVoiceNote = () => voiceNote().html;
 
 /* Drawn rather than typed: a glyph font would put the one thing on this screen
    that has to be unmistakable at the mercy of whatever the phone substitutes. */
