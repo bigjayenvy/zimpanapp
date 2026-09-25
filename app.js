@@ -15990,6 +15990,33 @@ const CHANGES = {
       state.todoWhy = { id: row.id, draft: '' };
       state.focusField = 'todo-why-draft';
     }
+
+    /* "In progress" is not a label somebody applies to a thing they will get
+       to later - it is said about the thing they are doing now. So it starts
+       the clock on it, carrying the note's own words and category across, and
+       the planner closes behind it the way the Start button already makes it.
+
+       Not for a note with nothing written on it: there is no activity to time,
+       and the status is still worth setting on its own. */
+    if (want === 'doing' && todoStartable(row)) {
+      const text = String(row.text || '').trim();
+      // Already the thing being timed - moved to Pending and back, say. Asking
+      // whether to stop it and start it again is the app not recognising itself.
+      const mine = state.timerStart && state.timerActivity.trim() === text;
+      if (!mine) {
+        if (state.timerStart) {
+          /* Something else is running, and starting this writes that one as an
+             entry. The same question the Start button asks, asked here - the
+             status stands either way, because it was answered. */
+          save(); queueSync(0);
+          state.todoStart = { id: row.id };
+          render();
+          return;
+        }
+        startTodo(row); // saves, syncs, closes the planner and renders
+        return;
+      }
+    }
     save(); queueSync(0); render();
   },
 
